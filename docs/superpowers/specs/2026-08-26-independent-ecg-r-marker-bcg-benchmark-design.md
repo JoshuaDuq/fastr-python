@@ -75,9 +75,12 @@ The detector will work on a copy of the ECG and preserve the original samples fo
 timing localization. Conditioning will be deterministic and explicitly configured:
 
 - finite one-dimensional ECG samples are required;
-- a QRS-enhancing zero-phase band-pass representation is used for candidate generation;
-- derivative/energy evidence is used alongside waveform morphology so polarity and
-  amplitude changes do not determine detection by themselves;
+- a zero-phase 7--40 Hz QRS-enhancing representation and a short smoothing operation are
+  used for candidate generation, following the single-channel MRI detector described by
+  Niazy et al.;
+- a k-Teager energy representation is used as the polarity-invariant complex lead, with
+  the emphasis parameter derived from the sampling rate and a documented target
+  frequency;
 - edge handling is explicit, and candidates whose full fitting window is unavailable are
   rejected rather than silently clipped.
 
@@ -90,7 +93,10 @@ provenance record.
 
 Candidate generation will be intentionally permissive. It will identify local QRS-like
 events from the conditioned signal and retain a score for each candidate rather than
-pretending that a single amplitude threshold is reliable in the MRI environment.
+pretending that a single fixed amplitude threshold is reliable in the MRI environment.
+The primary candidate generator will follow the published FMRIB sequence: a combined
+adaptive MFR threshold over the nonnegative k-Teager complex lead, followed by local
+candidate consolidation.
 
 The accepted train will then be selected using only ECG-derived evidence:
 
@@ -112,6 +118,10 @@ must explicitly guard against T-wave and magnetohydrodynamic double detections.
 The prior `pain_study` implementation supplies reusable ideas for template construction,
 double-mark handling, refractory checks, and lock-ratio measurement. Its
 Analyzer-seeded gap search will not be reused as the production detector.
+
+The FMRIB/EEGLAB implementation is a method reference only. Its public MATLAB source is
+GPL-licensed; the Python implementation will be an independent implementation of the
+published Christov/Niazy method and will not copy MATLAB source or depend on EEGLAB.
 
 ### Marker output and provenance
 

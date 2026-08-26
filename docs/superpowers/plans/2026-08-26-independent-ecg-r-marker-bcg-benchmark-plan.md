@@ -17,6 +17,8 @@ The implementation should preserve these method distinctions:
 - Allen et al. (1998) established heartbeat-locked pulse-artifact subtraction and emphasized reliable ECG peak detection and artifact-template quality. The local-average arm follows that family of methods: [paper](https://doi.org/10.1006/nimg.1998.0361).
 - Niazy et al. (2005) introduced the optimal-basis-set approach: PCA basis functions are derived from heartbeat-locked artifact residuals and fitted to individual occurrences. The MNE arm uses the documented `apply_pca_obs` implementation: [paper](https://doi.org/10.1016/j.neuroimage.2005.06.067), [MNE API](https://mne.tools/stable/generated/mne.preprocessing.apply_pca_obs.html).
 - Abi-Abdallah et al. (2007) documented that the MRI magnetohydrodynamic effect can enlarge the T wave and obstruct R-peak detection. This is why amplitude-only peak picking is not acceptable here: [paper](https://pubmed.ncbi.nlm.nih.gov/18002339/).
+- The FMRIB/EEGLAB detector provides the most directly relevant single-channel MRI reference: it combines a 7--40 Hz ECG representation, short smoothing, a k-Teager energy operator, Christov's combined adaptive MFR threshold, and a separate false-positive/false-negative correction with correlation alignment. The published Niazy method was validated on poor-quality ECG collected during fMRI: [paper](https://doi.org/10.1016/j.neuroimage.2005.06.067), [FMRIB reference implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_qrsdetect.m), [peak correction implementation](https://github.com/sccn/fMRIb/blob/master/qrscorrect.m). The MATLAB source is GPL-licensed and is a reference for behavior, not source to copy.
+- Christov's adaptive-threshold detector supplies the underlying MFR logic and was evaluated on all 48 full-length MIT-BIH arrhythmia records; the MRI-specific adaptation remains the relevant reference for this study: [paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC516783/).
 - Ganassin et al. (2024) demonstrated a patient-independent MRI R-peak strategy using ICA, derivative-based detection, adaptive thresholding, and automatic component selection. Their validation used multi-lead ECG without imaging gradients, so the plan uses the signal-processing principles but does not assume that single-channel study conditions transfer to this cohort: [paper](https://doi.org/10.1088/1361-6579/ad3b3d).
 - Wong et al. (2018) detected cardiac cycles from an ICA-derived EEG BCG component. That is a useful independent audit concept, but it is outside the agreed production boundary because this detector must use ECG only: [paper](https://pubmed.ncbi.nlm.nih.gov/29614296/).
 - MNE's official ECG and PCA-OBS examples are the package-level references for API behavior and correction validation: [ECG artifact workflow](https://mne.tools/stable/auto_tutorials/preprocessing/50_artifact_correction_ssp.html), [PCA-OBS example](https://mne.tools/stable/auto_examples/preprocessing/esg_rm_heart_artefact_pcaobs.html).
@@ -72,8 +74,9 @@ output:
   vhdr: output/with_independent_pulse_markers.vhdr
 detector:
   ecg_channel: ECG
-  preprocessing_band_hz: [3.0, 40.0]
-  qrs_evidence_band_hz: [6.3, 16.0]
+  preprocessing_band_hz: [7.0, 40.0]
+  teager_emphasis_hz: 10.0
+  teager_smoothing_seconds: 0.028
   template_window_seconds: [-0.2, 0.4]
   minimum_rr_seconds: 0.4
   maximum_rr_seconds: 1.5
@@ -117,7 +120,8 @@ exist.
 class DetectorConfig:
     ecg_channel: str
     preprocessing_band_hz: tuple[float, float]
-    qrs_evidence_band_hz: tuple[float, float]
+    teager_emphasis_hz: float
+    teager_smoothing_seconds: float
     template_window_seconds: tuple[float, float]
     minimum_rr_seconds: float
     maximum_rr_seconds: float
@@ -260,12 +264,15 @@ Implement the algorithm in small private functions with the following fixed sequ
    record long enough for the configured filter padding and template window.
 2. Remove the robust centre and scale only for detector evidence; retain the original ECG
    for final timing localization.
-3. Apply a zero-phase Butterworth band-pass over `preprocessing_band_hz` and derive a
-   QRS-evidence signal from its derivative filtered over `qrs_evidence_band_hz`. Use
-   `scipy.signal.sosfiltfilt`, and let an invalid short-record condition raise a specific
-   detector input error.
-4. Generate permissive candidates with `scipy.signal.find_peaks` using a robust
-   median/MAD prominence threshold and the configured candidate refractory interval.
+3. Apply a zero-phase Butterworth band-pass over `preprocessing_band_hz`, smooth the
+   result over `teager_smoothing_seconds`, and construct the nonnegative k-Teager energy
+   complex lead. Derive `k` from `sampling_rate_hz` and `teager_emphasis_hz`, following
+   the published MRI detector. Use `scipy.signal.sosfiltfilt`, and let an invalid
+   short-record condition raise a specific detector input error.
+4. Generate permissive QRS candidates with a deterministic implementation of the
+   combined adaptive MFR threshold. Consolidate threshold crossings into local maxima
+   and enforce the configured candidate refractory interval. Do not use a fixed
+   amplitude threshold or any annotation-derived threshold.
 5. Estimate the dominant period from the ECG-derived candidate intervals using a bounded
    interval-density mode. Detect and resolve a half-period cluster before constructing a
    template, so T-wave/double candidates cannot define the period.
