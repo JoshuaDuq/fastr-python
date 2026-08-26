@@ -14,8 +14,10 @@ import numpy as np
 from scipy.signal import butter, filtfilt, welch
 
 from mri_correction.fastr import (
+    FmriAcquisitionTiming,
     acquisition_group_fastr_with_edges,
     load_bids_fmri_timing,
+    make_group_trigger_samples,
 )
 from mri_correction.metrics import trigger_locked_template
 
@@ -54,6 +56,11 @@ def run_benchmark(arguments: argparse.Namespace) -> dict[str, object]:
     )
     channels = _select_channels(raw.ch_names, arguments.channels)
     volume_starts = _read_volume_starts(raw)
+    _validate_volume_marker_series(
+        volume_starts,
+        sampling_rate=raw.info["sfreq"],
+        timing=timing,
+    )
     samples_per_volume = _integer_samples_per_volume(
         timing.repetition_time_seconds,
         raw.info["sfreq"],
@@ -206,6 +213,19 @@ def _read_volume_starts(raw: mne.io.BaseRaw) -> np.ndarray:
     if not starts:
         raise ValueError("no exact Volume/V  1 markers found")
     return np.asarray(starts, dtype=np.int64)
+
+
+def _validate_volume_marker_series(
+    volume_starts: np.ndarray,
+    *,
+    sampling_rate: float,
+    timing: FmriAcquisitionTiming,
+) -> None:
+    make_group_trigger_samples(
+        volume_starts,
+        sampling_rate=sampling_rate,
+        timing=timing,
+    )
 
 
 def _integer_samples_per_volume(repetition_time: float, sampling_rate: float) -> int:
