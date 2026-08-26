@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "python-mri-correction"
+version = "0.1.0"
+description = "Validated scanner-gradient artifact correction for simultaneous EEG-fMRI"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mne==1.12.1",
+    "numpy==2.4.6",
+    "pybv==0.8.1",
+    "pyyaml==6.0.3",
+    "scipy==1.17.1",
+]
+
+[project.scripts]
+mri-correct = "mri_correction.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.3",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mri_correction"]
