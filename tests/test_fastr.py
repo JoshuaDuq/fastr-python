@@ -87,7 +87,7 @@ def test_acquisition_timing_rejects_invalid_metadata(
 
 
 def test_load_bids_fmri_timing_reads_required_metadata(tmp_path) -> None:
-    metadata_path = tmp_path / "sub-0001_task-thermalactive_run-01_bold.json"
+    metadata_path = tmp_path / "bold.json"
     metadata_path.write_text(
         json.dumps(
             {
@@ -96,7 +96,6 @@ def test_load_bids_fmri_timing_reads_required_metadata(tmp_path) -> None:
                     make_real_acquisition_timing().slice_timing_seconds
                 ),
                 "MultibandAccelerationFactor": 3,
-                "TaskName": "thermalactive",
             }
         ),
         encoding="utf-8",

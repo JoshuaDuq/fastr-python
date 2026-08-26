@@ -35,9 +35,9 @@ def split_volume_blocks(
 
 def map_brainvision_position(input_position: int, *, factor: int) -> int:
     """Map a one-based BrainVision position after integer-factor resampling."""
-    if not isinstance(input_position, int) or input_position < 1:
+    if type(input_position) is not int or input_position < 1:
         raise MarkerTimingError("BrainVision positions must be positive integers")
-    if not isinstance(factor, int) or factor < 1:
+    if type(factor) is not int or factor < 1:
         raise MarkerTimingError("resampling factor must be a positive integer")
     return (input_position - 1) // factor + 1
 

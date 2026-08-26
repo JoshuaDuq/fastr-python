@@ -202,15 +202,7 @@ def test_slice_fastr_fits_template_amplitudes_per_channel() -> None:
 
 
 def test_slice_fastr_transfers_most_of_an_exact_volume_harmonic() -> None:
-    """Pins how much exact-harmonic transfer an unbalanced artifact epoch costs.
-
-    This fixture's burst carries a large net offset per epoch, |mean|/RMS near
-    0.5, and at that ratio the per-channel amplitude fit trades away roughly a
-    fifth of an exact 1/TR harmonic. Real sub-0001 epochs sit near 0.05, where the
-    same code retains essentially all of it, so this bound characterises the
-    mechanism rather than the acquisition. Measured in
-    docs/results/2026-08-26-slice-fastr-transfer.md.
-    """
+    """Pin the transfer of an exact volume harmonic in this synthetic fixture."""
     triggers = make_multiband_triggers()
     artifact = make_gradient_artifact(
         np.outer([1.0, -2.0], np.ones(triggers.size)),

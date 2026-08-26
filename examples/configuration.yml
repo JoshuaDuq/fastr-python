@@ -1,0 +1,20 @@
+input:
+  raw_vhdr: /path/to/raw.vhdr
+  fmri_metadata: /path/to/bold.json
+
+output:
+  vhdr: /path/to/corrected.vhdr
+
+timing:
+  marker_type: Volume
+  marker_description: volume-start
+
+processing:
+  method: acquisition_group_fastr
+  interpolation_factor: 10
+  neighbor_count: 20
+  search_radius_samples: 3
+  lowpass_hz: 100.0
+  output_sampling_rate_hz: 1000.0
+  channel_batch_size: 8
+  reference_channel: EEG 001

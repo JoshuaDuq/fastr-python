@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import math
 from collections.abc import Sequence
@@ -142,6 +144,49 @@ class FastrCorrection:
     provenance: FastrProvenance
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class FastrGeometry:
+    """Validated acquisition geometry shared by all channel batches."""
+
+    triggers: np.ndarray
+    fine_triggers: np.ndarray
+    epoch: _ArtifactEpoch
+    window: _TemplateWindow
+    interpolation_factor: int
+    interpolation_taps: np.ndarray
+    search_radius: int
+    group_indices: np.ndarray
+    skipped_group_indices: np.ndarray
+    sample_count: int
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "triggers",
+            "fine_triggers",
+            "interpolation_taps",
+            "group_indices",
+            "skipped_group_indices",
+        ):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class FastrAlignment:
+    """Group alignment fitted once and reusable across channel batches."""
+
+    shifts: np.ndarray
+    correlations: np.ndarray
+    fitted_triggers: np.ndarray
+
+    def __post_init__(self) -> None:
+        for field_name in ("shifts", "correlations", "fitted_triggers"):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+
+
 def slice_fastr(
     data: npt.ArrayLike,
     group_triggers: npt.ArrayLike,
@@ -173,7 +218,7 @@ def acquisition_group_fastr(
     sampling_rate: float,
     timing: FmriAcquisitionTiming,
     interpolation_factor: int = 10,
-    neighbor_count: int = 30,
+    neighbor_count: int = 20,
     search_radius_samples: int = 3,
 ) -> FastrCorrection:
     """Correct repeated multiband acquisition-time slots with FASTR fitting.
@@ -228,7 +273,7 @@ def acquisition_group_fastr_with_edges(
     sampling_rate: float,
     timing: FmriAcquisitionTiming,
     interpolation_factor: int = 10,
-    neighbor_count: int = 30,
+    neighbor_count: int = 20,
     search_radius_samples: int = 3,
 ) -> FastrCorrection:
     """Correct estimable complete volumes and report skipped boundary volumes."""
@@ -244,6 +289,128 @@ def acquisition_group_fastr_with_edges(
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=timing.groups_per_volume,
+    )
+
+
+def prepare_fastr_geometry(
+    group_triggers: npt.ArrayLike,
+    *,
+    sample_count: int,
+    interpolation_factor: int = 10,
+    neighbor_count: int = 30,
+    search_radius_samples: int = 3,
+    groups_per_volume: int | None = None,
+    allow_edges: bool = False,
+) -> FastrGeometry:
+    """Validate FASTR geometry before fitting any channel data.
+
+    When ``allow_edges`` is true, incomplete boundary epochs are excluded and
+    recorded in the returned geometry. This makes the boundary policy explicit
+    for streaming or batch-oriented callers.
+    """
+    triggers = _validate_group_triggers(group_triggers)
+    if isinstance(sample_count, bool) or not isinstance(sample_count, int):
+        raise FastrInputError("sample count must be a positive integer")
+    if sample_count < 1:
+        raise FastrInputError("sample count must be a positive integer")
+    if groups_per_volume is not None and (
+        isinstance(groups_per_volume, bool)
+        or not isinstance(groups_per_volume, int)
+        or groups_per_volume < 1
+    ):
+        raise FastrInputError("groups per volume must be a positive integer")
+    if not isinstance(allow_edges, bool):
+        raise FastrInputError("allow_edges must be a boolean")
+    return _build_fastr_geometry(
+        triggers,
+        sample_count=sample_count,
+        interpolation_factor=interpolation_factor,
+        neighbor_count=neighbor_count,
+        search_radius_samples=search_radius_samples,
+        groups_per_volume=groups_per_volume,
+        allow_edges=allow_edges,
+    )
+
+
+def fit_fastr_alignment(
+    reference_channel: npt.ArrayLike,
+    geometry: FastrGeometry,
+) -> FastrAlignment:
+    """Fit acquisition-group alignment from one reference channel."""
+    reference = _validate_reference_channel(reference_channel, geometry.sample_count)
+    alignment_signal = _interpolate(
+        reference,
+        geometry.interpolation_taps,
+        geometry.interpolation_factor,
+    )
+    shifts, correlations = _fit_group_shifts(
+        alignment_signal,
+        geometry.fine_triggers,
+        geometry.window,
+        geometry.epoch,
+        geometry.search_radius,
+    )
+    fitted_triggers = geometry.fine_triggers + shifts
+    _validate_fitted_triggers(fitted_triggers)
+    return FastrAlignment(
+        shifts=shifts,
+        correlations=correlations,
+        fitted_triggers=fitted_triggers,
+    )
+
+
+def apply_fastr_batch(
+    data: npt.ArrayLike,
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+) -> FastrCorrection:
+    """Apply one shared alignment to a batch of recording channels."""
+    if not isinstance(geometry, FastrGeometry):
+        raise FastrInputError("geometry must be a FastrGeometry instance")
+    if not isinstance(alignment, FastrAlignment):
+        raise FastrInputError("alignment must be a FastrAlignment instance")
+    recording = _validate_recording(data)
+    if recording.shape[1] != geometry.sample_count:
+        raise FastrInputError("batch sample count does not match the geometry")
+    if alignment.shifts.shape != geometry.fine_triggers.shape:
+        raise FastrInputError("alignment group count does not match the geometry")
+    if alignment.correlations.shape != alignment.shifts.shape:
+        raise FastrInputError("alignment correlations do not match the shifts")
+    if alignment.fitted_triggers.shape != alignment.shifts.shape:
+        raise FastrInputError("fitted triggers do not match the alignment")
+
+    corrected = recording.astype(np.float64, copy=True)
+    amplitudes = np.empty(
+        (recording.shape[0], geometry.triggers.size),
+        dtype=np.float64,
+    )
+    for index, channel in enumerate(recording):
+        interpolated = _interpolate(
+            channel,
+            geometry.interpolation_taps,
+            geometry.interpolation_factor,
+        )
+        noise, amplitudes[index] = _fit_channel_noise(
+            interpolated,
+            alignment.fitted_triggers,
+            geometry.window,
+            geometry.epoch,
+        )
+        corrected[index] -= noise[::geometry.interpolation_factor]
+
+    return FastrCorrection(
+        data=corrected,
+        provenance=FastrProvenance(
+            interpolation_factor=geometry.interpolation_factor,
+            samples_before_trigger=geometry.epoch.samples_before,
+            samples_after_trigger=geometry.epoch.samples_after,
+            search_radius=geometry.search_radius,
+            neighbor_indices=geometry.group_indices[geometry.window.indices],
+            shifts=alignment.shifts,
+            correlations=alignment.correlations,
+            amplitudes=amplitudes,
+            skipped_group_indices=geometry.skipped_group_indices,
+        ),
     )
 
 
@@ -270,69 +437,23 @@ def _run_fastr(
         group_indices = np.arange(triggers.size, dtype=np.int64)
     if skipped_group_indices is None:
         skipped_group_indices = np.empty(0, dtype=np.int64)
-    if group_indices.shape != (triggers.size,):
-        raise FastrInputError("group indices must match the trigger count")
-
-    fine_triggers = _to_interpolated_grid(triggers, interpolation_factor)
-    epoch = _measure_artifact_epoch(
-        fine_triggers,
-        cover_full_gap=groups_per_volume is not None,
-    )
-    search_radius = search_radius_samples * interpolation_factor
-    _validate_epoch_bounds(
-        fine_triggers,
-        samples_before=epoch.samples_before + search_radius,
-        samples_after=epoch.samples_after + search_radius,
-        sample_count=recording.shape[1] * interpolation_factor,
-    )
-    window = _select_template_window(
+    if not isinstance(group_indices, np.ndarray) or group_indices.shape != (
         triggers.size,
-        neighbor_count,
-        groups_per_volume,
+    ):
+        raise FastrInputError("group indices must match the trigger count")
+    geometry = _build_fastr_geometry(
+        triggers,
+        sample_count=recording.shape[1],
+        interpolation_factor=interpolation_factor,
+        neighbor_count=neighbor_count,
+        search_radius_samples=search_radius_samples,
+        groups_per_volume=groups_per_volume,
+        allow_edges=False,
+        group_indices=group_indices,
+        skipped_group_indices=skipped_group_indices,
     )
-
-    taps = _make_interpolation_filter(interpolation_factor)
-    alignment_signal = _interpolate(recording[0], taps, interpolation_factor)
-    shifts, correlations = _fit_group_shifts(
-        alignment_signal,
-        fine_triggers,
-        window,
-        epoch,
-        search_radius,
-    )
-    fitted_triggers = fine_triggers + shifts
-    _validate_fitted_triggers(fitted_triggers)
-
-    corrected = recording.astype(np.float64, copy=True)
-    amplitudes = np.empty((recording.shape[0], triggers.size), dtype=np.float64)
-    for index, channel in enumerate(recording):
-        interpolated = (
-            alignment_signal
-            if index == 0
-            else _interpolate(channel, taps, interpolation_factor)
-        )
-        noise, amplitudes[index] = _fit_channel_noise(
-            interpolated,
-            fitted_triggers,
-            window,
-            epoch,
-        )
-        corrected[index] -= noise[::interpolation_factor]
-
-    return FastrCorrection(
-        data=corrected,
-        provenance=FastrProvenance(
-            interpolation_factor=interpolation_factor,
-            samples_before_trigger=epoch.samples_before,
-            samples_after_trigger=epoch.samples_after,
-            search_radius=search_radius,
-            neighbor_indices=group_indices[window.indices],
-            shifts=shifts,
-            correlations=correlations,
-            amplitudes=amplitudes,
-            skipped_group_indices=skipped_group_indices,
-        ),
-    )
+    alignment = fit_fastr_alignment(recording[0], geometry)
+    return apply_fastr_batch(recording, geometry, alignment)
 
 
 def _run_fastr_with_edges(
@@ -390,6 +511,89 @@ def _run_fastr_with_edges(
     return result
 
 
+def _build_fastr_geometry(
+    triggers: np.ndarray,
+    *,
+    sample_count: int,
+    interpolation_factor: int,
+    neighbor_count: int,
+    search_radius_samples: int,
+    groups_per_volume: int | None,
+    allow_edges: bool,
+    group_indices: np.ndarray | None = None,
+    skipped_group_indices: np.ndarray | None = None,
+) -> FastrGeometry:
+    _validate_fastr_parameters(
+        interpolation_factor=interpolation_factor,
+        neighbor_count=neighbor_count,
+        search_radius_samples=search_radius_samples,
+    )
+    if group_indices is None:
+        group_indices = np.arange(triggers.size, dtype=np.int64)
+    if skipped_group_indices is None:
+        skipped_group_indices = np.empty(0, dtype=np.int64)
+    if group_indices.shape != (triggers.size,):
+        raise FastrInputError("group indices must match the trigger count")
+
+    fine_triggers = _to_interpolated_grid(triggers, interpolation_factor)
+    epoch = _measure_artifact_epoch(
+        fine_triggers,
+        cover_full_gap=groups_per_volume is not None,
+    )
+    search_radius = search_radius_samples * interpolation_factor
+    sample_count_interpolated = sample_count * interpolation_factor
+    bounds_valid = (
+        (fine_triggers - epoch.samples_before - search_radius >= 0)
+        & (
+            fine_triggers + epoch.samples_after + search_radius
+            < sample_count_interpolated
+        )
+    )
+
+    if allow_edges:
+        if groups_per_volume is not None:
+            if triggers.size % groups_per_volume:
+                raise FastrInputError(
+                    "the group count must be a whole number of volumes to match "
+                    "acquisition slots"
+                )
+            volume_valid = bounds_valid.reshape(-1, groups_per_volume).all(axis=1)
+            bounds_valid = np.repeat(volume_valid, groups_per_volume)
+        if not np.any(bounds_valid):
+            raise FastrInputError("no complete FASTR artifact epochs remain")
+        skipped_group_indices = np.concatenate(
+            (skipped_group_indices, group_indices[~bounds_valid])
+        )
+        group_indices = group_indices[bounds_valid]
+        triggers = triggers[bounds_valid]
+        fine_triggers = fine_triggers[bounds_valid]
+    else:
+        _validate_epoch_bounds(
+            fine_triggers,
+            samples_before=epoch.samples_before + search_radius,
+            samples_after=epoch.samples_after + search_radius,
+            sample_count=sample_count_interpolated,
+        )
+
+    window = _select_template_window(
+        triggers.size,
+        neighbor_count,
+        groups_per_volume,
+    )
+    return FastrGeometry(
+        triggers=triggers,
+        fine_triggers=fine_triggers,
+        epoch=epoch,
+        window=window,
+        interpolation_factor=interpolation_factor,
+        interpolation_taps=_make_interpolation_filter(interpolation_factor),
+        search_radius=search_radius,
+        group_indices=group_indices,
+        skipped_group_indices=skipped_group_indices,
+        sample_count=sample_count,
+    )
+
+
 def residual_obs(
     residual: npt.ArrayLike,
     group_triggers: npt.ArrayLike,
@@ -404,8 +608,8 @@ def residual_obs(
     This is FASTR's separately validated second stage, never an implicit part of
     template subtraction. For each corrected channel the basis is the leading
     `rank` principal components of that channel's own high-pass residual epochs.
-    Excluded channels are returned untouched, which is how ECG keeps the QRS
-    morphology that later pulse detection depends on.
+    Excluded channels are returned untouched, allowing callers to preserve
+    channels that are not appropriate for residual artifact subtraction.
     """
     recording = _validate_recording(residual)
     triggers = _validate_group_triggers(group_triggers)
@@ -669,6 +873,12 @@ class _TemplateWindow:
     run_length: int
     contains_target: bool
 
+    def __post_init__(self) -> None:
+        for field_name in ("indices", "run_starts"):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+
 
 @dataclass(frozen=True, slots=True)
 class _ArtifactEpoch:
@@ -699,6 +909,25 @@ def _validate_recording(data: npt.ArrayLike) -> np.ndarray:
     if not np.all(np.isfinite(recording)):
         raise FastrInputError("data must contain only finite numeric values")
     return recording
+
+
+def _validate_reference_channel(
+    data: npt.ArrayLike,
+    sample_count: int,
+) -> np.ndarray:
+    reference = np.asarray(data)
+    if reference.ndim != 1 or reference.size != sample_count:
+        raise FastrInputError(
+            "reference channel must be one-dimensional with the geometry sample count"
+        )
+    if np.issubdtype(reference.dtype, np.bool_) or not np.issubdtype(
+        reference.dtype,
+        np.number,
+    ):
+        raise FastrInputError("reference channel must contain finite numeric values")
+    if not np.all(np.isfinite(reference)):
+        raise FastrInputError("reference channel must contain finite numeric values")
+    return reference
 
 
 def _validate_group_triggers(group_triggers: npt.ArrayLike) -> np.ndarray:

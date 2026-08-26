@@ -3,12 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "python-mri-correction"
+name = "fastr-python"
 version = "0.1.0"
 description = "Validated scanner-gradient artifact correction for simultaneous EEG-fMRI"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "matplotlib==3.11.1",
     "mne==1.12.1",
     "numpy==2.4.6",
     "pybv==0.8.1",

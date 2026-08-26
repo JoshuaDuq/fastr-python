@@ -58,7 +58,7 @@ def test_split_volume_blocks_rejects_undeclared_gap() -> None:
         (4_501, 901),
     ],
 )
-def test_map_brainvision_position_matches_analyzer(
+def test_map_brainvision_position_uses_decimation_floor(
     input_position: int,
     expected_position: int,
 ) -> None:
@@ -71,3 +71,6 @@ def test_map_brainvision_position_rejects_invalid_values() -> None:
 
     with pytest.raises(MarkerTimingError):
         map_brainvision_position(1, factor=0)
+
+    with pytest.raises(MarkerTimingError):
+        map_brainvision_position(1, factor=True)

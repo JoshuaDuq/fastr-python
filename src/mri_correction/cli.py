@@ -1,30 +1,41 @@
-"""Command-line entry points for strict acquisition validation."""
+"""Command-line entry points for the public correction pipeline."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import mne
 
-from .fastr import (
-    FastrInputError,
-    load_bids_fmri_timing,
-    make_group_trigger_samples,
+from .brainvision_io import (
+    BrainVisionInputError,
+    read_brainvision_recording,
+    select_marker_samples,
 )
+from .config import ConfigurationError, load_config
+from .fastr import FastrInputError, load_bids_fmri_timing, make_group_trigger_samples
+from .pipeline import PipelineInputError, run_correction
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _make_parser()
     arguments = parser.parse_args(argv)
     try:
-        if arguments.command == "validate-timing":
+        if arguments.command == "run":
+            _run(arguments)
+        elif arguments.command == "validate-timing":
             _validate_timing(arguments)
-    except FastrInputError as error:
-        # Invalid acquisition timing is an expected answer from a validator, not
-        # a crash: report what is wrong so the operator can act on it.
+    except (
+        BrainVisionInputError,
+        ConfigurationError,
+        FileExistsError,
+        FastrInputError,
+        PipelineInputError,
+    ) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
     return 0
@@ -33,9 +44,15 @@ def main(argv: list[str] | None = None) -> int:
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mri-correct",
-        description="Validate and benchmark simultaneous EEG-fMRI correction inputs.",
+        description="Validate and correct simultaneous EEG-fMRI recordings.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    run = commands.add_parser(
+        "run",
+        help="run the correction described by a YAML configuration",
+    )
+    run.add_argument("--config", type=Path, required=True)
+
     timing = commands.add_parser(
         "validate-timing",
         help="validate BIDS timing and BrainVision volume-marker spacing",
@@ -43,10 +60,17 @@ def _make_parser() -> argparse.ArgumentParser:
     timing.add_argument("--metadata", type=Path, required=True)
     timing.add_argument("--sampling-rate", type=float, required=True)
     timing.add_argument("--output", type=Path, required=True)
+    timing.add_argument("--marker-type")
+    timing.add_argument("--marker-description")
     starts = timing.add_mutually_exclusive_group(required=True)
     starts.add_argument("--volume-starts", type=int, nargs="+")
     starts.add_argument("--vhdr", type=Path)
     return parser
+
+
+def _run(arguments: argparse.Namespace) -> None:
+    summary = run_correction(load_config(arguments.config))
+    print(json.dumps(asdict(summary), indent=2, default=str))
 
 
 def _validate_timing(arguments: argparse.Namespace) -> None:
@@ -54,7 +78,16 @@ def _validate_timing(arguments: argparse.Namespace) -> None:
     if arguments.volume_starts is not None:
         volume_starts = arguments.volume_starts
     else:
-        volume_starts = _read_volume_starts(arguments.vhdr)
+        if arguments.marker_type is None or arguments.marker_description is None:
+            raise BrainVisionInputError(
+                "--marker-type and --marker-description are required with --vhdr"
+            )
+        volume_starts = _read_volume_starts(
+            arguments.vhdr,
+            marker_type=arguments.marker_type,
+            marker_description=arguments.marker_description,
+            sampling_rate=arguments.sampling_rate,
+        )
     triggers = make_group_trigger_samples(
         volume_starts,
         sampling_rate=arguments.sampling_rate,
@@ -67,25 +100,40 @@ def _validate_timing(arguments: argparse.Namespace) -> None:
         "groups_per_volume": timing.groups_per_volume,
         "group_triggers": triggers.tolist(),
     }
+    if arguments.output.exists():
+        raise FileExistsError(
+            f"validation output already exists: {arguments.output}"
+        )
     with arguments.output.open("x", encoding="utf-8") as output:
         json.dump(result, output, indent=2)
         output.write("\n")
 
 
-def _read_volume_starts(path: Path) -> list[int]:
+def _read_volume_starts(
+    path: Path,
+    *,
+    marker_type: str,
+    marker_description: str,
+    sampling_rate: float,
+) -> list[int]:
+    recording = read_brainvision_recording(path)
     raw = mne.io.read_raw_brainvision(path, preload=False, verbose="ERROR")
-    descriptions = raw.annotations.description
-    volume_indices = [
-        index
-        for index, description in enumerate(descriptions)
-        if description == "Volume/V  1"
-    ]
-    if not volume_indices:
-        raise FastrInputError("no exact Volume/V  1 markers found")
-    return [
-        round(float(raw.annotations.onset[index]) * raw.info["sfreq"])
-        for index in volume_indices
-    ]
+    if not math.isclose(
+        raw.info["sfreq"],
+        sampling_rate,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise BrainVisionInputError(
+            "the declared sampling rate does not match the BrainVision header"
+        )
+    samples = select_marker_samples(
+        recording.markers,
+        marker_type=marker_type,
+        marker_description=marker_description,
+        sample_count=int(raw.n_times),
+    )
+    return [int(sample) for sample in samples]
 
 
 if __name__ == "__main__":

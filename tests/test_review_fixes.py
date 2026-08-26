@@ -157,6 +157,7 @@ def test_cli_module_can_be_imported() -> None:
 def test_cli_validate_timing_refuses_existing_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     metadata = tmp_path / "timing.json"
     metadata.write_text(
@@ -191,8 +192,8 @@ def test_cli_validate_timing_refuses_existing_output(
         ],
     )
 
-    with pytest.raises(FileExistsError):
-        main()
+    assert main() == 1
+    assert "already exists" in capsys.readouterr().err
 
 
 def test_cli_reports_timing_failure_without_a_traceback(

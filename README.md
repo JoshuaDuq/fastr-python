@@ -1,36 +1,97 @@
-# Python MRI Correction
+# FASTR-Python
 
-Scanner-gradient artifact correction for simultaneous EEG-fMRI.
+FASTR-Python is a configuration-driven Python tool for scanner-gradient artifact
+correction in simultaneous EEG-fMRI recordings. It accepts a BrainVision recording
+and BIDS fMRI timing metadata, validates the acquisition markers, applies an
+acquisition-slot FASTR correction, and writes a BrainVision recording with preserved
+markers plus a provenance sidecar.
 
-The project is under active implementation. BrainVision Analyzer is retained as a
-benchmark; enhanced methods are promoted only after artifact-suppression and neural
-signal-transfer tests pass.
+This is research software. Inspect the provenance and validate the correction for
+each acquisition protocol before using the output for inference.
 
-The strict classical FASTR API is `mri_correction.fastr.slice_fastr`. For multiband
-recordings, use `acquisition_group_fastr`, which derives acquisition-time slots from
-validated BIDS `RepetitionTime`, `SliceTiming`, and
-`MultibandAccelerationFactor`. `SliceTiming` describes acquisition time, not physical
-slice identity.
+## Installation
 
-Validate BrainVision volume markers before correction:
+The project supports Python 3.12. Install the runtime and development dependencies
+with `uv`:
 
 ```text
-.venv/bin/mri-correct validate-timing \
+uv sync
+```
+
+Or install the package into an existing environment:
+
+```text
+uv pip install .
+```
+
+## Run a correction
+
+Copy [`examples/configuration.yml`](examples/configuration.yml), edit every path and
+processing value for the recording, then run:
+
+```text
+mri-correct run --config /path/to/configuration.yml
+```
+
+The configuration is deliberately strict. Marker type and description are exact
+matches; input and output paths are explicit; and existing output files, timing
+gaps, non-integer rate conversions, and invalid filter settings fail rather than
+being repaired implicitly.
+
+The output consists of the requested `.vhdr`, its `.eeg` and `.vmrk` companions,
+`*_psd_before.png`, `*_psd_after.png`, and a `.json` provenance sidecar. The PSD
+figures are generated with MNE's `mne.viz.plot_raw_psd` and provide a quick visual
+before/after check. The sidecar records resolved settings, source hashes, timing
+validation, alignment shifts, fitted amplitudes, and boundary groups that were left
+untouched.
+
+## Validate timing only
+
+For a BrainVision recording, validate the configured volume markers against the BIDS
+timing metadata before running correction:
+
+```text
+mri-correct validate-timing \
   --metadata /path/to/bold.json \
-  --vhdr /path/to/raw.vhdr \
   --sampling-rate 5000 \
+  --vhdr /path/to/raw.vhdr \
+  --marker-type Volume \
+  --marker-description volume-start \
   --output /path/to/timing-validation.json
 ```
 
-Reproduce the sub-0001 real-data benchmark, including all channels and ECG:
+This command fails on missing markers, duplicate positions, marker gaps, timing
+jitter beyond the declared tolerance, or an inconsistent TR-to-sample conversion.
+It does not infer missing markers from the EEG waveform.
+
+## Method
+
+The public pipeline uses the acquisition-group variant of FASTR for multiband data:
+the validated BIDS slice timing determines repeated acquisition-time slots, and
+templates are formed from neighboring volumes in the same slot while excluding the
+target group. Alignment is fitted once from the configured reference channel and
+reused for channel batches. See [`docs/algorithm.md`](docs/algorithm.md) for the
+processing model and its limitations.
+
+The default example uses 20 neighboring volumes for the acquisition-slot template.
+This is a validated starting point, not a protocol-independent guarantee; tune and
+report it only through the YAML configuration and compare results with appropriate
+signal-preservation controls.
+
+## Development
+
+Run the complete test and lint checks:
 
 ```text
-.venv/bin/python scripts/benchmark_sub0001.py \
-  --raw-vhdr /path/to/raw.vhdr \
-  --analyzer-vhdr /path/to/analyzer.vhdr \
-  --fmri-json /path/to/bold.json \
-  --output /path/to/benchmark.json
+uv run pytest
+uv run ruff check src tests
+git diff --check
 ```
 
-Existing output files are never overwritten. Marker gaps and non-contiguous TRs fail
-before correction begins.
+The public test suite contains synthetic BrainVision round trips, strict
+configuration and marker validation, FASTR geometry/alignment tests, batch-size
+invariance checks, and end-to-end pipeline tests. See
+[`docs/validation.md`](docs/validation.md) for a validation checklist.
+
+Analyzer comparison code and private benchmark data are intentionally kept outside
+the tracked public package in `.local/analyzer_comparison/`.
