@@ -249,6 +249,12 @@ Spectral notch reduction alone is not a success criterion. A method that lowers 
 attenuating broad EEG activity or by accepting false markers must fail the preservation or
 null-control checks.
 
+The correction comparison is deliberately non-directional: published AAS-versus-OBS
+comparisons have reported small and inconsistent method advantages, and later evaluations
+found residual artifact and signal loss after every tested software approach. The result
+must therefore be reported as paired attenuation-preservation evidence, not as a presumed
+ranking of AAS, PCA-OBS, or Analyzer.
+
 The cohort report will include run-level results, paired effect summaries, uncertainty
 intervals, detector QC, and explicit failure counts. A claim that FASTR-Python outperforms
 Analyzer will require a predeclared comparison rule that combines lower primary residual
