@@ -43,6 +43,14 @@ BCG-corrected reference stage, not the fair input for our correction arm. It may
 for comparison and for verifying that ECG samples survive Analyzer's correction, but it
 must not be used as the EEG input to our correction.
 
+Brain Products documents multiple CB Correction peak-detection strategies, including
+template/coherence matching, and configurable pulse-rate, correlation, delay, and pulse
+interval settings. Unless the Analyzer history or transformation settings are available,
+the supplied corrected files will therefore be treated as an empirical black-box
+reference. The benchmark will not claim to reproduce a particular Analyzer algorithm from
+the output files alone: [Brain Products documentation](https://pressrelease.brainproducts.com/sensor-data-analysis/),
+[Analyzer manual discussion](https://www.nmr.mgh.harvard.edu/~tatiana/BrainVisionManuals/RecView/20200204_RecView.pdf).
+
 The implementation will require an explicit FASTR input root and an explicit Analyzer
 reference root. It will fail if either root is missing, ambiguously paired, or contains a
 different recording geometry. Existing `step2_pulse_markers_recovered_v2` annotations
