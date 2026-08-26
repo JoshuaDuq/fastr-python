@@ -26,7 +26,10 @@ For each run, the pipeline:
    provenance sidecar.
 
 The first and last groups whose complete artifact epochs are unavailable are left
-unchanged and recorded in the sidecar. A marker gap or timing inconsistency is a
+unchanged and recorded in the sidecar. PSD figures use the same interval containing
+only complete corrected epochs, so uncorrected boundary data cannot dominate the
+diagnostic. They are limited to 0--100 Hz and use standard MNE spatial channel colors
+when channel positions can be identified. A marker gap or timing inconsistency is a
 hard error; the pipeline does not interpolate missing acquisition events.
 
 ## Why acquisition slots matter

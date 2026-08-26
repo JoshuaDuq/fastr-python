@@ -1,12 +1,14 @@
 import json
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import pytest
 import yaml
 from pybv import write_brainvision
 
+import mri_correction.pipeline as pipeline_module
 from mri_correction.brainvision import BrainVisionMarker, write_brainvision_markers
 from mri_correction.config import load_config
 from mri_correction.pipeline import PipelineInputError, run_correction
@@ -106,6 +108,8 @@ def test_run_correction_writes_reopenable_output_and_provenance(
     assert provenance["input"]["raw_vhdr"].endswith("source.vhdr")
     assert provenance["output"]["psd_before"] == str(summary.psd_before)
     assert provenance["output"]["psd_after"] == str(summary.psd_after)
+    assert provenance["output"]["psd_interval_seconds"]["start"] > 0.0
+    assert provenance["output"]["psd_interval_seconds"]["end"] < 0.8
     assert provenance["fastr"]["alignment"]["shifts"]
     assert "Comment/preserve me" in set(raw.annotations.description)
 
@@ -160,3 +164,88 @@ def test_run_correction_refuses_existing_sidecar(tmp_path: Path) -> None:
 
     with pytest.raises(FileExistsError):
         run_correction(config)
+
+
+def test_psd_diagnostics_use_only_corrected_time_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(make_fixture(tmp_path))
+    calls: list[tuple[float, float]] = []
+    fmax_values: list[float] = []
+    original = pipeline_module._save_psd_plot
+
+    def capture_window(
+        raw: mne.io.BaseRaw,
+        output_path: Path,
+        *,
+        fmax: float,
+        title: str,
+        tmin: float,
+        tmax: float,
+    ) -> None:
+        calls.append((tmin, tmax))
+        fmax_values.append(fmax)
+        original(
+            raw,
+            output_path,
+            fmax=fmax,
+            title=title,
+            tmin=tmin,
+            tmax=tmax,
+        )
+
+    monkeypatch.setattr(pipeline_module, "_save_psd_plot", capture_window)
+
+    run_correction(config)
+
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+    assert fmax_values == [100.0, 100.0]
+    assert calls[0][0] > 0.0
+    assert calls[0][1] < 0.8
+
+
+def test_psd_plot_preparation_assigns_standard_channel_locations() -> None:
+    info = mne.create_info(
+        ["Fp1", "Fp2", "unmapped"],
+        sfreq=1_000.0,
+        ch_types=["eeg", "eeg", "eeg"],
+    )
+    raw = mne.io.RawArray(np.zeros((3, 100)), info, verbose="ERROR")
+
+    prepared = pipeline_module._prepare_psd_raw(raw)
+
+    assert prepared.ch_names == ["Fp1", "Fp2"]
+    assert prepared.get_montage() is not None
+    assert np.isfinite(prepared.get_montage().get_positions()["ch_pos"]["Fp1"]).all()
+
+
+def test_psd_plot_requests_spatial_colors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info = mne.create_info(["Fp1", "Fp2"], sfreq=1_000.0, ch_types="eeg")
+    raw = mne.io.RawArray(np.zeros((2, 100)), info, verbose="ERROR")
+    seen: dict[str, object] = {}
+
+    def capture_plot(*args: object, **kwargs: object) -> object:
+        seen.update(kwargs)
+        return plt.figure()
+
+    monkeypatch.setattr(
+        pipeline_module.mne.viz,
+        "plot_raw_psd",
+        capture_plot,
+    )
+    pipeline_module._save_psd_plot(
+        raw,
+        tmp_path / "psd.png",
+        fmax=100.0,
+        title="test",
+        tmin=0.0,
+        tmax=0.1,
+    )
+
+    assert seen["spatial_colors"] is True
+    assert seen["fmax"] == 100.0

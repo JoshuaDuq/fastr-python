@@ -40,10 +40,12 @@ being repaired implicitly.
 
 The output consists of the requested `.vhdr`, its `.eeg` and `.vmrk` companions,
 `*_psd_before.png`, `*_psd_after.png`, and a `.json` provenance sidecar. The PSD
-figures are generated with MNE's `mne.viz.plot_raw_psd` and provide a quick visual
-before/after check. The sidecar records resolved settings, source hashes, timing
-validation, alignment shifts, fitted amplitudes, and boundary groups that were left
-untouched.
+figures are generated with MNE's `mne.viz.plot_raw_psd`, use the same complete-epoch
+interval for both conditions, and show 0--100 Hz with spatial channel colors when
+standard EEG positions can be identified. Boundary groups without complete FASTR
+epochs are excluded from both PSD figures and recorded in the sidecar. The sidecar
+also records resolved settings, source hashes, timing validation, alignment shifts,
+and fitted amplitudes.
 
 ## Validate timing only
 

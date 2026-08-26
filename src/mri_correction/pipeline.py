@@ -43,6 +43,9 @@ class PipelineInputError(ValueError):
     """Raised when a configured correction run cannot be performed."""
 
 
+_PSD_MAX_FREQUENCY_HZ = 100.0
+
+
 @dataclass(frozen=True, slots=True)
 class CorrectionSummary:
     """Stable summary of one completed correction run."""
@@ -185,12 +188,19 @@ def _run_correction(
         )
         del corrected_output
 
-    psd_max_frequency = min(250.0, output_rate / 2.0)
+    psd_max_frequency = min(_PSD_MAX_FREQUENCY_HZ, output_rate / 2.0)
+    psd_tmin, psd_tmax = _corrected_psd_window(
+        geometry,
+        input_sampling_rate=input_rate,
+        recording_duration_seconds=float(raw.times[-1]),
+    )
     _save_psd_plot(
         raw,
         output_paths["psd_before"],
-        title="Before scanner-gradient correction",
+        title="Before scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
+        tmin=psd_tmin,
+        tmax=psd_tmax,
     )
     corrected_raw = mne.io.read_raw_brainvision(
         output_paths["vhdr"],
@@ -200,8 +210,10 @@ def _run_correction(
     _save_psd_plot(
         corrected_raw,
         output_paths["psd_after"],
-        title="After scanner-gradient correction",
+        title="After scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
+        tmin=psd_tmin,
+        tmax=psd_tmax,
     )
 
     provenance_path = output_paths["json"]
@@ -217,6 +229,8 @@ def _run_correction(
         amplitude_rms=amplitude_rms,
         decimation=decimation,
         output_sample_count=output_sample_count,
+        psd_tmin=psd_tmin,
+        psd_tmax=psd_tmax,
         runtime_seconds=time.perf_counter() - started,
     )
     with provenance_path.open("x", encoding="utf-8") as output:
@@ -331,21 +345,87 @@ def _save_psd_plot(
     *,
     fmax: float,
     title: str,
+    tmin: float,
+    tmax: float,
 ) -> None:
+    plot_raw = _prepare_psd_raw(raw)
     with mne.use_log_level("ERROR"):
         figure = mne.viz.plot_raw_psd(
-            raw,
+            plot_raw,
             fmin=0.0,
             fmax=fmax,
+            tmin=tmin,
+            tmax=tmax,
+            spatial_colors=plot_raw.get_montage() is not None,
             show=False,
             n_jobs=1,
             verbose="ERROR",
         )
     try:
+        for axis in figure.axes:
+            if axis.get_xlabel():
+                axis.set_xlim(0.0, fmax)
         figure.suptitle(title)
         figure.savefig(output_path, dpi=150, bbox_inches="tight")
     finally:
         plt.close(figure)
+
+
+def _prepare_psd_raw(raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
+    """Give PSD plots standard positions when the file has no montage."""
+    prepared = raw.copy()
+    montage = prepared.get_montage()
+    if montage is not None:
+        positioned_names = _positioned_channel_names(prepared, montage)
+        if len(positioned_names) >= 2:
+            prepared.pick(positioned_names)
+            return prepared
+
+    standard = mne.channels.make_standard_montage("standard_1020")
+    standard_names = {name.casefold() for name in standard.ch_names}
+    matched_names = [
+        name for name in prepared.ch_names if name.casefold() in standard_names
+    ]
+    if len(matched_names) >= 2:
+        prepared.pick(matched_names)
+        prepared.set_montage(
+            standard,
+            match_case=False,
+            on_missing="raise",
+            verbose="ERROR",
+        )
+    return prepared
+
+
+def _positioned_channel_names(
+    raw: mne.io.BaseRaw,
+    montage: mne.channels.DigMontage,
+) -> list[str]:
+    positions = montage.get_positions()["ch_pos"]
+    return [
+        name
+        for name in raw.ch_names
+        if name in positions and np.isfinite(positions[name]).all()
+    ]
+
+
+def _corrected_psd_window(
+    geometry: FastrGeometry,
+    *,
+    input_sampling_rate: float,
+    recording_duration_seconds: float,
+) -> tuple[float, float]:
+    """Return a common PSD interval containing only corrected samples."""
+    first_sample = float(geometry.triggers[0])
+    last_sample = float(
+        geometry.triggers[-1]
+        + geometry.epoch.samples_after / geometry.interpolation_factor
+    )
+    tmin = first_sample / input_sampling_rate
+    tmax = min(last_sample / input_sampling_rate, recording_duration_seconds)
+    if not 0.0 <= tmin < tmax:
+        raise PipelineInputError("the corrected PSD interval is empty")
+    return tmin, tmax
 
 
 def _validate_marker_output_positions(
@@ -371,6 +451,8 @@ def _make_provenance(
     amplitude_rms: np.ndarray,
     decimation: int,
     output_sample_count: int,
+    psd_tmin: float,
+    psd_tmax: float,
     runtime_seconds: float,
 ) -> dict[str, object]:
     return {
@@ -394,6 +476,10 @@ def _make_provenance(
             "psd_after": str(output_paths["psd_after"]),
             "sampling_rate_hz": float(raw.info["sfreq"] / decimation),
             "sample_count": output_sample_count,
+            "psd_interval_seconds": {
+                "start": psd_tmin,
+                "end": psd_tmax,
+            },
         },
         "configuration": _jsonable_config(config),
         "timing": {
