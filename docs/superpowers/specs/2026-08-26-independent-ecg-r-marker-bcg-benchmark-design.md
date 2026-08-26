@@ -162,8 +162,31 @@ The first correction implementations will be:
   where required by the metric, using the established prior-study implementation as a
   conceptual reference.
 
+The detector's output remains the ECG R-peak sample train. It must not be shifted and
+renamed as a BCG event train. BCG correction uses a separate artifact anchor computed as
+`R_sample + round(ecg_to_bcg_delay_seconds * sampling_rate_hz)`. The initial fixed-delay
+protocol is 0.210 seconds, following the conventional OBS/AAS EEG-fMRI baseline described
+by Niazy et al.; the delay is a correction parameter, not a change to the cardiac-marker
+definition. The configured delay must be recorded in every result and locked before the
+headline benchmark. The literature also reports inter- and intra-subject latency
+variability, so the benchmark will include a predeclared delay-sensitivity diagnostic and
+will not interpret a fixed-delay result as an adaptive timing method.
+
+MNE documents `qrs_times` as ECG R-peak times, while its PCA-OBS implementation uses the
+provided event times to construct heartbeat-centered epochs. For the BCG-specific arm,
+the wrapper will therefore pass the explicit artifact-anchor times to that event-centered
+implementation and will preserve the unshifted R markers separately in provenance. This
+choice, its rationale, and the difference from the documented generic ECG-artifact example
+must be stated in the method report. If the fixed-delay diagnostic shows material residual
+timing error, an adaptive alignment arm based only on the FASTR gradient-corrected EEG and
+the independent ECG train may be evaluated as a separately named extension; it must not
+rewrite the production R markers or use Analyzer output for calibration.
+
 Both methods must state their correction window, channel picks, rank/components, unit
 conversion, boundary policy, and whether the ECG channel is copied through unchanged.
+The MNE arm must also document that PCA-OBS internally demeans each processed channel and
+interpolates fitted artifact between heartbeat windows; the wrapper must restore the input
+channel mean before its bounded splice and must never copy MNE's out-of-window values.
 No undocumented claim will be made that either method is identical to Analyzer's
 implementation.
 
@@ -208,6 +231,10 @@ The primary BCG-removal metric will be held-out heartbeat-locked residual energy
 computed separately per run and summarized with paired differences. The event-locked
 template must be fit on one subset of beats and scored on held-out beats to avoid rewarding
 the correction for averaging away noise.
+
+BCG residual windows and correction windows are defined relative to the explicit artifact
+anchors, not the unshifted ECG R samples. The report will include the delay in seconds and
+samples so that marker timing and artifact timing cannot be conflated.
 
 Required controls and preservation metrics:
 

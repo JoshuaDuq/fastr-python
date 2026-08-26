@@ -20,6 +20,7 @@ The implementation should preserve these method distinctions:
 - The FMRIB/EEGLAB detector provides the most directly relevant single-channel MRI reference: it combines a 7--40 Hz ECG representation, short smoothing, a k-Teager energy operator, Christov's combined adaptive MFR threshold, and a separate false-positive/false-negative correction with correlation alignment. The published Niazy method was validated on poor-quality ECG collected during fMRI: [paper](https://doi.org/10.1016/j.neuroimage.2005.06.067), [FMRIB reference implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_qrsdetect.m), [peak correction implementation](https://github.com/sccn/fMRIb/blob/master/qrscorrect.m). The MATLAB source is GPL-licensed and is a reference for behavior, not source to copy.
 - Christov's adaptive-threshold detector supplies the underlying MFR logic and was evaluated on all 48 full-length MIT-BIH arrhythmia records; the MRI-specific adaptation remains the relevant reference for this study: [paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC516783/).
 - Brain Products documents CB Correction as supporting multiple R-peak strategies, including template/coherence matching, with configurable pulse-rate, correlation, delay, and pulse-interval settings. The supplied Analyzer output is consequently an empirical black-box comparator unless its transformation history/settings are available: [Brain Products documentation](https://pressrelease.brainproducts.com/sensor-data-analysis/), [Analyzer manual discussion](https://www.nmr.mgh.harvard.edu/~tatiana/BrainVisionManuals/RecView/20200204_RecView.pdf).
+- The ECG R peak is not the BCG artifact peak. A fixed 210 ms ECG-to-BCG delay is a conventional OBS/AAS baseline, but the latency varies across and within participants. The detector therefore emits unshifted ECG R samples; each correction arm derives separate artifact anchors from an explicit `ecg_to_bcg_delay_seconds` setting. A predeclared delay-sensitivity diagnostic is required before considering an adaptive alignment extension: [Niazy et al.](https://doi.org/10.1016/j.neuroimage.2005.06.067), [Marino et al.](https://doi.org/10.1038/s41598-018-27187-6), [systematic review](https://pmc.ncbi.nlm.nih.gov/articles/PMC7991907/).
 - Ganassin et al. (2024) demonstrated a patient-independent MRI R-peak strategy using ICA, derivative-based detection, adaptive thresholding, and automatic component selection. Their validation used multi-lead ECG without imaging gradients, so the plan uses the signal-processing principles but does not assume that single-channel study conditions transfer to this cohort: [paper](https://doi.org/10.1088/1361-6579/ad3b3d).
 - Wong et al. (2018) detected cardiac cycles from an ICA-derived EEG BCG component. That is a useful independent audit concept, but it is outside the agreed production boundary because this detector must use ECG only: [paper](https://pubmed.ncbi.nlm.nih.gov/29614296/).
 - MNE's official ECG and PCA-OBS examples are the package-level references for API behavior and correction validation: [ECG artifact workflow](https://mne.tools/stable/auto_tutorials/preprocessing/50_artifact_correction_ssp.html), [PCA-OBS example](https://mne.tools/stable/auto_examples/preprocessing/esg_rm_heart_artefact_pcaobs.html).
@@ -73,7 +74,7 @@ registration is required.
 - Create: `examples/cardiac_detection.yml`
 - Create: `examples/bcg_benchmark.yml`
 
-- [ ] **Step 1: Write failing configuration tests.** Cover the accepted shape, relative-path resolution, immutable dataclasses, unknown-key rejection, invalid frequency ordering, invalid interval ordering, unsupported correction methods, and non-existent paths being deferred until execution. The accepted YAML fields must be exactly:
+- [ ] **Step 1: Write failing configuration tests.** Cover the accepted shape, relative-path resolution, immutable dataclasses, unknown-key rejection, invalid frequency ordering, invalid interval ordering, invalid ECG-to-BCG delay, unsupported correction methods, and non-existent paths being deferred until execution. The accepted YAML fields must be exactly:
 
 ```yaml
 input:
@@ -100,6 +101,7 @@ benchmark:
   marker_tolerance_seconds: 0.1
   correction_methods: [aas, pca_obs]
   correction_window_seconds: [-0.2, 0.7]
+  ecg_to_bcg_delay_seconds: 0.210
   aas_neighbor_count: 20
   pca_obs_components: 4
   null_surrogate_count: 20
@@ -155,6 +157,7 @@ class BenchmarkConfig:
     marker_tolerance_seconds: float
     correction_methods: tuple[str, ...]
     correction_window_seconds: tuple[float, float]
+    ecg_to_bcg_delay_seconds: float
     aas_neighbor_count: int
     pca_obs_components: int
     null_surrogate_count: int
@@ -171,7 +174,8 @@ def load_benchmark_config(path: str | Path) -> BenchmarkConfig:
 
 Use the existing `ConfigurationError` style: reject booleans where numbers are expected,
 require finite positive frequencies, require `low < high`, require `minimum_rr <
-maximum_rr`, require at least one correction method, and accept only `aas` and `pca_obs`.
+maximum_rr`, require a finite nonnegative ECG-to-BCG delay, require at least one correction
+method, and accept only `aas` and `pca_obs`.
 Resolve relative paths relative to the YAML file without creating directories or checking
 input existence during parsing.
 
@@ -440,8 +444,10 @@ git commit -m "feat: write independent pulse markers and audits"
 volts containing a known heartbeat-locked artifact, unrelated broadband signal, and a
 separate ECG channel. Assert that both methods reduce held-out heartbeat-locked residual
 energy, that samples outside the configured union of beat windows are unchanged, and that
-the ECG channel is byte-identical. Test that PCA-OBS with fewer than `n_components + 1`
-valid beats raises a specific `BcgInputError`.
+the ECG channel is byte-identical. Assert that the PCA-OBS wrapper preserves the original
+channel mean outside the correction splice even though the MNE implementation internally
+demeans each processed channel. Test that PCA-OBS with fewer than `n_components + 1` valid
+beats raises a specific `BcgInputError`.
 
 - [ ] **Step 2: Run the focused tests and verify the expected failure.**
 
@@ -458,6 +464,7 @@ Expected: import failure because `mri_correction.bcg` does not yet exist.
 class BcgCorrectionConfig:
     method: str
     window_seconds: tuple[float, float]
+    ecg_to_bcg_delay_seconds: float
     aas_neighbor_count: int
     pca_obs_components: int
 
@@ -483,17 +490,23 @@ def correct_bcg(
 ```
 
 Implement `_correct_aas` as local-neighbour heartbeat subtraction: extract complete
-epochs, form the mean of the configured neighbouring epochs excluding the target, subtract
-that template only from the target window, and blend overlapping windows by the existing
-sample-wise correction accumulation rule. Do not use the target epoch in its own AAS
-template.
+epochs around artifact anchors (`R + configured ECG-to-BCG delay`), form the mean of the
+configured neighbouring epochs excluding the target, subtract that template only from the
+target window, and blend overlapping windows by the existing sample-wise correction
+accumulation rule. Do not use the target epoch in its own AAS template.
 
 Implement `_correct_pca_obs` with a temporary `mne.io.RawArray` containing only EEG picks,
-call `mne.preprocessing.apply_pca_obs` with QRS times in seconds and the configured number
-of components, then splice the corrected values only into the configured heartbeat-window
-union. Restore the original ECG and all non-EEG channels exactly. Validate all array shapes,
-finite values, event ordering, complete epochs, and MNE's minimum beat requirement before
-calling the library.
+call `mne.preprocessing.apply_pca_obs` with artifact-anchor times in seconds and the
+configured number of components, then splice the corrected values only into the configured
+heartbeat-window union. This intentionally uses MNE's event-centered implementation with
+BCG anchors even though its generic documentation calls the argument `qrs_times`; preserve
+the original ECG R samples separately and record the rationale. MNE's implementation
+demeans each channel and interpolates its fitted artifact between heartbeat windows; add
+the input channel means back before extracting the correction splice, and never copy its
+out-of-window values into the result. Restore the original ECG and all non-EEG channels
+exactly. Validate all array shapes, finite values, event ordering, complete epochs, the
+explicit delay, and MNE's effective minimum-beat requirement—including its handling of
+the first and last anchors—before calling the library.
 
 - [ ] **Step 4: Run tests and compare both methods on the synthetic artifact.**
 
@@ -575,6 +588,10 @@ def circular_shifted_cardiac_null(
     raise NotImplementedError
 ```
 
+For BCG scoring, callers pass artifact-anchor samples (`R + configured delay`) to these
+functions. Detector and marker-audit code continues to use the unshifted ECG R samples.
+This keeps the cardiac-marker and artifact-timing coordinate systems explicit.
+
 Reuse current validation and fractional epoch extraction helpers. Return per-channel arrays
 and raise `MetricInputError` for insufficient complete epochs instead of returning a
 misleading zero. Keep the existing public metric outputs unchanged.
@@ -613,7 +630,8 @@ Use a single explicit run-key parser for `runN_subXXXX` and baseline recordings.
 duplicate keys rather than taking the first path. For each pair, load the FASTR and
 Analyzer recordings with MNE, validate channel names/order, sample count, sampling rate,
 and ECG identity, then run `detect_r_peaks` on the FASTR ECG vector alone. Only after that
-call `audit_marker_trains` against Analyzer's `Pulse Artifact,R` annotations.
+derive artifact anchors from those R samples and the configured ECG-to-BCG delay, and call
+`audit_marker_trains` against Analyzer's `Pulse Artifact,R` annotations.
 
 Score the Analyzer reference by comparing the same FASTR input against the Analyzer output,
 and score each own-method output by comparing the same FASTR input against its corrected
@@ -745,8 +763,11 @@ Analyzer annotations as truth. If manual adjudication is not available, omit tho
 metrics and state the limitation explicitly.
 
 - [ ] **Step 5: Run the full paired benchmark.** Execute the locked configuration across all
-validated pairs. Confirm that every report row contains either complete metrics or an
-explicit failure reason. Inspect representative clean, difficult, and low-marker runs.
+validated pairs. Before interpreting the headline result, run the predeclared fixed-delay
+sensitivity diagnostic on the FASTR input using training-beat alignment and held-out-beat
+scoring; do not choose the headline delay by comparing to Analyzer output. Confirm that
+every report row contains either complete metrics or an explicit failure reason. Inspect
+representative clean, difficult, and low-marker runs.
 
 - [ ] **Step 6: Apply the predeclared interpretation rule.** Report paired run-level
 differences for Analyzer, AAS, and PCA-OBS. A claim of outperformance requires lower
