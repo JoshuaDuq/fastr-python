@@ -40,6 +40,6 @@ The synthetic transfer test demonstrates the identifiability advantage: volume A
 retained effectively 0% of a pure 1/TR sinusoid, whereas slice-group AAS retained more
 than 99% RMS. The real-data failure shows that the gradient waveform is not adequately
 described by one uniform 244-sample group template. Exact multiband group timing,
-sub-sample alignment, position-dependent waveform variation, and a validated FASTR/OBS
+sub-sample alignment, acquisition-slot-dependent waveform variation, and a validated FASTR/OBS
 residual model are the next scientific tests. Spectral-bin interpolation is not an
 acceptable remedy because it would invent rather than recover data.

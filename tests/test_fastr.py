@@ -203,7 +203,8 @@ def test_make_group_triggers_preserves_fractional_sample_positions() -> None:
         (np.array([0, 4500], dtype=np.float64), 5000.0, "integer"),
         (np.array([False, True]), 5000.0, "boolean"),
         (np.array([4500, 0]), 5000.0, "strictly increasing"),
-        (np.array([0, 4500, 9001]), 5000.0, "contiguous"),
+        (np.array([0, 4500, 9001]), 5000.0, "jitter"),
+        (np.array([0, 4500, 22500]), 5000.0, "acquisition gap"),
         (np.array([0, 4500]), True, "sampling rate"),
         (np.array([0, 4500]), float("inf"), "sampling rate"),
         (np.array([0, 4500]), 5000.5, "integer number"),
@@ -220,3 +221,36 @@ def test_make_group_triggers_rejects_invalid_inputs(
             sampling_rate=sampling_rate,  # type: ignore[arg-type]
             timing=make_real_acquisition_timing(),
         )
+
+
+@pytest.mark.parametrize(
+    ("volume_starts", "message"),
+    [
+        (np.array([0, 4_500, 9_001]), "jitter"),
+        (np.array([0, 4_500, 8_999]), "jitter"),
+        (np.array([0, 4_500, 9_000, 326_672]), "acquisition gap"),
+        (np.array([0, 4_500, 13_500]), "acquisition gap"),
+    ],
+)
+def test_make_group_triggers_names_jitter_and_gaps_apart(
+    volume_starts: np.ndarray,
+    message: str,
+) -> None:
+    """Both fail, but a missing marker and a jittered one need different fixes."""
+    with pytest.raises(FastrInputError, match=message):
+        make_group_trigger_samples(
+            volume_starts,
+            sampling_rate=5000.0,
+            timing=make_real_acquisition_timing(),
+        )
+
+
+def test_make_group_triggers_reports_where_the_spacing_breaks() -> None:
+    with pytest.raises(FastrInputError, match="markers 2 and 3") as error:
+        make_group_trigger_samples(
+            np.array([0, 4_500, 9_001, 13_501]),
+            sampling_rate=5000.0,
+            timing=make_real_acquisition_timing(),
+        )
+
+    assert "+1" in str(error.value)
