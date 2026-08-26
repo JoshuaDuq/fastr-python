@@ -23,6 +23,13 @@ The implementation should preserve these method distinctions:
 - Wong et al. (2018) detected cardiac cycles from an ICA-derived EEG BCG component. That is a useful independent audit concept, but it is outside the agreed production boundary because this detector must use ECG only: [paper](https://pubmed.ncbi.nlm.nih.gov/29614296/).
 - MNE's official ECG and PCA-OBS examples are the package-level references for API behavior and correction validation: [ECG artifact workflow](https://mne.tools/stable/auto_tutorials/preprocessing/50_artifact_correction_ssp.html), [PCA-OBS example](https://mne.tools/stable/auto_examples/preprocessing/esg_rm_heart_artefact_pcaobs.html).
 
+Niazy et al. validated QRS sensitivity and specificity against manual heartbeat counts.
+Analyzer annotations cannot serve that role in this cohort because they are the reference
+system being challenged and are known to miss beats. A detector-level sensitivity or
+positive-predictive-value claim therefore requires blinded manual adjudication of a
+stratified subset; otherwise the report must use marker agreement, ECG self-consistency,
+and downstream held-out BCG residuals as its explicitly limited evidence.
+
 The earlier `pain_study` implementation remains a design reference for QRS template construction, double-mark rejection, physiological interval checks, held-out event-locked metrics, and circular-shift nulls. Its Analyzer-seeded gap search, `read_analyzer_beats`, and marker-driven recovery path must not be called by the new production detector.
 
 ## File map
@@ -729,17 +736,24 @@ QRS/T-wave pair. Compare Analyzer markers only in the audit report. If the only 
 candidate is `/Volumes/KINGSTON/EEG_fMRI_data/source_data/step3_bcg_corrected`, stop with an
 input-stage error rather than using it as the own-method EEG source.
 
-- [ ] **Step 4: Run the full paired benchmark.** Execute the locked configuration across all
+- [ ] **Step 4: Create the detector truth audit before making sensitivity claims.** Select a
+stratified, blinded subset of FASTR ECG traces covering clear, difficult, and low-marker
+runs. Record manually adjudicated QRS sample positions and the adjudication protocol.
+Use this subset for sensitivity, positive predictive value, and timing error; do not use
+Analyzer annotations as truth. If manual adjudication is not available, omit those
+metrics and state the limitation explicitly.
+
+- [ ] **Step 5: Run the full paired benchmark.** Execute the locked configuration across all
 validated pairs. Confirm that every report row contains either complete metrics or an
 explicit failure reason. Inspect representative clean, difficult, and low-marker runs.
 
-- [ ] **Step 5: Apply the predeclared interpretation rule.** Report paired run-level
+- [ ] **Step 6: Apply the predeclared interpretation rule.** Report paired run-level
 differences for Analyzer, AAS, and PCA-OBS. A claim of outperformance requires lower
 primary held-out cardiac residual together with acceptable preservation and null controls;
 marker count or spectral notch depth alone is insufficient. Do not retune thresholds on
 the headline evaluation after viewing the results.
 
-- [ ] **Step 6: Run final verification and commit documentation/results tooling.**
+- [ ] **Step 7: Run final verification and commit documentation/results tooling.**
 
 ```bash
 uv run pytest -q

@@ -178,6 +178,14 @@ On real recordings, QC will report:
 - one-to-one agreement with Analyzer markers as an audit only;
 - agreement with an optional second detector as an audit only, never as an acceptance rule.
 
+Analyzer's marker train is not a ground-truth label: it is the comparator whose missed
+beats motivate this work. If sensitivity, positive predictive value, or timing error is
+reported as a detector-validation result, a blinded manual adjudication of a stratified
+subset of the FASTR ECG recordings is required, following the manual-count approach used
+in the original MRI detector validation. Without that adjudication, the report will use
+the narrower language of marker agreement, internal ECG consistency, and downstream
+held-out BCG residuals rather than claiming true detector sensitivity or superiority.
+
 MNE's documented ECG-event detector will be implemented as a baseline/audit where useful,
 not silently substituted for the independent detector. See the official MNE ECG artifact
 workflow and PCA-OBS documentation:
