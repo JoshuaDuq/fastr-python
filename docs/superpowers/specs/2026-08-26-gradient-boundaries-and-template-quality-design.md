@@ -16,7 +16,7 @@ correction, 5 kHz to 1 kHz, no pulse correction). The core correction is sound:
 | Pearson r vs Analyzer, 1-40 Hz, median | -- | 0.99978 | -- |
 | time lag vs Analyzer | -- | 0 samples in 101/102 | -- |
 
-Three defects were measured. The goal is not to match Analyzer but to reach and
+Four defects were measured. The goal is not to match Analyzer but to reach and
 where possible beat it, judged on absolute criteria.
 
 ### Defect 1: every output is about 4.6 % too large
@@ -66,27 +66,60 @@ Untrimmed 5 kHz data exists for all 21 real subjects (7-8 runs each) with
 16.4-28.5 s of head margin and 0.04-10.5 s of tail margin. The trim was
 housekeeping, not a requirement.
 
-### Defect 3: elevated residual in high-motion blocks
+### Defect 3: baseline drift leaks into the template
 
 A full-duration scan of all 102 runs in 30 s blocks (11 417 channel-blocks,
 excluding the 3rd slice harmonic because 20 Hz x 3 lands on 60 Hz mains) found
 routine performance indistinguishable from Analyzer (blocks above 3x
 background: 344 for FASTR, 326 for Analyzer). Seven runs, all from subjects
-0004, 0007 and 0012, carry more residual line artifact than Analyzer:
+0004, 0007 and 0012, carry more residual line artifact than Analyzer, worst
+20.9 uV on run2 sub0012 Fp1 against Analyzer's 1.2 uV. Every flagged block is a
+heavy-motion block, and in every one FASTR's broadband amplitude is *lower*
+than Analyzer's.
 
-| run | channel | FASTR line residual | Analyzer | FASTR broadband | Analyzer |
-| --- | --- | --- | --- | --- | --- |
-| run2 sub0012 | Fp1 | 20.9 uV | 1.2 uV | 380 uV | 1401 uV |
-| run5 sub0007 | Fp1 | 4.2 uV | 0.95 uV | 665 uV | 811 uV |
-| run5 sub0004 | Fp1 | 2.1 uV | 0.49 uV | 372 uV | 395 uV |
-| run5 sub0004 | Cz | 1.8 uV | 0.07 uV | 147 uV | 167 uV |
-| baseline sub0004 | Cz | 1.1 uV | 0.20 uV | 65 uV | 84 uV |
-| run1 sub0012 | Cz | 0.05 uV | 0.04 uV | 9.7 uV | 12.1 uV |
+The cause is a deviation from Niazy et al. (2005) stage 2. The paper builds the
+moving-average template, and fits the least-squares scalar, on `Y_h`: a 1 Hz
+high-passed copy of the interpolated signal, "to ensure that the different
+artifact segments used in the average artifact estimation have the same
+baseline". The estimated artifact is then subtracted from the original signal,
+not the high-passed one, so slow content is preserved. This implementation
+estimates both the template and the scalar from the un-high-passed signal, so
+baseline shifts leak into the template and bias the fit.
 
-Every flagged block is a heavy-motion block. The deficit is 5-25x relative but
-1-4 uV absolute in most cases, 21 uV in the worst. The existing sidecar does
-not detect any of it: alignment correlations stay above 0.88 and amplitude fits
-within 1.000 +/- 0.012 even in the worst block.
+Measured on run2 sub0012 Fp1, current versus paper-faithful versus Analyzer:
+
+| block | current | 1 Hz high-pass | Analyzer |
+| --- | --- | --- | --- |
+| 150-180 s, line residual | 20.87 uV | 0.21 uV | 1.16 uV |
+| 150-180 s, broadband | 380 uV | 1403 uV | 1401 uV |
+| 30-60 s, line residual | 0.83 uV | 0.18 uV | 0.29 uV |
+| 30-60 s, broadband | 41 uV | 120 uV | 120 uV |
+| amplitude-fit spread, whole run | 0.1397 | 0.0030 | -- |
+
+The paper-faithful variant and Analyzer agree to within 0.5 % on broadband
+amplitude; the current implementation is the outlier, discarding roughly 73 %
+of the low-frequency signal amplitude on drifting channels while leaving 18x
+more line artifact. Clean channels (F3, Cz) are unaffected either way.
+
+Note that the released reference implementation, `fmrib_fastr.m`, does *not*
+apply this high-pass before templating; it high-passes at 70 Hz only when
+building the OBS residual matrix, which is what `_HIGH_PASS_HZ = 70.0` in
+`_make_residual_high_pass` correctly mirrors. The repo follows the released
+code. On this data the paper's description is measurably better.
+
+### Defect 4: two of FASTR's four stages are not in the pipeline
+
+Niazy et al. define FASTR as four stages: trigger alignment, moving-average
+template subtraction, residual removal by optimal basis set (OBS), and adaptive
+noise cancellation (ANC). `residual_obs` (`src/mri_correction/fastr.py:597`)
+implements stage 3, but `pipeline.py` never imports it. Stage 4 is absent
+entirely. The whole validation cohort was produced with stages 1 and 2, which
+the paper states remove "more than 98%" of the artifact, leaving stages 3 and 4
+to address the remainder.
+
+This is recorded as scope, not as work: defect 3's fix is measured first, and
+stages 3 and 4 are considered only if the re-measured cohort still falls short
+of Analyzer.
 
 ## What changes
 
@@ -149,17 +182,25 @@ artifact; the sweep establishes whether that trade is real and where it turns.
 The measured transfer gain is written to the sidecar regardless of which
 default is chosen, so downstream users can correct for it.
 
-### C. Robust template, conditional on cohort evidence
+### C. Estimate the template on a high-passed signal
 
-Replace the plain mean over the 20 same-slot neighbours with a trimmed mean
-that rejects motion-corrupted epochs.
+Add `processing.template_high_pass_hz`, default 1.0. The moving-average
+template and the least-squares scalar are estimated from a high-passed copy of
+each channel; the resulting artifact estimate is subtracted from the unfiltered
+channel, so slow content survives. Setting it to 0.0 restores current
+behaviour and is the escape hatch for reproducing the existing cohort.
 
-This changes the estimator for every epoch in every run, and a trimmed mean
-discards real epochs in clean data, which costs variance in the same currency
-as defect 1. It therefore ships only if a before/after across all 102 runs
-improves **both** the residual line artifact in the flagged motion blocks and
-the transfer gain on clean runs. If it does not, it is reverted and defect 3 is
-handled by detection alone.
+Filtering is applied at the input rate before interpolation rather than on the
+10x grid, where a 1 Hz Butterworth is poorly conditioned.
+
+This changes the estimator for every epoch in every run, so it is validated by
+the same cohort re-run that validates the trimming change. It is expected to
+leave clean channels untouched and to change motion blocks substantially; a
+clean-channel regression would mean the filter is wrong, not that the idea is.
+
+A trimmed-mean template was considered first and rejected: it treats the
+symptom, costs variance on the 97 % of blocks that already work, and is not
+what the algorithm specifies.
 
 ### D. Full-duration residual QC
 
@@ -191,7 +232,7 @@ implementation.
 | `pipeline._lowpass_and_decimate` | filter full array, slice, decimate | window |
 | `brainvision_io.resample_markers` | rescale **and** offset markers to the window | window |
 | `fastr._fit_channel_noise` | partial-epoch amplitude fit at boundaries | epoch coverage |
-| `fastr._make_templates` | plain or trimmed mean, selectable | neighbour epochs |
+| `fastr.apply_fastr_batch` | high-pass a channel copy before templating | `template_high_pass_hz` |
 | `diagnostics.block_residuals` | per-block uV residual at derived harmonics | timing |
 
 ## Testing
@@ -210,6 +251,10 @@ Test-driven throughout.
   does not.
 - Residual QC: a synthetic residual of known amplitude is recovered in uV to
   within 5 %.
+- Template high-pass: a synthetic recording with a step baseline shift keeps the
+  step after correction and holds the scalar's spread below 0.02; with
+  `template_high_pass_hz=0.0` the output matches the pre-change code path
+  exactly.
 
 Cohort validation reuses the comparison harness built during the
 investigation: matched-file discovery, off-harmonic transfer gain vs raw,
@@ -224,3 +269,10 @@ full-duration blockwise residual, and agreement with Analyzer.
 - A wider template window may worsen defect 3 while fixing defect 1. The sweep
   measures both, so the default is chosen with that trade visible rather than
   assumed.
+- The template high-pass changes every corrected sample. Existing tests that
+  assert exact corrected values must each be judged individually: unchanged on
+  drift-free synthetic data, updated where the fixture contains drift.
+- Defect 4 is knowingly deferred. If the re-measured cohort still trails
+  Analyzer anywhere, wiring in OBS is the next step, and `residual_obs` needs
+  the per-minute chunking and variance-based rank the paper specifies before it
+  is trustworthy.

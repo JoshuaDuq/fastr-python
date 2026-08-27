@@ -1,7 +1,7 @@
 # Independent ECG R-marker detection and BCG benchmark
 
 **Date:** 2026-08-26
-**Status:** Design approved; implementation pending
+**Status:** Implemented; cohort validation and blinded ECG adjudication pending
 
 ## Objective
 
@@ -51,24 +51,30 @@ reference. The benchmark will not claim to reproduce a particular Analyzer algor
 the output files alone: [Brain Products documentation](https://pressrelease.brainproducts.com/sensor-data-analysis/),
 [Analyzer manual discussion](https://www.nmr.mgh.harvard.edu/~tatiana/BrainVisionManuals/RecView/20200204_RecView.pdf).
 
-The implementation will require an explicit FASTR input root and an explicit Analyzer
-reference root. It will fail if either root is missing, ambiguously paired, or contains a
-different recording geometry. Existing `step2_pulse_markers_recovered_v2` annotations
-are legacy evidence only; they are not production detector input.
+The implementation will require three explicit roots: the FASTR-only input, the Analyzer
+pre-BCG input, and the corresponding Analyzer post-BCG output. It will fail if a root is
+missing, pair keys are ambiguous, or the recordings have incompatible geometry. The FASTR
+input must not contain `Pulse Artifact,R`; existing `step2_pulse_markers_recovered_v2`
+annotations are legacy evidence only and are not production detector input.
 
 The headline comparison will contain at least these arms:
 
 1. FASTR gradient-corrected EEG with independent ECG-derived R markers and our BCG
    correction.
-2. Analyzer's existing BCG-corrected recording as the empirical reference.
+2. Analyzer's existing pre-BCG versus post-BCG pair as the incumbent correction arm.
 
 Diagnostic ablations may add FASTR EEG corrected with Analyzer markers and the same local
 correction implementation. That arm isolates marker quality from correction-method
 quality, but it is not an independent production result and will not be presented as one.
 
-Every paired recording must be checked for matching sample count, sampling frequency,
-channel order, and ECG identity. The ECG channel must be excluded from EEG BCG fitting and
-must remain sample-identical in any written corrected output.
+Every paired recording must be checked for matching sampling frequency, channel order, and
+ECG identity. Analyzer input and output must have identical sample geometry. FASTR and
+Analyzer input may differ by one terminal sample when gradient-correction decimation
+defines the endpoint differently; all comparisons then use the common prefix. The ECG
+channel must be excluded from EEG BCG fitting and must remain sample-identical in any
+written corrected output. Analyzer's markers are used only to score its own correction arm
+and to audit detector agreement; because Analyzer is known to miss beats, disagreement is
+not evidence that an independent FASTR detection is wrong.
 
 ## Independent detector design
 
@@ -83,17 +89,18 @@ The detector will work on a copy of the ECG and preserve the original samples fo
 timing localization. Conditioning will be deterministic and explicitly configured:
 
 - finite one-dimensional ECG samples are required;
-- a zero-phase 7--40 Hz QRS-enhancing representation and a short smoothing operation are
-  used for candidate generation, following the single-channel MRI detector described by
-  Niazy et al.;
+- a zero-phase, explicitly configured cardiac morphology representation and a short
+  smoothing operation are used for candidate generation. The supplied study
+  configuration uses 0.5--10 Hz because the corrected ECG has a broad cardiac waveform;
+  this is a locked study parameter, not an Analyzer-derived choice;
 - a k-Teager energy representation is used as the polarity-invariant complex lead, with
   the emphasis parameter derived from the sampling rate and a documented target
   frequency;
 - edge handling is explicit, and candidates whose full fitting window is unavailable are
   rejected rather than silently clipped.
 
-The initial protocol configuration will use a documented QRS band and a fixed template
-window appropriate for the 1 kHz recordings. Configuration belongs in the project YAML,
+The initial protocol configuration will use a documented cardiac morphology band and a
+fixed template window appropriate for the 1 kHz recordings. Configuration belongs in the project YAML,
 not in scattered module constants. Any change to these values requires a new benchmark
 provenance record.
 

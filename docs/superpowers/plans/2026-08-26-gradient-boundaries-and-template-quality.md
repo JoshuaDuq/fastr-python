@@ -4,7 +4,7 @@
 
 **Goal:** Correct every volume in the emitted window by reading untrimmed input and trimming inside the pipeline, then measure and improve template quality with evidence.
 
-**Architecture:** The pipeline gains an optional `trim` section. With it enabled it reads untrimmed BrainVision data, builds FASTR geometry over the full recording so boundary volumes have complete epochs, and slices the output window during decimation rather than before correction. A second phase adds a microvolt-valued residual-artifact measurement written to the sidecar and annotated in the output `.vmrk`, then uses it to pick `neighbor_count` and to decide whether a trimmed-mean template earns its place.
+**Architecture:** The pipeline gains an optional `trim` section. With it enabled it reads untrimmed BrainVision data, builds FASTR geometry over the full recording so boundary volumes have complete epochs, and slices the output window during decimation rather than before correction. A second phase adds a microvolt-valued residual-artifact measurement written to the sidecar and annotated in the output `.vmrk`, then uses it to pick `neighbor_count`.
 
 **Tech Stack:** Python 3.12, numpy 2.4.6, scipy 1.17.1, mne 1.12.1, pybv 0.8.1, pytest 9.1.1, ruff 0.16.3, uv.
 
@@ -16,7 +16,7 @@
 - BrainVision marker positions are **one-based** everywhere they appear in `BrainVisionMarker.position`. Sample indices inside numpy arrays are **zero-based**. Every conversion must be explicit.
 - `trim.mode` defaults to `none`, which must reproduce today's output **byte for byte**. This is the regression gate for the decimation change.
 - No correction function may accept an estimated acquisition period. Group timing comes from BIDS metadata only (see `docs/algorithm.md`).
-- Phase 1 (Tasks 1-8) is independently shippable and closes with a cohort re-run. Phase 2 (Tasks 9-11) depends on it.
+- Phase 1 (Tasks 1-9) is independently shippable and closes with a cohort re-run. Phase 2 (Tasks 10-11) depends on it.
 
 ## Verified facts this plan relies on
 
@@ -37,9 +37,9 @@ Established by measurement during the investigation. Do not re-derive; do not as
 | `src/mri_correction/pipeline.py:329` | `_lowpass_and_decimate` fuses slice and decimate | modify |
 | `src/mri_correction/pipeline.py:78` | `_run_correction` wiring | modify |
 | `src/mri_correction/fastr.py:1234` | partial-epoch amplitude fit | modify |
-| `src/mri_correction/fastr.py:1158` | selectable plain or trimmed-mean template | modify |
+| `src/mri_correction/fastr.py:362` | estimate the template on a high-passed copy | modify |
 | `src/mri_correction/residual_qc.py` | derived harmonics, per-block residual in uV | create |
-| `scripts/sweep_neighbor_count.py` | analysis harness for Task 10 | create |
+| `scripts/sweep_neighbor_count.py` | analysis harness for Task 11 | create |
 | `examples/configuration.yml` | use `first_to_last_volume` | modify |
 | `docs/algorithm.md` | document trimming and boundary handling | modify |
 
@@ -913,7 +913,179 @@ git commit -m "feat: measure residual gradient artifact in microvolts"
 
 ---
 
-### Task 8: Cohort re-run and Phase 1 validation
+### Task 8: Estimate the template on a high-passed signal (Niazy stage 2)
+
+**Files:**
+- Modify: `src/mri_correction/fastr.py:362-412` (`apply_fastr_batch`), `:1234` (`_fit_channel_noise` call site)
+- Modify: `src/mri_correction/config.py` (`ProcessingConfig.template_high_pass_hz: float = 1.0`)
+- Test: `tests/test_fastr_batch.py`, `tests/test_config.py`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks.
+- Produces: `apply_fastr_batch(data, geometry, alignment, *, template_high_pass_hz=1.0, sampling_rate)`. The template and the least-squares scalar are estimated from a high-passed copy of the channel; the resulting artifact estimate is subtracted from the **unfiltered** channel. `template_high_pass_hz=0.0` restores the current behaviour.
+
+Niazy et al. (2005) stage 2 builds the moving-average template, and fits the
+scalar, on `Y_h`, a 1 Hz high-passed copy of the interpolated signal, "to ensure
+that the different artifact segments used in the average artifact estimation
+have the same baseline", then subtracts the estimate from the original signal so
+slow content survives. The current code estimates both from the unfiltered
+signal, so baseline shifts leak into the template and bias the scalar.
+
+Measured on nine channel-runs across subjects 0004 and 0012, current versus this
+fix versus Analyzer: line residual falls from 1.1-20.9 uV to 0.00-0.43 uV
+against Analyzer's 0.02-1.16 uV, broadband amplitude rises to within 0.2 % of
+Analyzer in every motion block, and the scalar's spread falls by 10-50x. Clean
+blocks are unchanged. Note that the released `fmrib_fastr.m` does not apply this
+high-pass; the paper's description measurably outperforms the released code on
+this data.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `tests/test_fastr_batch.py`:
+
+```python
+def test_baseline_drift_does_not_leak_into_the_template():
+    rng = np.random.default_rng(0)
+    sf = 1000.0
+    interval = 50
+    n_groups = 400
+    n = interval * (n_groups + 2)
+    phase = np.arange(interval) / interval
+    shape = np.sin(2 * np.pi * phase) * 1000.0
+    artifact = np.tile(shape, n // interval + 1)[:n]
+    eeg = rng.standard_normal(n) * 5.0
+    drift = np.zeros(n)
+    drift[n // 3 : 2 * n // 3] = 400.0  # a step baseline shift, as in movement
+    triggers = (np.arange(n_groups) + 1) * interval
+
+    geometry = prepare_fastr_geometry(
+        triggers,
+        sample_count=n,
+        interpolation_factor=10,
+        neighbor_count=20,
+        search_radius_samples=3,
+    )
+    alignment = fit_fastr_alignment(artifact + eeg + drift, geometry)
+    corrected = apply_fastr_batch(
+        np.vstack([artifact + eeg + drift]),
+        geometry,
+        alignment,
+        template_high_pass_hz=1.0,
+        sampling_rate=sf,
+    )
+    span = slice(n // 3 + 5 * interval, 2 * n // 3 - 5 * interval)
+    recovered = corrected.data[0, span]
+    truth = (eeg + drift)[span]
+    # the step survives: it is signal, not gradient artifact
+    assert abs(recovered.mean() - truth.mean()) < 20.0
+    # and the scalar is not dragged around by it
+    assert corrected.provenance.amplitudes.std() < 0.02
+
+
+def test_zero_high_pass_reproduces_the_unfiltered_estimate():
+    rng = np.random.default_rng(1)
+    sf = 1000.0
+    interval = 50
+    n_groups = 200
+    n = interval * (n_groups + 2)
+    phase = np.arange(interval) / interval
+    signal = np.tile(np.sin(2 * np.pi * phase) * 1000.0, n // interval + 1)[:n]
+    signal = signal + rng.standard_normal(n) * 5.0
+    triggers = (np.arange(n_groups) + 1) * interval
+
+    geometry = prepare_fastr_geometry(
+        triggers,
+        sample_count=n,
+        interpolation_factor=10,
+        neighbor_count=20,
+        search_radius_samples=3,
+    )
+    alignment = fit_fastr_alignment(signal, geometry)
+    corrected = apply_fastr_batch(
+        np.vstack([signal]),
+        geometry,
+        alignment,
+        template_high_pass_hz=0.0,
+        sampling_rate=sf,
+    )
+
+    # the pre-change code path, computed here explicitly
+    interpolated = _interpolate(
+        signal,
+        geometry.interpolation_taps,
+        geometry.interpolation_factor,
+    )
+    noise, _ = _fit_channel_noise(
+        interpolated,
+        alignment.fitted_triggers,
+        geometry.window,
+        geometry.epoch,
+    )
+    expected = signal - noise[:: geometry.interpolation_factor]
+    assert np.allclose(corrected.data[0], expected)
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `uv run pytest tests/test_fastr_batch.py -k high_pass -v`
+Expected: FAIL with `TypeError: apply_fastr_batch() got an unexpected keyword argument 'template_high_pass_hz'`.
+
+- [ ] **Step 3: Implement**
+
+In `apply_fastr_batch`, high-pass each channel before interpolation. Filtering at
+the input rate rather than on the 10x interpolated grid keeps the filter
+well-conditioned at 1 Hz:
+
+```python
+    if template_high_pass_hz > 0.0:
+        sos = butter(2, template_high_pass_hz, btype="high", fs=sampling_rate,
+                     output="sos")
+    else:
+        sos = None
+    for index, channel in enumerate(recording):
+        source = sosfiltfilt(sos, channel) if sos is not None else channel
+        interpolated = _interpolate(
+            source,
+            geometry.interpolation_taps,
+            geometry.interpolation_factor,
+        )
+        noise, amplitudes[index] = _fit_channel_noise(
+            interpolated,
+            alignment.fitted_triggers,
+            geometry.window,
+            geometry.epoch,
+        )
+        corrected[index] -= noise[:: geometry.interpolation_factor]
+```
+
+`corrected` is still initialised from the **unfiltered** recording, so the
+subtraction removes only the artifact estimate and leaves slow content intact.
+
+Add `from scipy.signal import butter, sosfiltfilt` to the fastr imports, add
+`template_high_pass_hz: float = 1.0` to `ProcessingConfig` with validation that
+it is finite and non-negative and below the input Nyquist, and pass it plus
+`sampling_rate=input_rate` from `pipeline._run_correction`.
+
+- [ ] **Step 4: Run the full suite**
+
+Run: `uv run pytest && uv run ruff check src tests`
+Expected: PASS.
+
+Several existing tests assert exact corrected values and will now differ. For
+each one, decide deliberately: if it constructs drift-free synthetic data the
+result should be unchanged and a failure is a real bug; if it includes drift,
+update the expectation and say so in the commit message.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/mri_correction/fastr.py src/mri_correction/config.py src/mri_correction/pipeline.py tests/
+git commit -m "fix: estimate the artifact template on a high-passed signal"
+```
+
+---
+
+### Task 9: Cohort re-run, validating trimming and the template fix
 
 **Files:**
 - Create: `scripts/validate_against_analyzer.py`
@@ -951,7 +1123,7 @@ git commit -m "test: add Analyzer comparison harness"
 ## Phase 2: template quality and evidence
 
 
-### Task 9: Residual QC in the sidecar and the `.vmrk`
+### Task 10: Residual QC in the sidecar and the `.vmrk`
 
 **Files:**
 - Modify: `src/mri_correction/pipeline.py` (`_make_provenance`, marker assembly)
@@ -998,14 +1170,14 @@ git commit -m "feat: report and annotate residual gradient artifact per block"
 
 ---
 
-### Task 10: Neighbour-count sweep, then choose the default
+### Task 11: Neighbour-count sweep, then choose the default
 
 **Files:**
 - Create: `scripts/sweep_neighbor_count.py`
 - Modify: `examples/configuration.yml`, `docs/algorithm.md` (only after the sweep)
 
 **Interfaces:**
-- Consumes: `residual_qc` (Task 7), the validation harness (Task 8).
+- Consumes: `residual_qc` (Task 7), the validation harness (Task 9).
 - Produces: `docs/validation.md` gains a table of `neighbor_count` against transfer gain and residual.
 
 - [ ] **Step 1: Write the sweep harness**
@@ -1033,67 +1205,12 @@ git commit -m "docs: choose neighbor_count from measured transfer and residual"
 
 ---
 
-### Task 11: Trimmed-mean template, conditional on cohort evidence
-
-**Files:**
-- Modify: `src/mri_correction/fastr.py:1158-1183` (`_make_templates`), `config.py` (`ProcessingConfig.template_estimator: str = "mean"`, `ProcessingConfig.template_trim_fraction: float = 0.1`)
-- Test: `tests/test_fastr.py`
-
-**Interfaces:**
-- Produces: `template_estimator` is `"mean"` or `"trimmed_mean"`. `"trimmed_mean"` drops the highest and lowest `template_trim_fraction` of neighbour epochs per sample before averaging; default 0.1.
-
-- [ ] **Step 1: Write the failing test**
-
-```python
-def test_trimmed_mean_template_rejects_a_corrupted_neighbour():
-    rng = np.random.default_rng(0)
-    interval = 250
-    n_groups = 200
-    n = interval * (n_groups + 2)
-    shape = np.sin(2 * np.pi * np.arange(interval) / interval) * 1000.0
-    data = np.tile(shape, n // interval + 1)[:n] + rng.standard_normal(n) * 5.0
-    data[interval * 100 : interval * 101] += 20_000.0  # one corrupted epoch
-    triggers = (np.arange(n_groups) + 1) * interval
-    plain = slice_fastr(np.vstack([data]), triggers, neighbor_count=20).data[0]
-    robust = slice_fastr(
-        np.vstack([data]),
-        triggers,
-        neighbor_count=20,
-        template_estimator="trimmed_mean",
-    ).data[0]
-    span = slice(interval * 95, interval * 100)
-    assert np.std(robust[span]) < np.std(plain[span])
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `uv run pytest tests/test_fastr.py -k trimmed_mean -v`
-Expected: FAIL with `TypeError: slice_fastr() got an unexpected keyword argument 'template_estimator'`.
-
-- [ ] **Step 3: Implement**
-
-`_make_templates` currently exploits a running total over each residue class, which a trimmed mean cannot use. Add a separate branch that gathers `window.indices` explicitly and applies `scipy.stats.trim_mean` along the neighbour axis. Keep the fast cumulative path as the default so `"mean"` costs nothing.
-
-- [ ] **Step 4: Run the cohort before/after**
-
-Run the Task 8 harness across all 102 runs with `template_estimator: mean` and `trimmed_mean`.
-
-Adoption gate: the trimmed mean ships **only** if it improves both the worst-block residual in the seven flagged runs and the transfer gain on clean runs. If it improves one and worsens the other, revert it and keep detection alone — record the numbers in `docs/validation.md` either way.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/mri_correction tests/ docs/validation.md
-git commit -m "feat: add trimmed-mean template estimator"
-```
-
----
-
 ## Self-review notes
 
-- Spec section A is covered by Tasks 1-6; B by Task 10; C by Task 11; D by Tasks 7 and 9. Task 8 validates Phase 1 against the cohort.
+- Spec defect 1 is addressed by Task 11; defect 2 by Tasks 1-6; defect 3 by Task 8; QC by Tasks 7 and 10. Task 9 validates Phase 1 against the cohort. Defect 4 (missing OBS and ANC stages) is deliberately out of scope until Task 9 re-measures.
 - The spec's byte-for-byte regression requirement is Task 4 Step 1, second test.
 - The spec's derived-harmonics requirement is Task 7, `slice_harmonics`.
 - `minimum_epoch_coverage` is introduced in Task 1 and consumed in Task 6.
-- `residual_threshold_uv` is introduced in Task 9 and consumed in Task 9.
+- `residual_threshold_uv` is introduced and consumed in Task 10.
+- `template_high_pass_hz` is introduced and consumed in Task 8.
 - `OutputWindow` is defined in Task 2 and consumed in Tasks 3, 4, 5, 6.

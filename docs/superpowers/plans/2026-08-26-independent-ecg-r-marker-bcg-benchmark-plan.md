@@ -41,7 +41,7 @@ Create these focused modules:
 
 - `src/mri_correction/bcg_config.py` — strict YAML dataclasses for one-recording detection and cohort benchmarking.
 - `src/mri_correction/cardiac.py` — pure ECG conditioning, candidate generation, independent train selection, and detector QC.
-- `src/mri_correction/cardiac_markers.py` — replacement of pulse markers, BrainVision sidecar copying, and one-to-one Analyzer audit.
+- `src/mri_correction/cardiac_markers.py` — append-only independent pulse markers, BrainVision sidecar copying, and one-to-one Analyzer audit.
 - `src/mri_correction/cardiac_pipeline.py` — single-recording detection orchestration and provenance writing.
 - `src/mri_correction/bcg.py` — local-average/AAS and MNE PCA-OBS correction on EEG picks, with explicit epoch confinement.
 - `src/mri_correction/bcg_benchmark.py` — recording pairing, per-run orchestration, metrics, and JSON/CSV report writing.
@@ -97,7 +97,8 @@ detector:
 
 benchmark:
   fastr_root: /data/fastr_only
-  analyzer_reference_root: /data/step3_bcg_corrected
+  analyzer_input_root: /data/step1_scanner_artifact_pulse_marked
+  analyzer_output_root: /data/step3_bcg_corrected
   output_root: /data/bcg_benchmark
   marker_tolerance_seconds: 0.1
   correction_methods: [aas, pca_obs]
@@ -152,7 +153,8 @@ class DetectionRunConfig:
 @dataclass(frozen=True, slots=True)
 class BenchmarkConfig:
     fastr_root: Path
-    analyzer_reference_root: Path
+    analyzer_input_root: Path
+    analyzer_output_root: Path
     output_root: Path
     detector: DetectorConfig
     marker_tolerance_seconds: float
@@ -329,8 +331,9 @@ git commit -m "feat: add independent ECG R-peak detector"
 - Create: `src/mri_correction/cardiac_pipeline.py`
 - Create: `tests/test_cardiac_markers.py`
 
-- [ ] **Step 1: Write failing marker and audit tests.** Test that existing `Pulse Artifact,R`
-markers are replaced by detector events while all other markers are preserved, that
+- [ ] **Step 1: Write failing marker and audit tests.** Test that a FASTR-only marker file
+without existing `Pulse Artifact,R` markers receives detector events while all other markers
+are preserved, that a pre-existing exact pulse marker is rejected, that
 positions use BrainVision's one-based convention, that events outside the recording and
 duplicate samples raise errors, and that writing refuses any existing output sidecar.
 
@@ -371,7 +374,7 @@ class DetectionSummary:
     status: str
 
 
-def replace_pulse_markers(
+def append_pulse_markers(
     markers: Sequence[BrainVisionMarker],
     peak_samples: npt.ArrayLike,
     *,
@@ -402,8 +405,9 @@ def run_cardiac_detection(config: DetectionRunConfig) -> DetectionSummary:
     raise NotImplementedError
 ```
 
-`replace_pulse_markers` must remove only exact `Pulse Artifact`/`R` markers and append the
-new detector markers in sample order. `write_marker_recording` must copy `.eeg` and the
+`append_pulse_markers` must preserve every source marker and append the new detector
+markers in sample order. It must reject an input containing an exact `Pulse Artifact`/`R`
+marker. `write_marker_recording` must copy `.eeg` and the
 header into the destination, rewrite only the `DataFile` and `MarkerFile` references when
 the output stem differs, and write the new strict marker file through the existing
 BrainVision marker writer. It must not re-encode the data merely to add markers.
@@ -414,7 +418,7 @@ allowed to read Analyzer pulse annotations.
 
 `run_cardiac_detection` belongs in `cardiac_pipeline.py`. It reads the configured
 BrainVision recording, extracts the typed ECG samples, calls `detect_r_peaks` without
-passing the annotation collection, replaces only the existing pulse markers, writes the
+passing the annotation collection, appends only the new detector markers, writes the
 marker recording, and writes a sibling JSON provenance file containing the detector result.
 It must not calculate a detector template from any marker annotation.
 
@@ -426,7 +430,7 @@ uv run ruff check src/mri_correction/cardiac_markers.py tests/test_cardiac_marke
 ```
 
 Expected: all marker tests pass, and re-reading the written recording returns identical
-`.eeg` bytes plus the expected replacement R markers.
+`.eeg` bytes plus the expected appended R markers.
 
 - [ ] **Step 5: Commit marker output and audit.**
 
@@ -604,7 +608,8 @@ misleading zero. Keep the existing public metric outputs unchanged.
 class RecordingPair:
     recording_id: str
     fastr_vhdr: Path
-    analyzer_vhdr: Path
+    analyzer_input_vhdr: Path
+    analyzer_output_vhdr: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -618,7 +623,8 @@ class BenchmarkSummary:
 
 def discover_recording_pairs(
     fastr_root: str | Path,
-    analyzer_reference_root: str | Path,
+    analyzer_input_root: str | Path,
+    analyzer_output_root: str | Path,
 ) -> tuple[RecordingPair, ...]:
     raise NotImplementedError
 
@@ -629,19 +635,19 @@ def run_bcg_benchmark(config: BenchmarkConfig) -> BenchmarkSummary:
 
 Use a single explicit run-key parser for `runN_subXXXX` and baseline recordings. Reject
 duplicate keys rather than taking the first path. For each pair, load the FASTR and
-Analyzer recordings with MNE, validate channel names/order, sample count, sampling rate,
+Analyzer recordings with MNE, validate channel names/order, sample rate, sample geometry,
 and ECG identity, then run `detect_r_peaks` on the FASTR ECG vector alone. Only after that
 derive artifact anchors from those R samples and the configured ECG-to-BCG delay, and call
-`audit_marker_trains` against Analyzer's `Pulse Artifact,R` annotations.
+`audit_marker_trains` against Analyzer's `Pulse Artifact,R` annotations. The audit is
+diagnostic only: it must not reject independent detections that Analyzer omitted.
 
-Score the Analyzer reference by comparing the same FASTR input against the Analyzer output,
-and score each own-method output by comparing the same FASTR input against its corrected
-copy. Write each corrected method result with `write_brainvision_recording`, using the
-independent marker set and a method-specific output directory. Exclude ECG from correction
-and metrics. Store per-run detector QC, marker audit, method settings, held-out cardiac
-residuals, null maxima, preservation metrics, input paths, hashes, and failure messages. A
-failed run must be explicit in the report; it must not be silently omitted from the
-denominator.
+Score the Analyzer arm by comparing its pre-BCG input against its post-BCG output, and score
+each own-method output by comparing the FASTR input against its corrected copy. Write each
+corrected method result with `write_brainvision_recording`, using the independent marker
+set and a method-specific output directory. Exclude ECG from correction and metrics. Store
+per-run detector QC, marker audit, method settings, held-out cardiac residuals, null
+maxima, preservation metrics, input paths, hashes, and failure messages. A failed run must
+be explicit in the report; it must not be silently omitted from the denominator.
 
 - [ ] **Step 5: Run benchmark unit tests and lint.**
 
@@ -739,10 +745,10 @@ are not the production path, the AAS/PCA-OBS distinction, the Analyzer-reference
 and the held-out/null validation design. Include the primary-paper DOI/PMID links listed
 at the beginning of this plan.
 
-- [ ] **Step 2: Update user documentation and example configurations.** Explain the two
-data roots explicitly: FASTR-only input for our correction and `step3_bcg_corrected` as
-Analyzer reference. Document that `step3_bcg_corrected` must not be passed as the own-method
-EEG input. Include exact commands:
+- [ ] **Step 2: Update user documentation and example configurations.** Explain the three
+data roots explicitly: FASTR-only input for our correction, Analyzer's pre-BCG input, and
+Analyzer's post-BCG output. The local `step3_bcg_corrected` directory is a reference output,
+not the own-method EEG input. Include exact commands:
 
 ```bash
 mri-correct detect-cardiac --config /path/to/cardiac_detection.yml
@@ -755,6 +761,11 @@ marker count, RR distribution, lock statistics, and a plotted ECG window contain
 QRS/T-wave pair. Compare Analyzer markers only in the audit report. If the only available
 candidate is `/Volumes/KINGSTON/EEG_fMRI_data/source_data/step3_bcg_corrected`, stop with an
 input-stage error rather than using it as the own-method EEG source.
+
+The local FMRIB/EEGLAB implementation was also executed as an external method audit. Its
+unchanged QRS detector and OBS wrapper are not production dependencies: the detector was
+not reliable on the available FASTR diagnostic, and the installed wrapper altered the ECG
+channel. Any future FMRIB comparator must therefore be isolated and explicitly validated.
 
 - [ ] **Step 4: Create the detector truth audit before making sensitivity claims.** Select a
 stratified, blinded subset of FASTR ECG traces covering clear, difficult, and low-marker
