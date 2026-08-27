@@ -767,13 +767,13 @@ git commit -m "docs: organize FASTR configuration and maintenance guidance"
 
 ## Final review checklist
 
-- [ ] git status --short --branch shows the intended commits and no untracked files.
-- [ ] git diff origin/main..HEAD --stat contains only the approved design, modularization, configuration, tests, and documentation changes.
-- [ ] mri_correction.fastr imports all existing public names from one stable facade.
-- [ ] mri_correction.pipeline private test seams still delegate to exactly one implementation.
-- [ ] Existing YAML without new sections produces the same CorrectionConfig behavior and output defaults.
-- [ ] New configurable values are validated at both YAML and direct function boundaries.
-- [ ] Provenance contains resolved configuration and effective QC/PSD settings.
-- [ ] No BCG/ECG detector, corrector, or dependency was added to FASTR-Python;
+- [x] git status --short --branch shows the intended commits and no untracked files.
+- [x] git diff origin/main..HEAD --stat contains only the approved design, modularization, configuration, tests, and documentation changes.
+- [x] mri_correction.fastr imports all existing public names from one stable facade.
+- [x] mri_correction.pipeline private test seams still delegate to exactly one implementation.
+- [x] Existing YAML without new sections produces the same CorrectionConfig behavior and output defaults.
+- [x] New configurable values are validated at both YAML and direct function boundaries.
+- [x] Provenance contains resolved configuration and effective QC/PSD settings.
+- [x] No BCG/ECG detector, corrector, or dependency was added to FASTR-Python;
       validation-only metrics and simulation behavior are unchanged.
-- [ ] Full pytest, Ruff, and diff checks have fresh passing evidence.
+- [x] Full pytest, Ruff, and diff checks have fresh passing evidence.
