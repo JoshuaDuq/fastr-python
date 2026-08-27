@@ -250,3 +250,35 @@ def test_trim_rejects_unknown_fields(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="trim"):
         load_config(config_path)
+
+
+def test_template_high_pass_defaults_to_one_hertz(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.template_high_pass_hz == 1.0
+
+
+def test_template_high_pass_can_be_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  template_high_pass_hz: 0.0\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.template_high_pass_hz == 0.0
+
+
+def test_template_high_pass_rejects_a_negative_cutoff(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  template_high_pass_hz: -1.0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="template_high_pass_hz"):
+        load_config(config_path)

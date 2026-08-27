@@ -50,6 +50,7 @@ class ProcessingConfig:
     output_sampling_rate_hz: float
     channel_batch_size: int
     reference_channel: str | int
+    template_high_pass_hz: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +99,10 @@ _PROCESSING_KEYS = frozenset(
         "output_sampling_rate_hz",
         "channel_batch_size",
         "reference_channel",
+        "template_high_pass_hz",
     }
 )
+_OPTIONAL_PROCESSING_KEYS = frozenset({"template_high_pass_hz"})
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
 
 
@@ -129,7 +132,12 @@ def load_config(path: str | Path) -> CorrectionConfig:
     input_values = _section(root, "input", _INPUT_KEYS)
     output_values = _section(root, "output", _OUTPUT_KEYS)
     timing_values = _section(root, "timing", _TIMING_KEYS)
-    processing_values = _section(root, "processing", _PROCESSING_KEYS)
+    processing_values = _section(
+        root,
+        "processing",
+        _PROCESSING_KEYS,
+        optional_keys=_OPTIONAL_PROCESSING_KEYS,
+    )
 
     base_directory = config_path.parent
     return CorrectionConfig(
@@ -189,10 +197,22 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     if neighbor_count % 2:
         raise ConfigurationError("processing.neighbor_count must be even")
 
+    defaults = ProcessingConfig.__dataclass_fields__["template_high_pass_hz"].default
+    template_high_pass_hz = (
+        _finite_number(values, "template_high_pass_hz", minimum=-1.0)
+        if "template_high_pass_hz" in values
+        else defaults
+    )
+    if template_high_pass_hz < 0.0:
+        raise ConfigurationError(
+            "processing.template_high_pass_hz must be zero or greater"
+        )
+
     return ProcessingConfig(
         method=method,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
+        template_high_pass_hz=template_high_pass_hz,
         search_radius_samples=_integer_value(
             values,
             "search_radius_samples",
@@ -233,10 +253,12 @@ def _section(
     root: Mapping[str, object],
     name: str,
     expected_keys: frozenset[str],
+    *,
+    optional_keys: frozenset[str] = frozenset(),
 ) -> Mapping[str, object]:
     values = _require_mapping(root[name], name)
     _reject_unknown_keys(values, expected_keys, name)
-    for field_name in sorted(expected_keys):
+    for field_name in sorted(expected_keys - optional_keys):
         if field_name not in values:
             raise ConfigurationError(
                 f"missing required field: {name}.{field_name}"

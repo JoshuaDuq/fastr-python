@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 from numpy.lib.stride_tricks import sliding_window_view
-from scipy.signal import filtfilt, firls, firwin, upfirdn
+from scipy.signal import butter, filtfilt, firls, firwin, sosfiltfilt, upfirdn
 
 _INTERPOLATION_HALF_SPAN = 4
 _INTERPOLATION_WINDOW = ("kaiser", 5.0)
@@ -363,8 +363,20 @@ def apply_fastr_batch(
     data: npt.ArrayLike,
     geometry: FastrGeometry,
     alignment: FastrAlignment,
+    *,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
 ) -> FastrCorrection:
-    """Apply one shared alignment to a batch of recording channels."""
+    """Apply one shared alignment to a batch of recording channels.
+
+    When ``template_high_pass_hz`` is set, the moving-average template and the
+    least-squares scalar are estimated from a high-passed copy of each channel,
+    following Niazy et al. (2005) stage 2, so that segments entering the average
+    share a baseline. The fitted artifact is still subtracted from the
+    unfiltered channel, so slow content survives correction. Leaving it unset
+    estimates from the unfiltered channel, which lets baseline drift bias both
+    the template and the scalar.
+    """
     if not isinstance(geometry, FastrGeometry):
         raise FastrInputError("geometry must be a FastrGeometry instance")
     if not isinstance(alignment, FastrAlignment):
@@ -379,14 +391,23 @@ def apply_fastr_batch(
     if alignment.fitted_triggers.shape != alignment.shifts.shape:
         raise FastrInputError("fitted triggers do not match the alignment")
 
+    template_filter = _make_template_high_pass(
+        template_high_pass_hz,
+        sampling_rate=sampling_rate,
+    )
+
     corrected = recording.astype(np.float64, copy=True)
     amplitudes = np.empty(
         (recording.shape[0], geometry.triggers.size),
         dtype=np.float64,
     )
     for index, channel in enumerate(recording):
-        interpolated = _interpolate(
+        source = channel if template_filter is None else sosfiltfilt(
+            template_filter,
             channel,
+        )
+        interpolated = _interpolate(
+            source,
             geometry.interpolation_taps,
             geometry.interpolation_factor,
         )
@@ -1107,6 +1128,33 @@ def _select_alternating_neighbors(
         run_length=neighbor_count,
         contains_target=False,
     )
+
+
+def _make_template_high_pass(
+    cutoff_hz: float | None,
+    *,
+    sampling_rate: float | None,
+) -> np.ndarray | None:
+    """Build the stage-2 template high-pass, or None when it is disabled.
+
+    The filter is applied at the input rate rather than on the interpolated
+    grid, where a 1 Hz Butterworth is poorly conditioned.
+    """
+    if cutoff_hz is None:
+        return None
+    if isinstance(cutoff_hz, bool) or not isinstance(cutoff_hz, Real):
+        raise FastrInputError("template high-pass cutoff must be a finite number")
+    cutoff = float(cutoff_hz)
+    if not math.isfinite(cutoff) or cutoff < 0.0:
+        raise FastrInputError("template high-pass cutoff must be a finite number")
+    if cutoff == 0.0:
+        return None
+    rate = _validate_sampling_rate(sampling_rate)
+    if cutoff >= 0.5 * rate:
+        raise FastrInputError(
+            "template high-pass cutoff must stay below the input Nyquist frequency"
+        )
+    return butter(2, cutoff, btype="high", fs=rate, output="sos")
 
 
 def _make_interpolation_filter(factor: int) -> np.ndarray:

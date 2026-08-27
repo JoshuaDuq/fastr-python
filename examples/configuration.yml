@@ -18,6 +18,7 @@ processing:
   output_sampling_rate_hz: 1000.0
   channel_batch_size: 8
   reference_channel: EEG 001
+  template_high_pass_hz: 1.0
 
 trim:
   mode: first_to_last_volume

@@ -163,7 +163,13 @@ def _run_correction(
                 start=0,
                 stop=raw.n_times,
             )
-            correction = apply_fastr_batch(batch, geometry, alignment)
+            correction = apply_fastr_batch(
+                batch,
+                geometry,
+                alignment,
+                template_high_pass_hz=config.processing.template_high_pass_hz,
+                sampling_rate=input_rate,
+            )
             amplitude_means[start:stop] = correction.provenance.amplitudes.mean(
                 axis=1
             )
