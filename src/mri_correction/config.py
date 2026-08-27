@@ -52,6 +52,9 @@ class ProcessingConfig:
     reference_channel: str | int
     template_high_pass_hz: float = 1.0
     residual_threshold_uv: float = 1.0
+    residual_gate: bool = False
+    adaptive_window: bool = False
+    local_neighbor_count: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,10 +100,19 @@ _PROCESSING_KEYS = frozenset(
         "reference_channel",
         "template_high_pass_hz",
         "residual_threshold_uv",
+        "residual_gate",
+        "adaptive_window",
+        "local_neighbor_count",
     }
 )
 _OPTIONAL_PROCESSING_KEYS = frozenset(
-    {"template_high_pass_hz", "residual_threshold_uv"}
+    {
+        "template_high_pass_hz",
+        "residual_threshold_uv",
+        "residual_gate",
+        "adaptive_window",
+        "local_neighbor_count",
+    }
 )
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
 
@@ -193,24 +205,50 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
 
     defaults = ProcessingConfig.__dataclass_fields__["template_high_pass_hz"].default
     template_high_pass_hz = (
-        _finite_number(values, "template_high_pass_hz", minimum=-1.0)
+        _finite_number(
+            values,
+            "template_high_pass_hz",
+            minimum=0.0,
+            inclusive=True,
+        )
         if "template_high_pass_hz" in values
         else defaults
     )
-    if template_high_pass_hz < 0.0:
-        raise ConfigurationError(
-            "processing.template_high_pass_hz must be zero or greater"
-        )
 
     residual_threshold_uv = (
-        _finite_number(values, "residual_threshold_uv", minimum=0.0)
+        _finite_number(
+            values,
+            "residual_threshold_uv",
+            minimum=0.0,
+            inclusive=True,
+        )
         if "residual_threshold_uv" in values
         else ProcessingConfig.__dataclass_fields__["residual_threshold_uv"].default
     )
+    residual_gate = (
+        _boolean_value(values, "residual_gate")
+        if "residual_gate" in values
+        else ProcessingConfig.__dataclass_fields__["residual_gate"].default
+    )
+    adaptive_window = (
+        _boolean_value(values, "adaptive_window")
+        if "adaptive_window" in values
+        else ProcessingConfig.__dataclass_fields__["adaptive_window"].default
+    )
+    local_neighbor_count = (
+        _integer_value(values, "local_neighbor_count", minimum=2)
+        if "local_neighbor_count" in values
+        else ProcessingConfig.__dataclass_fields__["local_neighbor_count"].default
+    )
+    if local_neighbor_count % 2:
+        raise ConfigurationError("processing.local_neighbor_count must be even")
 
     return ProcessingConfig(
         method=method,
         residual_threshold_uv=residual_threshold_uv,
+        residual_gate=residual_gate,
+        adaptive_window=adaptive_window,
+        local_neighbor_count=local_neighbor_count,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         template_high_pass_hz=template_high_pass_hz,
@@ -312,6 +350,13 @@ def _path_value(
     return path.resolve()
 
 
+def _boolean_value(values: Mapping[str, object], name: str) -> bool:
+    value = _required_value(values, name)
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"{name} must be a boolean")
+    return value
+
+
 def _integer_value(
     values: Mapping[str, object],
     name: str,
@@ -331,11 +376,14 @@ def _finite_number(
     name: str,
     *,
     minimum: float,
+    inclusive: bool = False,
 ) -> float:
     value = _required_value(values, name)
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ConfigurationError(f"{name} must be a finite number")
     number = float(value)
-    if not math.isfinite(number) or number <= minimum:
-        raise ConfigurationError(f"{name} must be greater than {minimum}")
+    too_small = number < minimum if inclusive else number <= minimum
+    if not math.isfinite(number) or too_small:
+        bound = "greater than or equal to" if inclusive else "greater than"
+        raise ConfigurationError(f"{name} must be {bound} {minimum}")
     return number

@@ -12,13 +12,14 @@ timing:
 processing:
   method: acquisition_group_fastr
   interpolation_factor: 10
-  neighbor_count: 20
+  neighbor_count: 60
   search_radius_samples: 3
   lowpass_hz: 100.0
   output_sampling_rate_hz: 1000.0
   channel_batch_size: 8
   reference_channel: EEG 001
   template_high_pass_hz: 1.0
+  residual_gate: false
 
 trim:
   mode: first_to_last_volume

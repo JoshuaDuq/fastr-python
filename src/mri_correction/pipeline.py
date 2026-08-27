@@ -10,7 +10,6 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import mne
 import numpy as np
 from scipy.signal import butter, filtfilt
@@ -31,12 +30,15 @@ from .fastr import (
     FastrGeometry,
     FastrInputError,
     FmriAcquisitionTiming,
+    adapt_fastr_geometry,
     apply_fastr_batch,
     fit_fastr_alignment,
+    gate_fastr_geometry,
     load_bids_fmri_timing,
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
+from .psd import PSD_MAX_FREQUENCY_HZ, prepare_psd_raw, save_psd_plot
 from .residual_qc import block_residual_uv, slice_harmonics
 from .window import OutputWindow, resolve_output_window
 
@@ -45,7 +47,7 @@ class PipelineInputError(ValueError):
     """Raised when a configured correction run cannot be performed."""
 
 
-_PSD_MAX_FREQUENCY_HZ = 100.0
+_PSD_MAX_FREQUENCY_HZ = PSD_MAX_FREQUENCY_HZ
 _RESIDUAL_BLOCK_SECONDS = 30.0
 
 
@@ -137,7 +139,29 @@ def _run_correction(
         start=0,
         stop=raw.n_times,
     )[0]
-    alignment = fit_fastr_alignment(reference_channel, geometry)
+    alignment = fit_fastr_alignment(
+        reference_channel,
+        geometry,
+        template_high_pass_hz=config.processing.template_high_pass_hz,
+        sampling_rate=input_rate,
+    )
+    if config.processing.residual_gate:
+        geometry = gate_fastr_geometry(
+            geometry,
+            alignment,
+            reference_channel,
+            template_high_pass_hz=config.processing.template_high_pass_hz,
+            sampling_rate=input_rate,
+        )
+    if config.processing.adaptive_window:
+        geometry = adapt_fastr_geometry(
+            geometry,
+            alignment,
+            reference_channel,
+            local_neighbor_count=config.processing.local_neighbor_count,
+            template_high_pass_hz=config.processing.template_high_pass_hz,
+            sampling_rate=input_rate,
+        )
 
     channel_count = len(raw.ch_names)
     input_sample_count = int(raw.n_times)
@@ -390,65 +414,18 @@ def _save_psd_plot(
     tmin: float,
     tmax: float,
 ) -> None:
-    plot_raw = _prepare_psd_raw(raw)
-    with mne.use_log_level("ERROR"):
-        figure = mne.viz.plot_raw_psd(
-            plot_raw,
-            fmin=0.0,
-            fmax=fmax,
-            tmin=tmin,
-            tmax=tmax,
-            spatial_colors=plot_raw.get_montage() is not None,
-            show=False,
-            n_jobs=1,
-            verbose="ERROR",
-        )
-    try:
-        for axis in figure.axes:
-            if axis.get_xlabel():
-                axis.set_xlim(0.0, fmax)
-        figure.suptitle(title)
-        figure.savefig(output_path, dpi=150, bbox_inches="tight")
-    finally:
-        plt.close(figure)
+    save_psd_plot(
+        raw,
+        output_path,
+        fmax=fmax,
+        title=title,
+        tmin=tmin,
+        tmax=tmax,
+    )
 
 
 def _prepare_psd_raw(raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
-    """Give PSD plots standard positions when the file has no montage."""
-    prepared = raw.copy()
-    montage = prepared.get_montage()
-    if montage is not None:
-        positioned_names = _positioned_channel_names(prepared, montage)
-        if len(positioned_names) >= 2:
-            prepared.pick(positioned_names)
-            return prepared
-
-    standard = mne.channels.make_standard_montage("standard_1020")
-    standard_names = {name.casefold() for name in standard.ch_names}
-    matched_names = [
-        name for name in prepared.ch_names if name.casefold() in standard_names
-    ]
-    if len(matched_names) >= 2:
-        prepared.pick(matched_names)
-        prepared.set_montage(
-            standard,
-            match_case=False,
-            on_missing="raise",
-            verbose="ERROR",
-        )
-    return prepared
-
-
-def _positioned_channel_names(
-    raw: mne.io.BaseRaw,
-    montage: mne.channels.DigMontage,
-) -> list[str]:
-    positions = montage.get_positions()["ch_pos"]
-    return [
-        name
-        for name in raw.ch_names
-        if name in positions and np.isfinite(positions[name]).all()
-    ]
+    return prepare_psd_raw(raw)
 
 
 def _corrected_psd_window(
@@ -729,6 +706,17 @@ def _make_provenance(
             },
             "amplitude_mean_by_channel": amplitude_means.tolist(),
             "amplitude_rms_by_channel": amplitude_rms.tolist(),
+            "residual_gate": {
+                "enabled": config.processing.residual_gate,
+                "excluded_group_indices": geometry.excluded_group_indices.tolist(),
+                "excluded_group_count": int(geometry.excluded_group_indices.size),
+            },
+            "adaptive_window": {
+                "enabled": config.processing.adaptive_window,
+                "local_neighbor_count": config.processing.local_neighbor_count,
+                "adapted_group_indices": geometry.adapted_group_indices.tolist(),
+                "adapted_group_count": int(geometry.adapted_group_indices.size),
+            },
         },
         "runtime_seconds": runtime_seconds,
     }

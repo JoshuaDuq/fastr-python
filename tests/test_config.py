@@ -231,6 +231,61 @@ def test_trim_rejects_unknown_fields(tmp_path: Path) -> None:
         load_config(config_path)
 
 
+def test_adaptive_window_defaults_to_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.adaptive_window is False
+    assert config.processing.local_neighbor_count == 20
+
+
+def test_adaptive_window_can_be_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  adaptive_window: true\n  local_neighbor_count: 20\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.adaptive_window is True
+    assert config.processing.local_neighbor_count == 20
+
+
+def test_residual_gate_defaults_to_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate is False
+
+
+def test_residual_gate_can_be_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_gate: true\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate is True
+
+
+def test_residual_gate_rejects_a_non_boolean(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_gate: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="residual_gate"):
+        load_config(config_path)
+
+
 def test_template_high_pass_defaults_to_one_hertz(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yml"
     config_path.write_text(valid_document(), encoding="utf-8")

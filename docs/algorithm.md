@@ -20,9 +20,16 @@ For each run, the pipeline:
 6. For each acquisition-time slot, constructs a target-excluding template from the
    configured number of neighboring volumes, estimated from a high-passed copy of
    the channel.
-7. Fits group shifts once from the configured reference channel, then fits and
-   subtracts a scaled template for every channel batch. The estimate is subtracted
-   from the unfiltered channel, so slow content survives correction.
+7. Fits group shifts once from the same high-passed copy of the configured
+   reference channel. Optional `residual_gate` then flags volumes whose
+   first-pass leftover at the slice harmonics is an extreme outlier and drops
+   those volumes from *clean* neighbours' templates. Outlier volumes keep their
+   local window. The gate is off by default: on this cohort an 8× harmonic
+   threshold is a no-op on the worst motion run, and looser thresholds made
+   that run's worst 30 s block worse by replacing local neighbours. Then it
+   fits and subtracts a scaled template for every channel batch. The estimate
+   is subtracted from the unfiltered channel, so slow content survives
+   correction.
 8. Applies the configured zero-phase low-pass filter, then takes the output window
    and decimates.
 9. Writes the corrected data, windowed markers, before/after PSD figures, and a
@@ -60,7 +67,9 @@ entering the average share a baseline, then subtract the estimate from the origi
 signal. The released `fmrib_fastr.m` does not apply that high-pass; it high-passes
 at 70 Hz only when building the residual matrix for the optimal basis set.
 
-`processing.template_high_pass_hz` follows the paper, defaulting to 1.0 Hz. On this
+`processing.template_high_pass_hz` follows the paper, defaulting to 1.0 Hz. The
+pipeline applies the same filter to the reference channel before alignment, so
+the shifts and the template are estimated on one signal. On this
 cohort, estimating the template from the unfiltered signal let baseline drift leak
 into both the template and the scalar: on nine channel-runs from three subjects the
 residual line artifact fell from 1.1--20.9 uV to 0.00--0.43 uV, against Analyzer's
@@ -78,8 +87,10 @@ is not implemented. Neither absence is hidden by the sidecar, which records exac
 what ran. PSD figures use the same interval containing
 only complete corrected epochs, so uncorrected boundary data cannot dominate the
 diagnostic. They are limited to 0--100 Hz and use standard MNE spatial channel colors
-when channel positions can be identified. A marker gap or timing inconsistency is a
-hard error; the pipeline does not interpolate missing acquisition events.
+when channel positions can be identified. A marker gap or more than one native
+sample of timing inconsistency is a hard error; the pipeline does not interpolate
+missing acquisition events. A single sample (0.2 ms at 5 kHz) is treated as clock
+quantization inside the alignment search.
 
 ## Why acquisition slots matter
 
@@ -97,10 +108,10 @@ genuine neural component at exactly `1 / RepetitionTime` as well as scanner ener
 No blind post-hoc notch can restore information that was removed during subtraction.
 
 The template window is consequently a scientific parameter, not merely a speed
-setting. The example value is a conservative starting point selected by comparing
-residual artifact and signal-transfer behavior on representative recordings. It
-must be revalidated when the scanner sequence, electrode montage, marker timing, or
-recording protocol changes.
+setting. On this cohort, 60 neighbouring volumes cut leave-one-out transfer
+inflation from 4.4% (N=20) to 1.1% without increasing residual slice-harmonic
+amplitude. That value must be revalidated when the scanner sequence, electrode
+montage, marker timing, or recording protocol changes.
 
 ## Inputs and units
 

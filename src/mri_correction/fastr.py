@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from numbers import Integral, Real
 from pathlib import Path
 
@@ -18,9 +18,17 @@ _GRID_TOLERANCE_SAMPLES = 1e-6
 _ARTIFACT_SLACK_FRACTION = 0.01
 _PRE_TRIGGER_FRACTION = 0.03
 _JITTER_TOLERANCE_FRACTION = 0.01
+_CLOCK_TICK_SAMPLES = 1
 _HIGH_PASS_HZ = 70.0
 _HIGH_PASS_TRANSITION_HZ = 10.0
 _HIGH_PASS_ORDER_FACTOR = 1.2
+_RESIDUAL_GATE_K = 8.0
+_RESIDUAL_GATE_RATIO = 8.0
+_RESIDUAL_GATE_MIN_NEIGHBORS = 2
+_RESIDUAL_GATE_MAX_FRACTION = 0.02
+_RESIDUAL_GATE_MAINS_HZ = 60.0
+_ADAPTIVE_IMPROVE_RATIO = 0.85
+_TEMPLATE_MEAN_CHUNK = 128
 
 
 class FastrInputError(ValueError):
@@ -158,6 +166,8 @@ class FastrGeometry:
     group_indices: np.ndarray
     skipped_group_indices: np.ndarray
     sample_count: int
+    excluded_group_indices: np.ndarray
+    adapted_group_indices: np.ndarray
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -166,6 +176,8 @@ class FastrGeometry:
             "interpolation_taps",
             "group_indices",
             "skipped_group_indices",
+            "excluded_group_indices",
+            "adapted_group_indices",
         ):
             values = np.array(getattr(self, field_name), copy=True)
             values.setflags(write=False)
@@ -332,14 +344,201 @@ def prepare_fastr_geometry(
     )
 
 
+def gate_fastr_geometry(
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    reference_channel: npt.ArrayLike,
+    *,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
+) -> FastrGeometry:
+    """Drop first-pass residual outliers from every target's neighbour window.
+
+    Alignment stays the original fit. Only the moving-average membership changes,
+    so a motion volume cannot leak its leftover into nearby *clean* templates.
+    Outlier volumes keep their original local window so a non-stationary
+    gradient is still tracked. Windows that never contained an outlier are left
+    untouched. If too few valid neighbours remain for a target, that target
+    keeps its original window.
+    """
+    if not isinstance(geometry, FastrGeometry):
+        raise FastrInputError("geometry must be a FastrGeometry instance")
+    if not isinstance(alignment, FastrAlignment):
+        raise FastrInputError("alignment must be a FastrAlignment instance")
+    if alignment.fitted_triggers.shape != geometry.fine_triggers.shape:
+        raise FastrInputError("alignment group count does not match the geometry")
+
+    reference = _validate_reference_channel(reference_channel, geometry.sample_count)
+    template_filter = _make_template_high_pass(
+        template_high_pass_hz,
+        sampling_rate=sampling_rate,
+    )
+    interpolated = _interpolate(
+        _template_estimate_signal(reference, template_filter),
+        geometry.interpolation_taps,
+        geometry.interpolation_factor,
+    )
+    templates = _make_templates(
+        interpolated,
+        alignment.fitted_triggers,
+        geometry.window,
+        geometry.epoch,
+    )
+    epochs = _extract_epochs(
+        interpolated,
+        alignment.fitted_triggers,
+        geometry.epoch.samples_before,
+        geometry.epoch.samples_after,
+    )
+    residual = _template_residual(epochs, templates)
+    scores = _residual_outlier_scores(
+        residual,
+        geometry=geometry,
+        sampling_rate=sampling_rate,
+    )
+    excluded = _outlier_groups(
+        scores,
+        geometry.window.stride,
+        protected_edge_volumes=1,
+    )
+    if not np.any(excluded):
+        return geometry
+
+    gated_indices = _replace_excluded_neighbors(
+        geometry.window.indices,
+        excluded,
+        stride=geometry.window.stride,
+    )
+    if np.array_equal(gated_indices, geometry.window.indices):
+        return geometry
+
+    return replace(
+        geometry,
+        window=replace(
+            geometry.window,
+            indices=gated_indices,
+            contains_target=False,
+            summed_contiguous=False,
+        ),
+        excluded_group_indices=geometry.group_indices[np.flatnonzero(excluded)],
+    )
+
+
+def adapt_fastr_geometry(
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    reference_channel: npt.ArrayLike,
+    *,
+    local_neighbor_count: int = 20,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
+) -> FastrGeometry:
+    """Shrink the neighbour window only where a wide template fits worse.
+
+    Alignment stays the original fit. Each target is scored with the configured
+    wide window and with a shorter local window of the same slot. Volumes whose
+    local template cuts leftover by ``_ADAPTIVE_IMPROVE_RATIO`` keep the short
+    window so a non-stationary gradient can be tracked; the rest keep N wide
+    so transfer-gain inflation does not return on clean data.
+    """
+    if not isinstance(geometry, FastrGeometry):
+        raise FastrInputError("geometry must be a FastrGeometry instance")
+    if not isinstance(alignment, FastrAlignment):
+        raise FastrInputError("alignment must be a FastrAlignment instance")
+    if alignment.fitted_triggers.shape != geometry.fine_triggers.shape:
+        raise FastrInputError("alignment group count does not match the geometry")
+    if (
+        isinstance(local_neighbor_count, bool)
+        or not isinstance(local_neighbor_count, int)
+        or local_neighbor_count < 2
+        or local_neighbor_count % 2
+    ):
+        raise FastrInputError("local neighbour count must be an even integer of at least two")
+
+    wide_count = geometry.window.indices.shape[1]
+    if local_neighbor_count >= wide_count:
+        return geometry
+
+    reference = _validate_reference_channel(reference_channel, geometry.sample_count)
+    template_filter = _make_template_high_pass(
+        template_high_pass_hz,
+        sampling_rate=sampling_rate,
+    )
+    interpolated = _interpolate(
+        _template_estimate_signal(reference, template_filter),
+        geometry.interpolation_taps,
+        geometry.interpolation_factor,
+    )
+    epochs = _extract_epochs(
+        interpolated,
+        alignment.fitted_triggers,
+        geometry.epoch.samples_before,
+        geometry.epoch.samples_after,
+    )
+    wide_templates = _make_templates(
+        interpolated,
+        alignment.fitted_triggers,
+        geometry.window,
+        geometry.epoch,
+    )
+    local_indices = _nearest_slot_neighbors(
+        epochs.shape[0],
+        geometry.window.stride,
+        local_neighbor_count,
+    )
+    local_templates = _mean_selected_epochs(epochs, local_indices)
+    wide_scores = np.mean(_template_residual(epochs, wide_templates) ** 2, axis=1)
+    local_scores = np.mean(_template_residual(epochs, local_templates) ** 2, axis=1)
+    shrink = _volumes_helped_by_local_window(
+        wide_scores,
+        local_scores,
+        geometry.window.stride,
+    )
+    edge_window = (geometry.window.run_starts == geometry.window.run_starts.min()) | (
+        geometry.window.run_starts == geometry.window.run_starts.max()
+    )
+    shrink &= ~edge_window
+    if not np.any(shrink):
+        return geometry
+
+    merged = np.array(geometry.window.indices, copy=True, dtype=np.int64)
+    for target in np.flatnonzero(shrink):
+        row = np.full(wide_count, -1, dtype=np.int64)
+        row[:local_neighbor_count] = local_indices[target]
+        merged[target] = row
+
+    return replace(
+        geometry,
+        window=replace(
+            geometry.window,
+            indices=merged,
+            contains_target=False,
+            summed_contiguous=False,
+        ),
+        adapted_group_indices=geometry.group_indices[np.flatnonzero(shrink)],
+    )
+
+
 def fit_fastr_alignment(
     reference_channel: npt.ArrayLike,
     geometry: FastrGeometry,
+    *,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
 ) -> FastrAlignment:
-    """Fit acquisition-group alignment from one reference channel."""
+    """Fit acquisition-group alignment from one reference channel.
+
+    When ``template_high_pass_hz`` is set, shifts are estimated on the same
+    high-passed copy used to build the moving-average template (Niazy et al.
+    2005, stage 2). Leaving it unset aligns the unfiltered reference.
+    """
     reference = _validate_reference_channel(reference_channel, geometry.sample_count)
+    template_filter = _make_template_high_pass(
+        template_high_pass_hz,
+        sampling_rate=sampling_rate,
+    )
     alignment_signal = _interpolate(
-        reference,
+        _template_estimate_signal(reference, template_filter),
         geometry.interpolation_taps,
         geometry.interpolation_factor,
     )
@@ -402,12 +601,8 @@ def apply_fastr_batch(
         dtype=np.float64,
     )
     for index, channel in enumerate(recording):
-        source = channel if template_filter is None else sosfiltfilt(
-            template_filter,
-            channel,
-        )
         interpolated = _interpolate(
-            source,
+            _template_estimate_signal(channel, template_filter),
             geometry.interpolation_taps,
             geometry.interpolation_factor,
         )
@@ -426,7 +621,7 @@ def apply_fastr_batch(
             samples_before_trigger=geometry.epoch.samples_before,
             samples_after_trigger=geometry.epoch.samples_after,
             search_radius=geometry.search_radius,
-            neighbor_indices=geometry.group_indices[geometry.window.indices],
+            neighbor_indices=_map_neighbor_indices(geometry),
             shifts=alignment.shifts,
             correlations=alignment.correlations,
             amplitudes=amplitudes,
@@ -443,35 +638,17 @@ def _run_fastr(
     neighbor_count: int,
     search_radius_samples: int,
     groups_per_volume: int | None,
-    group_indices: np.ndarray | None = None,
-    skipped_group_indices: np.ndarray | None = None,
 ) -> FastrCorrection:
     """Run one explicit FASTR template geometry on validated trigger epochs."""
     recording = _validate_recording(data)
-    triggers = _validate_group_triggers(group_triggers)
-    _validate_fastr_parameters(
-        interpolation_factor=interpolation_factor,
-        neighbor_count=neighbor_count,
-        search_radius_samples=search_radius_samples,
-    )
-    if group_indices is None:
-        group_indices = np.arange(triggers.size, dtype=np.int64)
-    if skipped_group_indices is None:
-        skipped_group_indices = np.empty(0, dtype=np.int64)
-    if not isinstance(group_indices, np.ndarray) or group_indices.shape != (
-        triggers.size,
-    ):
-        raise FastrInputError("group indices must match the trigger count")
-    geometry = _build_fastr_geometry(
-        triggers,
+    geometry = prepare_fastr_geometry(
+        group_triggers,
         sample_count=recording.shape[1],
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=groups_per_volume,
         allow_edges=False,
-        group_indices=group_indices,
-        skipped_group_indices=skipped_group_indices,
     )
     alignment = fit_fastr_alignment(recording[0], geometry)
     return apply_fastr_batch(recording, geometry, alignment)
@@ -487,49 +664,17 @@ def _run_fastr_with_edges(
     groups_per_volume: int | None,
 ) -> FastrCorrection:
     recording = _validate_recording(data)
-    triggers = _validate_group_triggers(group_triggers)
-    _validate_fastr_parameters(
-        interpolation_factor=interpolation_factor,
-        neighbor_count=neighbor_count,
-        search_radius_samples=search_radius_samples,
-    )
-    fine_triggers = _to_interpolated_grid(triggers, interpolation_factor)
-    epoch = _measure_artifact_epoch(
-        fine_triggers,
-        cover_full_gap=groups_per_volume is not None,
-    )
-    search_radius = search_radius_samples * interpolation_factor
-    sample_count = recording.shape[1] * interpolation_factor
-    valid = (
-        (fine_triggers - epoch.samples_before - search_radius >= 0)
-        & (
-            fine_triggers + epoch.samples_after + search_radius
-            < sample_count
-        )
-    )
-    if groups_per_volume is not None:
-        if triggers.size % groups_per_volume:
-            raise FastrInputError(
-                "the group count must be a whole number of volumes to match "
-                "acquisition slots"
-            )
-        volume_valid = valid.reshape(-1, groups_per_volume).all(axis=1)
-        valid = np.repeat(volume_valid, groups_per_volume)
-    if not np.any(valid):
-        raise FastrInputError("no complete FASTR artifact epochs remain")
-
-    indices = np.arange(triggers.size, dtype=np.int64)
-    result = _run_fastr(
-        recording,
-        triggers[valid],
+    geometry = prepare_fastr_geometry(
+        group_triggers,
+        sample_count=recording.shape[1],
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=groups_per_volume,
-        group_indices=indices[valid],
-        skipped_group_indices=indices[~valid],
+        allow_edges=True,
     )
-    return result
+    alignment = fit_fastr_alignment(recording[0], geometry)
+    return apply_fastr_batch(recording, geometry, alignment)
 
 
 def _build_fastr_geometry(
@@ -612,6 +757,8 @@ def _build_fastr_geometry(
         group_indices=group_indices,
         skipped_group_indices=skipped_group_indices,
         sample_count=sample_count,
+        excluded_group_indices=np.empty(0, dtype=np.int64),
+        adapted_group_indices=np.empty(0, dtype=np.int64),
     )
 
 
@@ -626,11 +773,12 @@ def residual_obs(
 ) -> np.ndarray:
     """Subtract the optimal basis set of the residual gradient artifact.
 
-    This is FASTR's separately validated second stage, never an implicit part of
-    template subtraction. For each corrected channel the basis is the leading
-    `rank` principal components of that channel's own high-pass residual epochs.
-    Excluded channels are returned untouched, allowing callers to preserve
-    channels that are not appropriate for residual artifact subtraction.
+    This is FASTR's third stage, never an implicit part of template subtraction.
+    For each corrected channel the basis is the leading `rank` principal
+    components of that channel's own high-pass residual epochs. Excluded
+    channels are returned untouched, allowing callers to preserve channels that
+    are not appropriate for residual artifact subtraction. Adaptive noise
+    cancellation, the published fourth stage, is not implemented here.
     """
     recording = _validate_recording(residual)
     triggers = _validate_group_triggers(group_triggers)
@@ -829,18 +977,19 @@ def _validate_contiguous_starts(
     starts: np.ndarray,
     samples_per_volume: int,
 ) -> None:
-    """Reject any spacing that is not one exact repetition time, by name.
+    """Reject spacing that is not one repetition time, aside from one clock tick.
 
-    Both jitter and a gap are rejected, because a scanner break and a missing
-    marker cannot be told apart from the marker series alone. They are named
-    apart anyway: a jittered marker needs the intended timing declared, while a
-    gap needs the block boundary declared, and reporting one as the other sends
-    the reader looking for the wrong thing.
+    A single native sample (0.2 ms at 5 kHz) is within FASTR's alignment search
+    and is accepted. Larger jitter and gaps still fail: a scanner break and a
+    missing marker cannot be told apart from the marker series alone, so they
+    must be declared rather than corrected across.
     """
     if starts.size == 1:
         return
     intervals = np.diff(starts)
-    offending = np.flatnonzero(intervals != samples_per_volume)
+    offending = np.flatnonzero(
+        np.abs(intervals - samples_per_volume) > _CLOCK_TICK_SAMPLES
+    )
     if not offending.size:
         return
 
@@ -893,6 +1042,7 @@ class _TemplateWindow:
     run_starts: np.ndarray
     run_length: int
     contains_target: bool
+    summed_contiguous: bool = True
 
     def __post_init__(self) -> None:
         for field_name in ("indices", "run_starts"):
@@ -1157,6 +1307,15 @@ def _make_template_high_pass(
     return butter(2, cutoff, btype="high", fs=rate, output="sos")
 
 
+def _template_estimate_signal(
+    channel: np.ndarray,
+    template_filter: np.ndarray | None,
+) -> np.ndarray:
+    if template_filter is None:
+        return channel
+    return sosfiltfilt(template_filter, channel)
+
+
 def _make_interpolation_filter(factor: int) -> np.ndarray:
     """Build the band-limited filter FASTR's MATLAB interp() call implies."""
     if factor == 1:
@@ -1216,6 +1375,8 @@ def _make_templates(
         epoch.samples_before,
         epoch.samples_after,
     )
+    if not window.summed_contiguous:
+        return _mean_selected_epochs(epochs, window.indices)
     neighbor_count = window.indices.shape[1]
     templates = np.empty_like(epochs)
     for residue in range(window.stride):
@@ -1229,6 +1390,242 @@ def _make_templates(
             summed = summed - epochs[targets]
         templates[targets] = summed / neighbor_count
     return templates
+
+
+def _mean_selected_epochs(epochs: np.ndarray, indices: np.ndarray) -> np.ndarray:
+    """Average arbitrary neighbour sets without materialising the full gather."""
+    templates = np.empty_like(epochs)
+    for start in range(0, indices.shape[0], _TEMPLATE_MEAN_CHUNK):
+        stop = min(start + _TEMPLATE_MEAN_CHUNK, indices.shape[0])
+        chosen = indices[start:stop]
+        selected = epochs[np.clip(chosen, 0, epochs.shape[0] - 1)]
+        valid = chosen >= 0
+        selected = np.where(valid[..., np.newaxis], selected, 0.0)
+        counts = np.maximum(valid.sum(axis=1, keepdims=True), 1)
+        templates[start:stop] = selected.sum(axis=1) / counts
+    return templates
+
+
+def _template_residual(epochs: np.ndarray, templates: np.ndarray) -> np.ndarray:
+    energies = np.sum(templates**2, axis=1)
+    amplitudes = np.divide(
+        np.sum(epochs * templates, axis=1),
+        energies,
+        out=np.ones(epochs.shape[0]),
+        where=energies > 0.0,
+    )
+    return epochs - amplitudes[:, np.newaxis] * templates
+
+
+def _residual_outlier_scores(
+    residual: np.ndarray,
+    *,
+    geometry: FastrGeometry,
+    sampling_rate: float | None,
+) -> np.ndarray:
+    """Score leftover gradient, not leftover EEG.
+
+    Broadband epoch energy flags high-amplitude EEG as often as motion. Slice-
+    harmonic power of the first-pass residual is the quantity the cohort QC
+    actually measures. Without a sampling rate the harmonic bins are unknown,
+    so the score falls back to mean-square residual.
+    """
+    if sampling_rate is None:
+        return np.mean(residual**2, axis=1)
+    fine_rate = sampling_rate * geometry.interpolation_factor
+    intervals = np.diff(geometry.fine_triggers.astype(np.float64))
+    if intervals.size == 0:
+        return np.mean(residual**2, axis=1)
+    slice_rate = fine_rate / float(np.median(intervals))
+    return _slice_harmonic_energy(residual, fine_rate, slice_rate)
+
+
+def _slice_harmonic_energy(
+    residual: np.ndarray,
+    sampling_rate: float,
+    slice_rate: float,
+) -> np.ndarray:
+    length = residual.shape[1]
+    freqs = np.fft.rfftfreq(length, d=1.0 / sampling_rate)
+    window = np.hanning(length)
+    power = np.abs(np.fft.rfft(residual * window, axis=1)) ** 2
+    resolution = float(freqs[1]) if freqs.size > 1 else slice_rate
+    half_width = max(2.0 * resolution, 0.1 * slice_rate)
+    nyquist = 0.5 * sampling_rate
+    mask = np.zeros(freqs.size, dtype=bool)
+    order = 1
+    while True:
+        frequency = slice_rate * order
+        if frequency >= nyquist:
+            break
+        if abs(frequency - _RESIDUAL_GATE_MAINS_HZ) > 1.0:
+            mask |= np.abs(freqs - frequency) <= half_width
+        order += 1
+    if not np.any(mask):
+        return np.mean(residual**2, axis=1)
+    return power[:, mask].sum(axis=1)
+
+
+def _outlier_groups(
+    residual_energy: np.ndarray,
+    stride: int,
+    *,
+    protected_edge_volumes: int = 1,
+) -> np.ndarray:
+    """Flag groups whose volume-level residual is a robust outlier.
+
+    The first and last volumes are left eligible as neighbours. Their epochs
+    overlap a missing next group, so residual energy is biased at the edges
+    even on a stationary artifact.
+    """
+    energy = np.asarray(residual_energy, dtype=np.float64)
+    if energy.ndim != 1 or energy.size == 0:
+        raise FastrInputError("residual energy must be a nonempty vector")
+    if not isinstance(protected_edge_volumes, int) or protected_edge_volumes < 0:
+        raise FastrInputError("protected edge volumes must be a nonnegative integer")
+    if stride > 1 and energy.size % stride == 0:
+        volume_scores = energy.reshape(-1, stride).mean(axis=1)
+        volume_flags = _robust_outliers(volume_scores)
+        if protected_edge_volumes:
+            volume_flags[:protected_edge_volumes] = False
+            volume_flags[-protected_edge_volumes:] = False
+        volume_flags = _cap_outliers(volume_flags, volume_scores)
+        return np.repeat(volume_flags, stride)
+    flags = _robust_outliers(energy)
+    if protected_edge_volumes:
+        flags[:protected_edge_volumes] = False
+        flags[-protected_edge_volumes:] = False
+    return _cap_outliers(flags, energy)
+
+
+def _nearest_slot_neighbors(
+    group_count: int,
+    stride: int,
+    neighbor_count: int,
+) -> np.ndarray:
+    """Nearest same-slot groups, excluding the target, padded with -1."""
+    indices = np.full((group_count, neighbor_count), -1, dtype=np.int64)
+    for residue in range(stride):
+        class_indices = np.arange(residue, group_count, stride, dtype=np.int64)
+        for position, target in enumerate(class_indices):
+            others = np.delete(class_indices, position)
+            if others.size == 0:
+                continue
+            order = np.argsort(np.abs(others - target), kind="stable")
+            take = min(neighbor_count, others.size)
+            indices[target, :take] = others[order[:take]]
+    return indices
+
+
+def _volumes_helped_by_local_window(
+    wide_scores: np.ndarray,
+    local_scores: np.ndarray,
+    stride: int,
+    *,
+    protected_edge_volumes: int = 2,
+) -> np.ndarray:
+    """True for groups whose volume leftover falls enough with a short window."""
+    if stride > 1 and wide_scores.size % stride == 0:
+        wide_volume = wide_scores.reshape(-1, stride).mean(axis=1)
+        local_volume = local_scores.reshape(-1, stride).mean(axis=1)
+        helped = local_volume < _ADAPTIVE_IMPROVE_RATIO * wide_volume
+        if protected_edge_volumes:
+            helped[:protected_edge_volumes] = False
+            helped[-protected_edge_volumes:] = False
+        return np.repeat(helped, stride)
+    helped = local_scores < _ADAPTIVE_IMPROVE_RATIO * wide_scores
+    if protected_edge_volumes:
+        helped[:protected_edge_volumes] = False
+        helped[-protected_edge_volumes:] = False
+    return helped
+
+
+def _cap_outliers(flags: np.ndarray, scores: np.ndarray) -> np.ndarray:
+    """Keep only the strongest outliers so EEG variance cannot empty the window."""
+    flagged = np.flatnonzero(flags)
+    maximum = max(1, int(np.floor(scores.size * _RESIDUAL_GATE_MAX_FRACTION)))
+    if flagged.size <= maximum:
+        return flags
+    strongest = flagged[np.argsort(scores[flagged], kind="stable")[::-1][:maximum]]
+    capped = np.zeros(flags.shape, dtype=bool)
+    capped[strongest] = True
+    return capped
+
+
+def _robust_outliers(values: np.ndarray) -> np.ndarray:
+    median = float(np.median(values))
+    mad = float(np.median(np.abs(values - median)))
+    if mad == 0.0:
+        above = values[values > median]
+        if above.size == 0:
+            return np.zeros(values.shape, dtype=bool)
+        scale = float(np.median(above))
+        if scale <= 0.0:
+            return np.zeros(values.shape, dtype=bool)
+        return values > scale * _RESIDUAL_GATE_RATIO
+    threshold = max(
+        median * _RESIDUAL_GATE_RATIO,
+        median + _RESIDUAL_GATE_K * 1.4826 * mad,
+    )
+    return values > threshold
+
+
+def _replace_excluded_neighbors(
+    indices: np.ndarray,
+    excluded: np.ndarray,
+    *,
+    stride: int,
+) -> np.ndarray:
+    """Rebuild each window from the nearest non-outlier members of the same slot."""
+    gated = np.array(indices, copy=True, dtype=np.int64)
+    excluded = np.asarray(excluded, dtype=bool)
+    n_groups, n_neighbors = gated.shape
+    if excluded.shape != (n_groups,):
+        raise FastrInputError("excluded groups must match the template window")
+    for residue in range(stride):
+        class_indices = np.arange(residue, n_groups, stride, dtype=np.int64)
+        usable_all = class_indices[~excluded[class_indices]]
+        for target in class_indices:
+            if excluded[target]:
+                continue
+            members = gated[target]
+            valid_members = members[members >= 0]
+            if valid_members.size > 0 and not np.any(excluded[valid_members]):
+                continue
+            usable = usable_all[usable_all != target]
+            if usable.size < _RESIDUAL_GATE_MIN_NEIGHBORS:
+                continue
+            kept = valid_members[~excluded[valid_members]]
+            need = n_neighbors - kept.size
+            if need <= 0:
+                row = np.full(n_neighbors, -1, dtype=np.int64)
+                row[:n_neighbors] = kept[:n_neighbors]
+                gated[target] = row
+                continue
+            used = set(kept.tolist())
+            extras = [
+                int(candidate)
+                for candidate in usable[np.argsort(np.abs(usable - target), kind="stable")]
+                if int(candidate) not in used
+            ]
+            chosen = np.concatenate(
+                (kept, np.asarray(extras[:need], dtype=np.int64))
+            ) if extras else kept
+            take = min(n_neighbors, chosen.size)
+            if take < _RESIDUAL_GATE_MIN_NEIGHBORS:
+                continue
+            row = np.full(n_neighbors, -1, dtype=np.int64)
+            row[:take] = chosen[:take]
+            gated[target] = row
+    return gated
+
+
+def _map_neighbor_indices(geometry: FastrGeometry) -> np.ndarray:
+    raw_indices = geometry.window.indices
+    if raw_indices.size == 0:
+        return raw_indices
+    safe = np.clip(raw_indices, 0, geometry.group_indices.size - 1)
+    return np.where(raw_indices >= 0, geometry.group_indices[safe], -1)
 
 
 def _fit_group_shifts(
