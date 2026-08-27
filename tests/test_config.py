@@ -443,3 +443,76 @@ def test_optional_sections_must_be_mappings(
 
     with pytest.raises(ConfigurationError, match=section):
         load_config(config_path)
+
+
+def test_robustness_thresholds_default_to_current_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate_mad_multiplier == 8.0
+    assert config.processing.residual_gate_ratio == 8.0
+    assert config.processing.residual_gate_max_fraction == 0.02
+    assert config.processing.adaptive_improvement_ratio == 0.85
+
+
+def test_custom_robustness_thresholds_are_loaded(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        {
+            "residual_gate_mad_multiplier": 6.0,
+            "residual_gate_ratio": 5.0,
+            "residual_gate_max_fraction": 0.1,
+            "adaptive_improvement_ratio": 0.9,
+        }
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate_mad_multiplier == 6.0
+    assert config.processing.residual_gate_ratio == 5.0
+    assert config.processing.residual_gate_max_fraction == 0.1
+    assert config.processing.adaptive_improvement_ratio == 0.9
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("residual_gate_mad_multiplier", 0.0),
+        ("residual_gate_mad_multiplier", -1.0),
+        ("residual_gate_mad_multiplier", True),
+        ("residual_gate_ratio", 0.0),
+        ("residual_gate_ratio", float("nan")),
+        ("residual_gate_max_fraction", 0.0),
+        ("residual_gate_max_fraction", 1.1),
+        ("residual_gate_max_fraction", True),
+        ("adaptive_improvement_ratio", 0.0),
+        ("adaptive_improvement_ratio", 1.1),
+        ("adaptive_improvement_ratio", float("inf")),
+    ],
+)
+def test_robustness_thresholds_reject_invalid_values(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"][field] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=field):
+        load_config(config_path)
+
+
+def test_processing_rejects_unknown_robustness_threshold(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["robustness_threshold"] = 4.0
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="robustness_threshold"):
+        load_config(config_path)

@@ -55,6 +55,10 @@ class ProcessingConfig:
     residual_gate: bool = False
     adaptive_window: bool = False
     local_neighbor_count: int = 20
+    residual_gate_mad_multiplier: float = 8.0
+    residual_gate_ratio: float = 8.0
+    residual_gate_max_fraction: float = 0.02
+    adaptive_improvement_ratio: float = 0.85
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,10 @@ _PROCESSING_KEYS = frozenset(
         "residual_gate",
         "adaptive_window",
         "local_neighbor_count",
+        "residual_gate_mad_multiplier",
+        "residual_gate_ratio",
+        "residual_gate_max_fraction",
+        "adaptive_improvement_ratio",
     }
 )
 _OPTIONAL_PROCESSING_KEYS = frozenset(
@@ -147,6 +155,10 @@ _OPTIONAL_PROCESSING_KEYS = frozenset(
         "residual_gate",
         "adaptive_window",
         "local_neighbor_count",
+        "residual_gate_mad_multiplier",
+        "residual_gate_ratio",
+        "residual_gate_max_fraction",
+        "adaptive_improvement_ratio",
     }
 )
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
@@ -321,12 +333,43 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     if local_neighbor_count % 2:
         raise ConfigurationError("processing.local_neighbor_count must be even")
 
+    residual_gate_mad_multiplier = _optional_finite_number(
+        values,
+        "residual_gate_mad_multiplier",
+        default=8.0,
+        minimum=0.0,
+    )
+    residual_gate_ratio = _optional_finite_number(
+        values,
+        "residual_gate_ratio",
+        default=8.0,
+        minimum=0.0,
+    )
+    residual_gate_max_fraction = _optional_finite_number(
+        values,
+        "residual_gate_max_fraction",
+        default=0.02,
+        minimum=0.0,
+        maximum=1.0,
+    )
+    adaptive_improvement_ratio = _optional_finite_number(
+        values,
+        "adaptive_improvement_ratio",
+        default=0.85,
+        minimum=0.0,
+        maximum=1.0,
+    )
+
     return ProcessingConfig(
         method=method,
         residual_threshold_uv=residual_threshold_uv,
         residual_gate=residual_gate,
         adaptive_window=adaptive_window,
         local_neighbor_count=local_neighbor_count,
+        residual_gate_mad_multiplier=residual_gate_mad_multiplier,
+        residual_gate_ratio=residual_gate_ratio,
+        residual_gate_max_fraction=residual_gate_max_fraction,
+        adaptive_improvement_ratio=adaptive_improvement_ratio,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         template_high_pass_hz=template_high_pass_hz,
@@ -402,6 +445,7 @@ def _optional_finite_number(
     default: float,
     minimum: float,
     inclusive: bool = False,
+    maximum: float | None = None,
 ) -> float:
     if name not in values:
         return default
@@ -410,6 +454,7 @@ def _optional_finite_number(
         name,
         minimum=minimum,
         inclusive=inclusive,
+        maximum=maximum,
     )
 
 
@@ -494,13 +539,17 @@ def _finite_number(
     *,
     minimum: float,
     inclusive: bool = False,
+    maximum: float | None = None,
 ) -> float:
     value = _required_value(values, name)
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ConfigurationError(f"{name} must be a finite number")
     number = float(value)
     too_small = number < minimum if inclusive else number <= minimum
-    if not math.isfinite(number) or too_small:
+    too_large = maximum is not None and number > maximum
+    if not math.isfinite(number) or too_small or too_large:
+        if too_large:
+            raise ConfigurationError(f"{name} must be less than or equal to {maximum}")
         bound = "greater than or equal to" if inclusive else "greater than"
         raise ConfigurationError(f"{name} must be {bound} {minimum}")
     return number
