@@ -40,15 +40,31 @@ For each polarity arm:
    polarity;
 2. estimate a physiological period from only those candidates;
 3. consolidate close candidates using the existing prominence scores; and
-4. measure robust arm support from the consolidated train's Teager prominence
-   and physiological interval coherence.
+4. compute the exact lexicographic support score described below.
 
-Select the arm with the strongest deterministic support. If neither arm can
-construct a physiological seed train, raise `CardiacInputError`. A global
-inversion of the ECG swaps the arms but must preserve the returned event
-samples. All subsequent template construction, alignment, correlation, and
-missing-event recovery use the selected constant polarity. An opposite-polarity
-event is rejected rather than individually inverted.
+Assign candidate polarity in the existing alignment window: a radius of
+`min(0.06, 0.25 * candidate_refractory_seconds)` around the candidate. The
+sample with maximum absolute conditioned-ECG amplitude supplies the sign.
+Within each arm, align to the maximum of `polarity * conditioned_ecg` in that
+same window before period estimation.
+
+An arm that cannot estimate a physiological period or retain at least three
+consolidated candidates is ineligible. For every eligible arm, define its score
+as the following tuple, compared lexicographically from left to right:
+
+1. the number of consolidated adjacent intervals within 25% of the arm's
+   estimated period;
+2. the number of consolidated candidates; and
+3. the median Teager prominence of those consolidated candidates.
+
+Select the unique arm with the greatest tuple. Exact ties raise
+`CardiacInputError("ECG polarity is ambiguous")`; they must not be resolved by
+preferring a fixed sign. If neither arm is eligible, raise `CardiacInputError`.
+This makes selection deterministic and inversion-equivariant: a global
+inversion swaps the arms and selected sign while preserving samples. All
+subsequent template construction, alignment, correlation, and missing-event
+recovery use the selected constant polarity. An opposite-polarity event is
+rejected rather than individually inverted.
 
 This retains the existing MRI-specific detector while fixing the confirmed
 failure at its source. Replacing the detector with MNE `find_ecg_events` was
@@ -70,9 +86,11 @@ Extend `CardiacDetectionQuality` with:
 
 `status` remains `ok` or `degraded`, derived only from whether
 `degradation_reasons` is empty. Initially, the reasons cover intervals below
-`minimum_rr_seconds` and intervals above `maximum_rr_seconds`. Detector
-conditions that prevent a usable train continue to raise immediately rather
-than becoming a fallback status.
+`minimum_rr_seconds` and intervals above `maximum_rr_seconds`. The stable
+identifiers, emitted in this fixed order when applicable, are
+`"rr_below_minimum"` and `"rr_above_maximum"`. Detector conditions that prevent
+a usable train continue to raise immediately rather than becoming a fallback
+status.
 
 Do not add tunable polarity flags or thresholds to YAML. Polarity is an
 observable property of the supplied ECG, not a user-selected correction mode.
@@ -138,8 +156,22 @@ recordings:
 
 Report event count, selected polarity, median/minimum/maximum RR, degradation
 reasons, and adjacent polarity alternation. The repair is acceptable only if it
-removes alternating-deflection trains without damaging the coherent sub-0003
-case. These recordings are validation evidence, not tracked test fixtures.
+meets these predeclared checks:
+
+- affected sub-0005 and sub-0017 recordings either produce an `ok` train whose
+  adjacent conditioned-ECG polarity alternation is at most 5%, or remain
+  explicitly `degraded` and are rejected by the pipeline before output;
+- the long-gap sub-0011 run either eliminates intervals above
+  `maximum_rr_seconds` or remains explicitly degraded and is rejected before
+  output; and
+- the coherent sub-0003 run remains `ok`, keeps its event count within 2% of
+  the pre-repair count, matches at least 98% of pre-repair events one-to-one
+  within 20 ms, and has a median absolute matched-event shift no greater than
+  10 ms.
+
+These recordings are validation evidence, not tracked test fixtures. Failure to
+repair an affected recording is acceptable only as a surfaced quality failure;
+writing corrected output from it is not.
 
 ## Non-goals
 
