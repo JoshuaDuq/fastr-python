@@ -10,7 +10,6 @@ from mri_correction.brainvision import (
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from mri_correction.window import OutputWindow
 from mri_correction.brainvision_io import (
     BrainVisionInputError,
     read_brainvision_recording,
@@ -18,6 +17,7 @@ from mri_correction.brainvision_io import (
     select_marker_samples,
     write_brainvision_recording,
 )
+from mri_correction.window import OutputWindow
 
 
 def make_markers() -> tuple[BrainVisionMarker, ...]:
