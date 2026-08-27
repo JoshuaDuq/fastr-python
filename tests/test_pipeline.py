@@ -114,9 +114,16 @@ def test_run_correction_writes_reopenable_output_and_provenance(
     assert provenance["input"]["raw_vhdr"].endswith("source.vhdr")
     assert provenance["output"]["psd_before"] == str(summary.psd_before)
     assert provenance["output"]["psd_after"] == str(summary.psd_after)
+    assert provenance["output"]["psd_settings"] == {
+        "fmax_hz": 100.0,
+        "n_fft": None,
+    }
     assert provenance["output"]["psd_interval_seconds"]["start"] > 0.0
     assert provenance["output"]["psd_interval_seconds"]["end"] < 0.8
     assert provenance["fastr"]["alignment"]["shifts"]
+    assert provenance["residual_qc"]["block_seconds"] == 30.0
+    assert provenance["residual_qc"]["mains_frequency_hz"] == 60.0
+    assert provenance["residual_qc"]["mains_exclusion_hz"] == 1.0
     assert "Comment/preserve me" in set(raw.annotations.description)
 
 
@@ -189,6 +196,7 @@ def test_psd_diagnostics_use_only_corrected_time_window(
         title: str,
         tmin: float,
         tmax: float,
+        n_fft: int | None = None,
     ) -> None:
         calls.append((tmin, tmax))
         fmax_values.append(fmax)
@@ -199,6 +207,7 @@ def test_psd_diagnostics_use_only_corrected_time_window(
             title=title,
             tmin=tmin,
             tmax=tmax,
+            n_fft=n_fft,
         )
 
     monkeypatch.setattr(pipeline_module, "_save_psd_plot", capture_window)
@@ -210,6 +219,102 @@ def test_psd_diagnostics_use_only_corrected_time_window(
     assert fmax_values == [100.0, 100.0]
     assert calls[0][0] > 0.0
     assert calls[0][1] < 0.8
+
+
+def test_pipeline_forwards_configured_psd_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["diagnostics"] = {
+        "psd_max_frequency_hz": 80.0,
+        "psd_n_fft": 128,
+    }
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    config = load_config(config_path)
+    calls: list[tuple[float, int | None]] = []
+
+    def capture_psd(
+        raw: mne.io.BaseRaw,
+        output_path: Path,
+        *,
+        fmax: float,
+        title: str,
+        tmin: float,
+        tmax: float,
+        n_fft: int | None = None,
+    ) -> None:
+        calls.append((fmax, n_fft))
+        output_path.touch()
+
+    monkeypatch.setattr(pipeline_module, "_save_psd_plot", capture_psd)
+
+    run_correction(config)
+
+    assert calls == [(80.0, 128), (80.0, 128)]
+
+
+def test_pipeline_forwards_configured_fastr_robustness_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"].update(
+        {
+            "residual_gate": True,
+            "adaptive_window": True,
+            "local_neighbor_count": 2,
+            "residual_gate_mad_multiplier": 6.0,
+            "residual_gate_ratio": 5.0,
+            "residual_gate_max_fraction": 0.5,
+            "adaptive_improvement_ratio": 0.9,
+        }
+    )
+    values["quality_control"] = {
+        "mains_frequency_hz": 50.0,
+        "mains_exclusion_hz": 0.5,
+    }
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    config = load_config(config_path)
+    seen_gate: dict[str, object] = {}
+    seen_adaptive: dict[str, object] = {}
+    original_gate = pipeline_module.gate_fastr_geometry
+    original_adaptive = pipeline_module.adapt_fastr_geometry
+
+    def capture_gate(*args: object, **kwargs: object) -> object:
+        seen_gate.update(kwargs)
+        return original_gate(*args, **kwargs)
+
+    def capture_adaptive(*args: object, **kwargs: object) -> object:
+        seen_adaptive.update(kwargs)
+        return original_adaptive(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "gate_fastr_geometry", capture_gate)
+    monkeypatch.setattr(
+        pipeline_module,
+        "adapt_fastr_geometry",
+        capture_adaptive,
+    )
+
+    run_correction(config)
+
+    assert seen_gate == {
+        "template_high_pass_hz": 1.0,
+        "sampling_rate": 1_000.0,
+        "residual_gate_mad_multiplier": 6.0,
+        "residual_gate_ratio": 5.0,
+        "residual_gate_max_fraction": 0.5,
+        "mains_frequency_hz": 50.0,
+        "mains_exclusion_hz": 0.5,
+    }
+    assert seen_adaptive == {
+        "local_neighbor_count": 2,
+        "template_high_pass_hz": 1.0,
+        "sampling_rate": 1_000.0,
+        "adaptive_improvement_ratio": 0.9,
+    }
 
 
 def test_psd_plot_preparation_assigns_standard_channel_locations() -> None:

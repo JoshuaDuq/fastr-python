@@ -61,6 +61,8 @@ def make_provenance(
     residual_qc: dict[str, object],
     psd_tmin: float,
     psd_tmax: float,
+    psd_max_frequency_hz: float,
+    psd_n_fft: int | None,
     runtime_seconds: float,
 ) -> dict[str, object]:
     return {
@@ -87,6 +89,10 @@ def make_provenance(
             "psd_interval_seconds": {
                 "start": psd_tmin,
                 "end": psd_tmax,
+            },
+            "psd_settings": {
+                "fmax_hz": float(psd_max_frequency_hz),
+                "n_fft": psd_n_fft,
             },
         },
         "trim": trim_provenance(

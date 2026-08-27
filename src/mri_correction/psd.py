@@ -9,7 +9,6 @@ import mne
 import numpy as np
 
 PSD_MAX_FREQUENCY_HZ = 100.0
-PSD_FFT_SAMPLES = 2048
 
 
 def save_psd_plot(

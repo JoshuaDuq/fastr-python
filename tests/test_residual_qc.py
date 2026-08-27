@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+import mri_correction.pipeline as pipeline_module
+from mri_correction.fastr import FmriAcquisitionTiming
 from mri_correction.residual_qc import (
     ResidualQcError,
     block_residual_uv,
@@ -101,3 +103,56 @@ def test_invalid_inputs_are_rejected() -> None:
             sampling_rate=1000.0,
             harmonics=(20.0,),
         )
+
+
+def test_pipeline_residual_qc_forwards_configured_measurement_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timing = FmriAcquisitionTiming(
+        repetition_time_seconds=0.1,
+        slice_timing_seconds=(0.0, 0.05),
+        multiband_acceleration_factor=1,
+    )
+    seen: dict[str, object] = {}
+
+    def capture_harmonics(**kwargs: object) -> tuple[float, ...]:
+        seen.update(kwargs)
+        return (20.0,)
+
+    def capture_residuals(
+        data: np.ndarray,
+        *,
+        sampling_rate: float,
+        harmonics: tuple[float, ...],
+        block_seconds: float,
+    ) -> np.ndarray:
+        seen["block_seconds"] = block_seconds
+        seen["harmonics"] = harmonics
+        return np.empty((data.shape[0], 0), dtype=np.float64)
+
+    monkeypatch.setattr(pipeline_module, "slice_harmonics", capture_harmonics)
+    monkeypatch.setattr(pipeline_module, "block_residual_uv", capture_residuals)
+
+    report = pipeline_module._measure_residual_qc(
+        np.zeros((2, 100)),
+        channel_names=["EEG 001", "EEG 002"],
+        output_rate=500.0,
+        timing=timing,
+        threshold_uv=1.0,
+        block_seconds=12.0,
+        mains_frequency_hz=50.0,
+        mains_exclusion_hz=0.5,
+    )
+
+    assert seen == {
+        "groups_per_volume": 2,
+        "repetition_time_seconds": 0.1,
+        "nyquist_hz": 250.0,
+        "mains_hz": 50.0,
+        "exclusion_hz": 0.5,
+        "block_seconds": 12.0,
+        "harmonics": (20.0,),
+    }
+    assert report["block_seconds"] == 12.0
+    assert report["mains_frequency_hz"] == 50.0
+    assert report["mains_exclusion_hz"] == 0.5

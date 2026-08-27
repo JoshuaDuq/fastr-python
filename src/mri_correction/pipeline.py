@@ -36,12 +36,9 @@ from .fastr import (
     prepare_fastr_geometry,
 )
 from .pipeline_types import PipelineInputError
-from .psd import PSD_MAX_FREQUENCY_HZ, prepare_psd_raw, save_psd_plot
+from .psd import prepare_psd_raw, save_psd_plot
 from .residual_qc import block_residual_uv, slice_harmonics
 from .window import OutputWindow, resolve_output_window
-
-_PSD_MAX_FREQUENCY_HZ = PSD_MAX_FREQUENCY_HZ
-_RESIDUAL_BLOCK_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +142,13 @@ def _run_correction(
             reference_channel,
             template_high_pass_hz=config.processing.template_high_pass_hz,
             sampling_rate=input_rate,
+            residual_gate_mad_multiplier=(
+                config.processing.residual_gate_mad_multiplier
+            ),
+            residual_gate_ratio=config.processing.residual_gate_ratio,
+            residual_gate_max_fraction=config.processing.residual_gate_max_fraction,
+            mains_frequency_hz=config.quality_control.mains_frequency_hz,
+            mains_exclusion_hz=config.quality_control.mains_exclusion_hz,
         )
     if config.processing.adaptive_window:
         geometry = adapt_fastr_geometry(
@@ -154,6 +158,7 @@ def _run_correction(
             local_neighbor_count=config.processing.local_neighbor_count,
             template_high_pass_hz=config.processing.template_high_pass_hz,
             sampling_rate=input_rate,
+            adaptive_improvement_ratio=config.processing.adaptive_improvement_ratio,
         )
 
     channel_count = len(raw.ch_names)
@@ -209,6 +214,9 @@ def _run_correction(
             output_rate=output_rate,
             timing=timing,
             threshold_uv=config.processing.residual_threshold_uv,
+            block_seconds=config.quality_control.block_seconds,
+            mains_frequency_hz=config.quality_control.mains_frequency_hz,
+            mains_exclusion_hz=config.quality_control.mains_exclusion_hz,
         )
         transformed_markers = resample_markers(
             recording.markers,
@@ -237,7 +245,10 @@ def _run_correction(
         )
         del corrected_output
 
-    psd_max_frequency = min(_PSD_MAX_FREQUENCY_HZ, output_rate / 2.0)
+    psd_max_frequency = min(
+        config.diagnostics.psd_max_frequency_hz,
+        output_rate / 2.0,
+    )
     psd_tmin, psd_tmax = _corrected_psd_window(
         geometry,
         input_sampling_rate=input_rate,
@@ -249,6 +260,7 @@ def _run_correction(
         output_paths["psd_before"],
         title="Before scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
+        n_fft=config.diagnostics.psd_n_fft,
         tmin=psd_tmin + window_offset_seconds,
         tmax=psd_tmax + window_offset_seconds,
     )
@@ -262,6 +274,7 @@ def _run_correction(
         output_paths["psd_after"],
         title="After scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
+        n_fft=config.diagnostics.psd_n_fft,
         tmin=psd_tmin,
         tmax=psd_tmax,
     )
@@ -283,6 +296,8 @@ def _run_correction(
         residual_qc=residual_qc,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
+        psd_max_frequency_hz=psd_max_frequency,
+        psd_n_fft=config.diagnostics.psd_n_fft,
         runtime_seconds=time.perf_counter() - started,
     )
     with provenance_path.open("x", encoding="utf-8") as output:
@@ -360,11 +375,13 @@ def _save_psd_plot(
     title: str,
     tmin: float,
     tmax: float,
+    n_fft: int | None = None,
 ) -> None:
     save_psd_plot(
         raw,
         output_path,
         fmax=fmax,
+        n_fft=n_fft,
         title=title,
         tmin=tmin,
         tmax=tmax,
@@ -416,6 +433,9 @@ def _measure_residual_qc(
     output_rate: float,
     timing: FmriAcquisitionTiming,
     threshold_uv: float,
+    block_seconds: float,
+    mains_frequency_hz: float,
+    mains_exclusion_hz: float,
 ) -> dict[str, object]:
     """Measure residual gradient artifact across the whole corrected recording.
 
@@ -427,12 +447,14 @@ def _measure_residual_qc(
         groups_per_volume=timing.groups_per_volume,
         repetition_time_seconds=timing.repetition_time_seconds,
         nyquist_hz=output_rate / 2.0,
+        mains_hz=mains_frequency_hz,
+        exclusion_hz=mains_exclusion_hz,
     )
     residuals = block_residual_uv(
         np.asarray(corrected) * 1e6,
         sampling_rate=output_rate,
         harmonics=harmonics,
-        block_seconds=_RESIDUAL_BLOCK_SECONDS,
+        block_seconds=block_seconds,
     )
     if residuals.shape[1] == 0:
         worst_block = [-1] * residuals.shape[0]
@@ -441,8 +463,10 @@ def _measure_residual_qc(
         worst_block = [int(index) for index in residuals.argmax(axis=1)]
         worst_uv = [float(value) for value in residuals.max(axis=1)]
     return {
-        "block_seconds": _RESIDUAL_BLOCK_SECONDS,
+        "block_seconds": float(block_seconds),
         "harmonics_hz": [float(value) for value in harmonics],
+        "mains_frequency_hz": float(mains_frequency_hz),
+        "mains_exclusion_hz": float(mains_exclusion_hz),
         "threshold_uv": float(threshold_uv),
         "channel_names": list(channel_names),
         "block_residual_uv": [[float(v) for v in row] for row in residuals],
@@ -519,6 +543,8 @@ def _make_provenance(
     residual_qc: dict[str, object],
     psd_tmin: float,
     psd_tmax: float,
+    psd_max_frequency_hz: float,
+    psd_n_fft: int | None,
     runtime_seconds: float,
 ) -> dict[str, object]:
     return pipeline_provenance.make_provenance(
@@ -537,6 +563,8 @@ def _make_provenance(
         residual_qc=residual_qc,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
+        psd_max_frequency_hz=psd_max_frequency_hz,
+        psd_n_fft=psd_n_fft,
         runtime_seconds=runtime_seconds,
     )
 
