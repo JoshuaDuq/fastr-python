@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from mri_correction.config import (
     ConfigurationError,
@@ -315,4 +316,130 @@ def test_template_high_pass_rejects_a_negative_cutoff(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigurationError, match="template_high_pass_hz"):
+        load_config(config_path)
+
+
+def test_optional_quality_control_defaults_are_explicit(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.block_seconds == 30.0
+    assert config.quality_control.mains_frequency_hz == 60.0
+    assert config.quality_control.mains_exclusion_hz == 1.0
+
+
+def test_optional_diagnostics_defaults_preserve_current_output(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.diagnostics.psd_max_frequency_hz == 100.0
+    assert config.diagnostics.psd_n_fft is None
+
+
+def test_optional_sections_default_each_missing_field(tmp_path: Path) -> None:
+    document = valid_document() + """
+quality_control:
+  block_seconds: 15.0
+diagnostics:
+  psd_n_fft: 4096
+"""
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document, encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.block_seconds == 15.0
+    assert config.quality_control.mains_frequency_hz == 60.0
+    assert config.quality_control.mains_exclusion_hz == 1.0
+    assert config.diagnostics.psd_max_frequency_hz == 100.0
+    assert config.diagnostics.psd_n_fft == 4096
+
+
+def test_custom_quality_control_and_diagnostic_values_are_loaded(
+    tmp_path: Path,
+) -> None:
+    document = valid_document() + """
+quality_control:
+  block_seconds: 15.0
+  mains_frequency_hz: 50.0
+  mains_exclusion_hz: 0.5
+diagnostics:
+  psd_max_frequency_hz: 80.0
+  psd_n_fft: 4096
+"""
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document, encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.block_seconds == 15.0
+    assert config.quality_control.mains_frequency_hz == 50.0
+    assert config.quality_control.mains_exclusion_hz == 0.5
+    assert config.diagnostics.psd_max_frequency_hz == 80.0
+    assert config.diagnostics.psd_n_fft == 4096
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("quality_control", "block_seconds", 0.0),
+        ("quality_control", "block_seconds", -1.0),
+        ("quality_control", "block_seconds", True),
+        ("quality_control", "mains_frequency_hz", 0.0),
+        ("quality_control", "mains_frequency_hz", float("nan")),
+        ("quality_control", "mains_exclusion_hz", -0.1),
+        ("quality_control", "mains_exclusion_hz", True),
+        ("diagnostics", "psd_max_frequency_hz", 0.0),
+        ("diagnostics", "psd_max_frequency_hz", float("inf")),
+        ("diagnostics", "psd_n_fft", 0),
+        ("diagnostics", "psd_n_fft", 12.5),
+        ("diagnostics", "psd_n_fft", True),
+    ],
+)
+def test_optional_sections_reject_invalid_values(
+    tmp_path: Path,
+    section: str,
+    field: str,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document[section] = {field: value}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=field):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("section", ["quality_control", "diagnostics"])
+def test_optional_sections_reject_unknown_fields(
+    tmp_path: Path,
+    section: str,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document[section] = {"unexpected": True}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=f"{section}.*unexpected"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("section", ["quality_control", "diagnostics"])
+def test_optional_sections_must_be_mappings(
+    tmp_path: Path,
+    section: str,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document[section] = []
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=section):
         load_config(config_path)

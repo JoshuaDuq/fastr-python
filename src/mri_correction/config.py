@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from numbers import Real
 from pathlib import Path
 
@@ -71,6 +71,23 @@ class TrimConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class QualityControlConfig:
+    """Settings for residual-gradient measurements and annotations."""
+
+    block_seconds: float = 30.0
+    mains_frequency_hz: float = 60.0
+    mains_exclusion_hz: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticsConfig:
+    """Settings for generated PSD diagnostics."""
+
+    psd_max_frequency_hz: float = 100.0
+    psd_n_fft: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CorrectionConfig:
     """Complete immutable configuration for a correction run."""
 
@@ -79,15 +96,33 @@ class CorrectionConfig:
     timing: TimingConfig
     processing: ProcessingConfig
     trim: TrimConfig
+    quality_control: QualityControlConfig = field(
+        default_factory=QualityControlConfig,
+    )
+    diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
 
 
-_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing", "trim"})
+_TOP_LEVEL_KEYS = frozenset(
+    {
+        "input",
+        "output",
+        "timing",
+        "processing",
+        "trim",
+        "quality_control",
+        "diagnostics",
+    }
+)
 _REQUIRED_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"})
 _TRIM_MODES = frozenset({"none", "first_to_last_volume"})
 _TRIM_KEYS = frozenset({"mode"})
 _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
 _TIMING_KEYS = frozenset({"marker_type", "marker_description"})
+_QUALITY_CONTROL_KEYS = frozenset(
+    {"block_seconds", "mains_frequency_hz", "mains_exclusion_hz"}
+)
+_DIAGNOSTICS_KEYS = frozenset({"psd_max_frequency_hz", "psd_n_fft"})
 _PROCESSING_KEYS = frozenset(
     {
         "method",
@@ -172,6 +207,8 @@ def load_config(path: str | Path) -> CorrectionConfig:
         ),
         processing=_processing_config(processing_values),
         trim=_trim_config(root),
+        quality_control=_quality_control_config(root),
+        diagnostics=_diagnostics_config(root),
     )
 
 
@@ -184,6 +221,47 @@ def _trim_config(root: Mapping[str, object]) -> TrimConfig:
     defaults = TrimConfig()
     mode = _string_value(values, "mode") if "mode" in values else defaults.mode
     return TrimConfig(mode=mode)
+
+
+def _quality_control_config(
+    root: Mapping[str, object],
+) -> QualityControlConfig:
+    values = _optional_section(root, "quality_control", _QUALITY_CONTROL_KEYS)
+    return QualityControlConfig(
+        block_seconds=_optional_finite_number(
+            values,
+            "block_seconds",
+            default=30.0,
+            minimum=0.0,
+        ),
+        mains_frequency_hz=_optional_finite_number(
+            values,
+            "mains_frequency_hz",
+            default=60.0,
+            minimum=0.0,
+        ),
+        mains_exclusion_hz=_optional_finite_number(
+            values,
+            "mains_exclusion_hz",
+            default=1.0,
+            minimum=0.0,
+            inclusive=True,
+        ),
+    )
+
+
+def _diagnostics_config(root: Mapping[str, object]) -> DiagnosticsConfig:
+    values = _optional_section(root, "diagnostics", _DIAGNOSTICS_KEYS)
+    psd_n_fft = _optional_integer_or_none(values, "psd_n_fft")
+    return DiagnosticsConfig(
+        psd_max_frequency_hz=_optional_finite_number(
+            values,
+            "psd_max_frequency_hz",
+            default=100.0,
+            minimum=0.0,
+        ),
+        psd_n_fft=psd_n_fft,
+    )
 
 
 def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
@@ -303,6 +381,45 @@ def _section(
                 f"missing required field: {name}.{field_name}"
             )
     return values
+
+
+def _optional_section(
+    root: Mapping[str, object],
+    name: str,
+    expected_keys: frozenset[str],
+) -> Mapping[str, object]:
+    if name not in root:
+        return {}
+    values = _require_mapping(root[name], name)
+    _reject_unknown_keys(values, expected_keys, name)
+    return values
+
+
+def _optional_finite_number(
+    values: Mapping[str, object],
+    name: str,
+    *,
+    default: float,
+    minimum: float,
+    inclusive: bool = False,
+) -> float:
+    if name not in values:
+        return default
+    return _finite_number(
+        values,
+        name,
+        minimum=minimum,
+        inclusive=inclusive,
+    )
+
+
+def _optional_integer_or_none(
+    values: Mapping[str, object],
+    name: str,
+) -> int | None:
+    if name not in values or values[name] is None:
+        return None
+    return _integer_value(values, name, minimum=1)
 
 
 def _require_mapping(value: object, field_path: str) -> Mapping[str, object]:

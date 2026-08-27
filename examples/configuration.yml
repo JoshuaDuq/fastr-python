@@ -21,5 +21,17 @@ processing:
   template_high_pass_hz: 1.0
   residual_gate: false
 
+# Optional quality-control settings. These describe how residuals are measured;
+# they do not enable or change correction stages by themselves.
+quality_control:
+  block_seconds: 30.0
+  mains_frequency_hz: 60.0
+  mains_exclusion_hz: 1.0
+
+# Optional diagnostic settings. Set psd_n_fft to null to use the MNE default.
+diagnostics:
+  psd_max_frequency_hz: 100.0
+  psd_n_fft: null
+
 trim:
   mode: first_to_last_volume
