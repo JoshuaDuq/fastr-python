@@ -50,6 +50,24 @@ class ProcessingConfig:
     output_sampling_rate_hz: float
     channel_batch_size: int
     reference_channel: str | int
+    template_high_pass_hz: float = 1.0
+    residual_threshold_uv: float = 1.0
+    residual_gate: bool = False
+    adaptive_window: bool = False
+    local_neighbor_count: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class TrimConfig:
+    """How the pipeline restricts its output to the scanning period."""
+
+    mode: str = "none"
+
+    def __post_init__(self) -> None:
+        if self.mode not in _TRIM_MODES:
+            raise ConfigurationError(
+                f"trim.mode must be one of {sorted(_TRIM_MODES)}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +78,13 @@ class CorrectionConfig:
     output: OutputConfig
     timing: TimingConfig
     processing: ProcessingConfig
+    trim: TrimConfig
 
 
-_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"})
+_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing", "trim"})
+_REQUIRED_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"})
+_TRIM_MODES = frozenset({"none", "first_to_last_volume"})
+_TRIM_KEYS = frozenset({"mode"})
 _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
 _TIMING_KEYS = frozenset({"marker_type", "marker_description"})
@@ -76,6 +98,20 @@ _PROCESSING_KEYS = frozenset(
         "output_sampling_rate_hz",
         "channel_batch_size",
         "reference_channel",
+        "template_high_pass_hz",
+        "residual_threshold_uv",
+        "residual_gate",
+        "adaptive_window",
+        "local_neighbor_count",
+    }
+)
+_OPTIONAL_PROCESSING_KEYS = frozenset(
+    {
+        "template_high_pass_hz",
+        "residual_threshold_uv",
+        "residual_gate",
+        "adaptive_window",
+        "local_neighbor_count",
     }
 )
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
@@ -100,14 +136,19 @@ def load_config(path: str | Path) -> CorrectionConfig:
 
     root = _require_mapping(document, "configuration")
     _reject_unknown_keys(root, _TOP_LEVEL_KEYS, "configuration")
-    for section in _TOP_LEVEL_KEYS:
+    for section in sorted(_REQUIRED_TOP_LEVEL_KEYS):
         if section not in root:
             raise ConfigurationError(f"missing required field: {section}")
 
     input_values = _section(root, "input", _INPUT_KEYS)
     output_values = _section(root, "output", _OUTPUT_KEYS)
     timing_values = _section(root, "timing", _TIMING_KEYS)
-    processing_values = _section(root, "processing", _PROCESSING_KEYS)
+    processing_values = _section(
+        root,
+        "processing",
+        _PROCESSING_KEYS,
+        optional_keys=_OPTIONAL_PROCESSING_KEYS,
+    )
 
     base_directory = config_path.parent
     return CorrectionConfig(
@@ -130,7 +171,19 @@ def load_config(path: str | Path) -> CorrectionConfig:
             ),
         ),
         processing=_processing_config(processing_values),
+        trim=_trim_config(root),
     )
+
+
+def _trim_config(root: Mapping[str, object]) -> TrimConfig:
+    """Read the optional trim section, defaulting each absent field."""
+    if "trim" not in root:
+        return TrimConfig()
+    values = _require_mapping(root["trim"], "trim")
+    _reject_unknown_keys(values, _TRIM_KEYS, "trim")
+    defaults = TrimConfig()
+    mode = _string_value(values, "mode") if "mode" in values else defaults.mode
+    return TrimConfig(mode=mode)
 
 
 def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
@@ -150,10 +203,55 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     if neighbor_count % 2:
         raise ConfigurationError("processing.neighbor_count must be even")
 
+    defaults = ProcessingConfig.__dataclass_fields__["template_high_pass_hz"].default
+    template_high_pass_hz = (
+        _finite_number(
+            values,
+            "template_high_pass_hz",
+            minimum=0.0,
+            inclusive=True,
+        )
+        if "template_high_pass_hz" in values
+        else defaults
+    )
+
+    residual_threshold_uv = (
+        _finite_number(
+            values,
+            "residual_threshold_uv",
+            minimum=0.0,
+            inclusive=True,
+        )
+        if "residual_threshold_uv" in values
+        else ProcessingConfig.__dataclass_fields__["residual_threshold_uv"].default
+    )
+    residual_gate = (
+        _boolean_value(values, "residual_gate")
+        if "residual_gate" in values
+        else ProcessingConfig.__dataclass_fields__["residual_gate"].default
+    )
+    adaptive_window = (
+        _boolean_value(values, "adaptive_window")
+        if "adaptive_window" in values
+        else ProcessingConfig.__dataclass_fields__["adaptive_window"].default
+    )
+    local_neighbor_count = (
+        _integer_value(values, "local_neighbor_count", minimum=2)
+        if "local_neighbor_count" in values
+        else ProcessingConfig.__dataclass_fields__["local_neighbor_count"].default
+    )
+    if local_neighbor_count % 2:
+        raise ConfigurationError("processing.local_neighbor_count must be even")
+
     return ProcessingConfig(
         method=method,
+        residual_threshold_uv=residual_threshold_uv,
+        residual_gate=residual_gate,
+        adaptive_window=adaptive_window,
+        local_neighbor_count=local_neighbor_count,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
+        template_high_pass_hz=template_high_pass_hz,
         search_radius_samples=_integer_value(
             values,
             "search_radius_samples",
@@ -194,10 +292,12 @@ def _section(
     root: Mapping[str, object],
     name: str,
     expected_keys: frozenset[str],
+    *,
+    optional_keys: frozenset[str] = frozenset(),
 ) -> Mapping[str, object]:
     values = _require_mapping(root[name], name)
     _reject_unknown_keys(values, expected_keys, name)
-    for field_name in sorted(expected_keys):
+    for field_name in sorted(expected_keys - optional_keys):
         if field_name not in values:
             raise ConfigurationError(
                 f"missing required field: {name}.{field_name}"
@@ -250,6 +350,13 @@ def _path_value(
     return path.resolve()
 
 
+def _boolean_value(values: Mapping[str, object], name: str) -> bool:
+    value = _required_value(values, name)
+    if not isinstance(value, bool):
+        raise ConfigurationError(f"{name} must be a boolean")
+    return value
+
+
 def _integer_value(
     values: Mapping[str, object],
     name: str,
@@ -269,11 +376,14 @@ def _finite_number(
     name: str,
     *,
     minimum: float,
+    inclusive: bool = False,
 ) -> float:
     value = _required_value(values, name)
     if isinstance(value, bool) or not isinstance(value, Real):
         raise ConfigurationError(f"{name} must be a finite number")
     number = float(value)
-    if not math.isfinite(number) or number <= minimum:
-        raise ConfigurationError(f"{name} must be greater than {minimum}")
+    too_small = number < minimum if inclusive else number <= minimum
+    if not math.isfinite(number) or too_small:
+        bound = "greater than or equal to" if inclusive else "greater than"
+        raise ConfigurationError(f"{name} must be {bound} {minimum}")
     return number

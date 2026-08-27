@@ -23,6 +23,15 @@ The tests cover:
 - reopening the generated BrainVision recording with MNE; and
 - generation of before/after MNE PSD figures.
 
+The BCG-Python package (AAS/PCA-OBS) additionally verifies that the FASTR input contains no
+pre-existing `Pulse Artifact,R` markers, detects R samples from ECG only, preserves the
+source marker collection while appending detector markers, preserves ECG and all samples
+outside bounded correction windows, and compares methods with held-out cardiac residuals
+and circular-shift nulls. Analyzer marker agreement is an audit measure, not detector
+ground truth. Production correction also rejects degraded ECG trains and any
+heartbeat-locked after/before RMS ratio above `maximum_residual_ratio` before
+writing output.
+
 ## Run-level checks
 
 Before interpreting a corrected run:
@@ -51,3 +60,11 @@ An independent implementation may be used as a benchmark oracle, but it should n
 become a runtime dependency or a hidden default. Compare identical input channels,
 sample ranges, marker definitions, filters, output rates, and quality metrics. Keep
 the benchmark harness and private recordings outside the tracked public package.
+For the cardiac/BCG comparison, use the FASTR gradient-corrected recording derived from
+the raw unmarked stage as the own-method input. Do not use an Analyzer pulse-marked or
+BrainVision Analyzer-corrected file as that input. Supply Analyzer's pre-BCG input and
+post-BCG output separately so each correction arm is scored against its own pre-correction
+baseline. Verify the paired recordings have the same channel order, compatible sampling
+rate and sample geometry, and high interior ECG correlation before interpreting method
+differences. Analyzer marker agreement is not ground truth when Analyzer is known to miss
+beats.

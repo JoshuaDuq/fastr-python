@@ -50,7 +50,7 @@ def test_acquisition_group_fastr_derives_slot_matching_from_bids_timing() -> Non
 
 def test_acquisition_group_fastr_rejects_nonmatching_volume_starts() -> None:
     data, volume_starts, timing = make_slot_input()
-    volume_starts[2] += 1
+    volume_starts[2] += 2
 
     with pytest.raises(FastrInputError, match="jitter"):
         acquisition_group_fastr(
@@ -224,7 +224,7 @@ def test_cli_reports_timing_failure_without_a_traceback(
             str(metadata),
             "--volume-starts",
             "0",
-            "901",
+            "902",
             "--sampling-rate",
             "1000",
             "--output",
@@ -252,7 +252,7 @@ def _write_timing_metadata(path: Path) -> None:
 @pytest.mark.parametrize(
     ("volume_starts", "expected"),
     [
-        (["0", "900", "1801"], "jitter"),
+        (["0", "900", "1802"], "jitter"),
         (["0", "900", "4500"], "acquisition gap"),
     ],
 )

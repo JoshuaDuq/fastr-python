@@ -7,11 +7,17 @@ import numpy as np
 import pytest
 import yaml
 from pybv import write_brainvision
+from scipy.signal import butter, filtfilt
 
 import mri_correction.pipeline as pipeline_module
-from mri_correction.brainvision import BrainVisionMarker, write_brainvision_markers
+from mri_correction.brainvision import (
+    BrainVisionMarker,
+    read_brainvision_markers,
+    write_brainvision_markers,
+)
 from mri_correction.config import load_config
 from mri_correction.pipeline import PipelineInputError, run_correction
+from mri_correction.window import OutputWindow
 
 
 def make_fixture(tmp_path: Path, *, gap: bool = False) -> Path:
@@ -249,3 +255,222 @@ def test_psd_plot_requests_spatial_colors(
 
     assert seen["spatial_colors"] is True
     assert seen["fmax"] == 100.0
+
+
+def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
+    rng = np.random.default_rng(0)
+    data = rng.standard_normal((2, 1000))
+    coefficients = butter(2, 100.0, fs=5000.0)
+    filtered = filtfilt(*coefficients, data, axis=1)
+
+    actual = pipeline_module._lowpass_and_decimate(
+        data,
+        sampling_rate=5000.0,
+        output_sampling_rate=1000.0,
+        lowpass_hz=100.0,
+        window=OutputWindow(start=13, stop=913),
+    )
+
+    assert actual.shape == (2, 180)
+    assert np.array_equal(actual, filtered[:, 13:913:5])
+    # decimating first and slicing afterwards would start three samples late
+    assert not np.array_equal(actual[:, 0], filtered[:, ::5][:, 3])
+
+
+def test_lowpass_and_decimate_full_window_matches_the_legacy_stride() -> None:
+    rng = np.random.default_rng(1)
+    data = rng.standard_normal((3, 500))
+    coefficients = butter(2, 100.0, fs=5000.0)
+    expected = filtfilt(*coefficients, data, axis=1)[:, ::5]
+
+    actual = pipeline_module._lowpass_and_decimate(
+        data,
+        sampling_rate=5000.0,
+        output_sampling_rate=1000.0,
+        lowpass_hz=100.0,
+        window=OutputWindow(start=0, stop=500),
+    )
+
+    assert np.array_equal(actual, expected)
+
+
+def make_untrimmed_fixture(
+    tmp_path: Path,
+    *,
+    head: int,
+    tail: int,
+    trim_mode: str = "first_to_last_volume",
+) -> Path:
+    """A recording that brackets the scan, as the untrimmed sources do."""
+    marker_positions = [1 + head + 100 * index for index in range(7)]
+    sample_count = head + (marker_positions[-1] - marker_positions[0] + 1) + tail
+    rng = np.random.default_rng(0)
+    data = rng.standard_normal((3, sample_count)) * 1e-6
+    for position in marker_positions:
+        start = position - 1
+        data[:, start : start + 40] += 5e-5
+    write_brainvision(
+        data=data,
+        sfreq=1_000.0,
+        ch_names=["EEG 001", "EEG 002", "ECG"],
+        fname_base="source",
+        folder_out=tmp_path,
+        unit="µV",
+        events=[],
+    )
+    markers = (
+        BrainVisionMarker("New Segment", "", 1, 1, 0),
+        *(
+            BrainVisionMarker("Volume", "volume-start", position, 1, 0)
+            for position in marker_positions
+        ),
+    )
+    marker_path = tmp_path / "source.vmrk"
+    marker_path.unlink()
+    write_brainvision_markers(marker_path, "source.eeg", markers)
+
+    (tmp_path / "bold.json").write_text(
+        json.dumps(
+            {
+                "RepetitionTime": 0.1,
+                "SliceTiming": [0.0, 0.05],
+                "MultibandAccelerationFactor": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = {
+        "input": {"raw_vhdr": "source.vhdr", "fmri_metadata": "bold.json"},
+        "output": {"vhdr": "corrected.vhdr"},
+        "timing": {
+            "marker_type": "Volume",
+            "marker_description": "volume-start",
+        },
+        "processing": {
+            "method": "acquisition_group_fastr",
+            "interpolation_factor": 2,
+            "neighbor_count": 2,
+            "search_radius_samples": 0,
+            "lowpass_hz": 20.0,
+            "output_sampling_rate_hz": 500.0,
+            "channel_batch_size": 2,
+            "reference_channel": "EEG 001",
+        },
+        "trim": {"mode": trim_mode},
+    }
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return config_path
+
+
+def test_trimmed_run_emits_the_first_to_last_volume_span(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    trim = provenance["trim"]
+    assert trim["mode"] == "first_to_last_volume"
+    assert trim["window_start_sample"] == 200
+    assert trim["window_stop_sample"] == 801
+    assert trim["window_length"] == 601
+    assert trim["head_margin_samples"] == 200
+    assert trim["tail_margin_samples"] == 200
+    assert summary.output_sample_count == (601 - 1) // 2 + 1
+    assert summary.input_sample_count == 1001
+
+    raw = mne.io.read_raw_brainvision(
+        summary.output_vhdr,
+        preload=True,
+        verbose="ERROR",
+    )
+    assert raw.get_data().shape == (3, 301)
+    assert np.all(np.isfinite(raw.get_data()))
+
+
+def test_trimmed_run_puts_the_first_volume_marker_on_the_first_sample(
+    tmp_path: Path,
+) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    volume_positions = [
+        marker.position for marker in markers if marker.marker_type == "Volume"
+    ]
+    assert volume_positions[0] == 1
+    assert volume_positions == [1 + 50 * index for index in range(7)]
+
+
+def test_trimmed_run_uses_the_margin_to_correct_the_boundary_volumes(
+    tmp_path: Path,
+) -> None:
+    with_margin = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+    summary = run_correction(with_margin)
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    trim = provenance["trim"]
+    assert trim["head_margin_samples"] >= trim["required_head_margin_samples"]
+    assert trim["tail_margin_samples"] >= trim["required_tail_margin_samples"]
+    assert provenance["markers"]["skipped_group_indices"] == []
+
+
+def test_uncorrected_boundary_spans_are_annotated(tmp_path: Path) -> None:
+    config = load_config(make_fixture(tmp_path))
+
+    summary = run_correction(config)
+
+    assert summary.skipped_group_count > 0
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    bad = [marker for marker in markers if marker.description == "Bad_Gradient"]
+    assert bad
+    assert all(marker.marker_type == "Bad Interval" for marker in bad)
+    assert all(1 <= marker.position <= summary.output_sample_count for marker in bad)
+    assert all(
+        marker.position + marker.size - 1 <= summary.output_sample_count
+        for marker in bad
+    )
+
+
+def test_a_fully_corrected_run_carries_no_bad_gradient_annotation(
+    tmp_path: Path,
+) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    assert summary.skipped_group_count == 0
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    assert not [
+        marker for marker in markers if marker.description == "Bad_Gradient"
+    ]
+
+
+def test_residual_qc_is_reported_in_the_sidecar(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    qc = provenance["residual_qc"]
+    assert qc["threshold_uv"] == 1.0
+    assert qc["block_seconds"] == 30.0
+    assert qc["channel_names"] == ["EEG 001", "EEG 002", "ECG"]
+    assert len(qc["block_residual_uv"]) == summary.channel_count
+    assert len(qc["worst_block_uv"]) == summary.channel_count
+    # a 0.3 s output holds no complete 30 s block, so there is nothing to report
+    assert qc["block_residual_uv"] == [[], [], []]
+    assert qc["blocks_over_threshold"] == 0
+
+
+def test_residual_qc_excludes_the_mains_harmonic(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    qc = json.loads(summary.provenance_json.read_text(encoding="utf-8"))["residual_qc"]
+    # 2 groups per 0.1 s volume gives a 20 Hz slice rate, whose 3rd harmonic is mains
+    assert 20.0 in qc["harmonics_hz"]
+    assert 40.0 in qc["harmonics_hz"]
+    assert 60.0 not in qc["harmonics_hz"]

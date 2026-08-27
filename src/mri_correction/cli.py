@@ -1,4 +1,4 @@
-"""Command-line entry points for the public correction pipeline."""
+"""Command-line entry points for scanner-gradient correction."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 import mne
 
+from .brainvision import BrainVisionMarkerError
 from .brainvision_io import (
     BrainVisionInputError,
     read_brainvision_recording,
@@ -31,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
             _validate_timing(arguments)
     except (
         BrainVisionInputError,
+        BrainVisionMarkerError,
         ConfigurationError,
         FileExistsError,
         FastrInputError,
@@ -44,7 +46,9 @@ def main(argv: list[str] | None = None) -> int:
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mri-correct",
-        description="Validate and correct simultaneous EEG-fMRI recordings.",
+        description=(
+            "Validate and correct scanner-gradient artifact in EEG-fMRI recordings."
+        ),
     )
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser(

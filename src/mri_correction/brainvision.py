@@ -1,12 +1,23 @@
 """Strict BrainVision Core Data Format marker-file I/O."""
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from os import PathLike
 from pathlib import Path
 
-_MARKER_FILE_IDENTIFIER = "BrainVision Data Exchange Marker File Version 1.0"
+_MARKER_FILE_IDENTIFIERS = frozenset(
+    {
+        "BrainVision Data Exchange Marker File Version 1.0",
+        "BrainVision Data Exchange Marker File Version 2.0",
+    }
+)
+_WRITTEN_MARKER_FILE_IDENTIFIER = (
+    "BrainVision Data Exchange Marker File Version 1.0"
+)
+_WRITTEN_MARKER_FILE_IDENTIFIER_WITH_USER_INFOS = (
+    "BrainVision Data Exchange Marker File Version 2.0"
+)
 
 
 class BrainVisionMarkerError(ValueError):
@@ -60,6 +71,7 @@ class BrainVisionMarker:
     size: int
     channel: int
     date: str | None = None
+    user_infos: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         _validate_marker_text(
@@ -76,6 +88,22 @@ class BrainVisionMarker:
         _validate_marker_integer(self.size, field_name="size", minimum=0)
         _validate_marker_integer(self.channel, field_name="channel", minimum=0)
         _validate_marker_date(self.date)
+        if not isinstance(self.user_infos, tuple) or any(
+            not isinstance(user_info, tuple)
+            or len(user_info) < 3
+            or any(not isinstance(field, str) for field in user_info)
+            for user_info in self.user_infos
+        ):
+            raise BrainVisionMarkerError(
+                "user_infos must contain tuples of string fields"
+            )
+        for user_info in self.user_infos:
+            for field in user_info:
+                _validate_marker_text(
+                    field,
+                    field_name="user_info",
+                    allow_empty=False,
+                )
 
 
 def _parse_marker_integer_field(value: str, *, field_name: str) -> int:
@@ -127,8 +155,16 @@ def _parse_common_info_line(line: str, common_infos: dict[str, str]) -> None:
 
 
 def _enter_marker_file_section(line: str, sections: list[str]) -> str:
-    expected_section = "[Common Infos]" if not sections else "[Marker Infos]"
-    if line != expected_section:
+    expected_sections = (
+        ("[Common Infos]",)
+        if not sections
+        else ("[Marker Infos]",)
+        if len(sections) == 1
+        else ("[Marker User Infos]",)
+        if len(sections) == 2
+        else ()
+    )
+    if line not in expected_sections:
         raise BrainVisionMarkerError(f"unexpected or duplicate section: {line}")
     sections.append(line)
     return line
@@ -152,13 +188,14 @@ def read_brainvision_markers(
 ) -> tuple[str, tuple[BrainVisionMarker, ...]]:
     """Read a strict BrainVision marker file without losing marker fields."""
     lines = Path(path).read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0] != _MARKER_FILE_IDENTIFIER:
+    if not lines or lines[0] not in _MARKER_FILE_IDENTIFIERS:
         raise BrainVisionMarkerError("invalid BrainVision marker-file identifier")
 
     section: str | None = None
     sections: list[str] = []
     common_infos: dict[str, str] = {}
     indexed_markers: list[tuple[int, BrainVisionMarker]] = []
+    user_info_records: list[tuple[int, int, tuple[str, ...]]] = []
     for line in lines[1:]:
         if not line or line.startswith(";"):
             continue
@@ -168,10 +205,15 @@ def read_brainvision_markers(
             _parse_common_info_line(line, common_infos)
         elif section == "[Marker Infos]":
             indexed_markers.append(_parse_marker_line(line))
+        elif section == "[Marker User Infos]":
+            user_info_records.append(_parse_user_info_line(line))
         else:
             raise BrainVisionMarkerError(f"content outside a supported section: {line}")
 
-    if sections != ["[Common Infos]", "[Marker Infos]"]:
+    if sections not in (
+        ["[Common Infos]", "[Marker Infos]"],
+        ["[Common Infos]", "[Marker Infos]", "[Marker User Infos]"],
+    ):
         raise BrainVisionMarkerError(
             "marker file must contain one Common Infos and one Marker Infos section"
         )
@@ -186,7 +228,58 @@ def read_brainvision_markers(
         raise BrainVisionMarkerError(
             "marker indices must appear in exact Mk1, Mk2, ... file order"
         )
-    return data_file_name, tuple(marker for _, marker in indexed_markers)
+    markers = _attach_user_infos(indexed_markers, user_info_records)
+    return data_file_name, markers
+
+
+def _parse_user_info_line(line: str) -> tuple[int, int, tuple[str, ...]]:
+    key, separator, value = line.partition("=")
+    property_index_text = key.removeprefix("Prop")
+    if (
+        not separator
+        or not property_index_text.isascii()
+        or not property_index_text.isdigit()
+        or property_index_text != str(int(property_index_text))
+    ):
+        raise BrainVisionMarkerError(f"malformed marker user info: {line}")
+    fields = value.split(",")
+    if len(fields) < 4 or not fields[0].startswith("Mk"):
+        raise BrainVisionMarkerError(f"malformed marker user info: {line}")
+    marker_index_text = fields[0][2:]
+    if (
+        not marker_index_text.isascii()
+        or not marker_index_text.isdigit()
+        or marker_index_text != str(int(marker_index_text))
+    ):
+        raise BrainVisionMarkerError(f"malformed marker user info: {line}")
+    decoded_fields = tuple(field.replace(r"\1", ",") for field in fields[1:])
+    return int(property_index_text), int(marker_index_text), decoded_fields
+
+
+def _attach_user_infos(
+    indexed_markers: list[tuple[int, BrainVisionMarker]],
+    user_info_records: list[tuple[int, int, tuple[str, ...]]],
+) -> tuple[BrainVisionMarker, ...]:
+    marker_indices = {index for index, _ in indexed_markers}
+    property_indices = [record[0] for record in user_info_records]
+    if property_indices != list(range(1, len(property_indices) + 1)):
+        raise BrainVisionMarkerError(
+            "marker user info properties must be in exact Prop1, Prop2, ... order"
+        )
+    user_infos_by_marker: dict[int, list[tuple[str, ...]]] = {}
+    for _, marker_index, user_info in user_info_records:
+        if marker_index not in marker_indices:
+            raise BrainVisionMarkerError(
+                "marker user info refers to an unknown marker"
+            )
+        user_infos_by_marker.setdefault(marker_index, []).append(user_info)
+    return tuple(
+        replace(
+            marker,
+            user_infos=tuple(user_infos_by_marker.get(index, ())),
+        )
+        for index, marker in indexed_markers
+    )
 
 
 def _format_marker_line(index: int, marker: BrainVisionMarker) -> str:
@@ -215,8 +308,13 @@ def write_brainvision_markers(
     if any(not isinstance(marker, BrainVisionMarker) for marker in marker_values):
         raise BrainVisionMarkerError("markers must contain BrainVisionMarker instances")
 
+    has_user_infos = any(marker.user_infos for marker in marker_values)
     lines = [
-        _MARKER_FILE_IDENTIFIER,
+        (
+            _WRITTEN_MARKER_FILE_IDENTIFIER_WITH_USER_INFOS
+            if has_user_infos
+            else _WRITTEN_MARKER_FILE_IDENTIFIER
+        ),
         "[Common Infos]",
         "Codepage=UTF-8",
         f"DataFile={data_file_name}",
@@ -227,6 +325,18 @@ def write_brainvision_markers(
         _format_marker_line(index, marker)
         for index, marker in enumerate(marker_values, start=1)
     )
+    if has_user_infos:
+        lines.extend(("", "[Marker User Infos]"))
+        property_index = 1
+        for marker_index, marker in enumerate(marker_values, start=1):
+            for user_info in marker.user_infos:
+                encoded_fields = ",".join(
+                    field.replace(",", r"\1") for field in user_info
+                )
+                lines.append(
+                    f"Prop{property_index}=Mk{marker_index},{encoded_fields}"
+                )
+                property_index += 1
     content = "\n".join(lines) + "\n"
     with Path(path).open("x", encoding="utf-8", newline="\n") as marker_file:
         marker_file.write(content)

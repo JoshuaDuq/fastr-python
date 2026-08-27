@@ -17,6 +17,7 @@ from mri_correction.brainvision_io import (
     select_marker_samples,
     write_brainvision_recording,
 )
+from mri_correction.window import OutputWindow
 
 
 def make_markers() -> tuple[BrainVisionMarker, ...]:
@@ -69,6 +70,23 @@ def test_read_recording_accepts_recorder_header_identifier(tmp_path: Path) -> No
         header.replace(
             "Brain Vision Data Exchange Header File Version 1.0",
             "BrainVision Data Exchange Header File Version 1.0",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    recording = read_brainvision_recording(vhdr_path)
+
+    assert recording.data_path == tmp_path / "source.eeg"
+
+
+def test_read_recording_accepts_version_two_header_identifier(tmp_path: Path) -> None:
+    vhdr_path = make_source_recording(tmp_path)
+    header = vhdr_path.read_text(encoding="utf-8")
+    vhdr_path.write_text(
+        header.replace(
+            "Brain Vision Data Exchange Header File Version 1.0",
+            "Brain Vision Data Exchange Header File Version 2.0",
             1,
         ),
         encoding="utf-8",
@@ -173,3 +191,111 @@ def test_write_recording_refuses_existing_output_stem(tmp_path: Path) -> None:
             output_vhdr=output,
             markers=(),
         )
+
+
+def test_resample_markers_shifts_positions_into_the_window() -> None:
+    markers = (
+        BrainVisionMarker("Volume", "V  1", position=101, size=1, channel=0),
+        BrainVisionMarker("Volume", "V  1", position=601, size=1, channel=0),
+    )
+
+    resampled = resample_markers(
+        markers,
+        factor=5,
+        window=OutputWindow(start=100, stop=1100),
+    )
+
+    assert [marker.position for marker in resampled] == [1, 101]
+
+
+def test_resample_markers_drops_markers_outside_the_window() -> None:
+    markers = (
+        BrainVisionMarker("Volume", "V  1", position=50, size=1, channel=0),
+        BrainVisionMarker("Volume", "V  1", position=101, size=1, channel=0),
+        BrainVisionMarker("Volume", "V  1", position=2000, size=1, channel=0),
+    )
+
+    resampled = resample_markers(
+        markers,
+        factor=5,
+        window=OutputWindow(start=100, stop=1100),
+    )
+
+    assert [marker.position for marker in resampled] == [1]
+
+
+def test_resample_markers_keeps_a_marker_on_each_window_boundary() -> None:
+    markers = (
+        BrainVisionMarker("Volume", "V  1", position=101, size=1, channel=0),
+        BrainVisionMarker("Volume", "V  1", position=200, size=1, channel=0),
+        BrainVisionMarker("Volume", "V  1", position=201, size=1, channel=0),
+    )
+
+    resampled = resample_markers(
+        markers,
+        factor=1,
+        window=OutputWindow(start=100, stop=200),
+    )
+
+    assert [marker.position for marker in resampled] == [1, 100]
+
+
+def test_resample_markers_without_a_window_is_unchanged() -> None:
+    markers = (BrainVisionMarker("Volume", "V  1", 101, 1, 0),)
+
+    assert resample_markers(markers, factor=5)[0].position == 21
+
+
+def test_resample_markers_preserves_fields_through_a_window() -> None:
+    markers = (
+        BrainVisionMarker(
+            "Stimulus",
+            "S  1",
+            position=301,
+            size=10,
+            channel=3,
+            date="20260209105307691816",
+        ),
+    )
+
+    resampled = resample_markers(
+        markers,
+        factor=5,
+        window=OutputWindow(start=100, stop=1100),
+    )
+
+    assert resampled[0].marker_type == "Stimulus"
+    assert resampled[0].description == "S  1"
+    assert resampled[0].size == 2
+    assert resampled[0].channel == 3
+    assert resampled[0].date == "20260209105307691816"
+
+
+def test_float_output_stores_microvolts_without_a_scale_factor(
+    tmp_path: Path,
+) -> None:
+    """Analyzer writes float32 with no resolution, so the stored value is the value.
+
+    A reader that ignores ``Resolution`` on a floating-point format, which is a
+    reasonable assumption because float needs no scaling, would otherwise read
+    every one of our files off by the resolution factor.
+    """
+    data = np.array([[1.0e-6, -2.5e-6, 0.0], [3.0e-6, 4.0e-6, -1.0e-6]])
+    output = tmp_path / "scaled.vhdr"
+    write_brainvision_recording(
+        data=data,
+        sampling_rate=1000.0,
+        channel_names=["EEG 001", "EEG 002"],
+        output_vhdr=output,
+        markers=(),
+    )
+
+    header = output.read_text(encoding="utf-8")
+    assert "BinaryFormat=IEEE_FLOAT_32" in header
+    assert "Ch1=EEG 001,,1,µV" in header
+
+    stored = np.fromfile(output.with_suffix(".eeg"), dtype="<f4").reshape(-1, 2).T
+    assert np.allclose(stored, data * 1e6, atol=1e-4)
+
+    raw = mne.io.read_raw_brainvision(output, preload=True, verbose="ERROR")
+    assert np.allclose(raw.get_data(), data, atol=1e-12)

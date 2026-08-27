@@ -106,6 +106,44 @@ def test_read_brainvision_markers_preserves_fields_in_mk_order(
     )
 
 
+def test_read_brainvision_markers_accepts_version_two_files(
+    tmp_path: Path,
+) -> None:
+    marker_path = tmp_path / "recording.vmrk"
+    marker_path.write_text(
+        "BrainVision Data Exchange Marker File Version 2.0\n"
+        "[Common Infos]\n"
+        "Codepage=UTF-8\n"
+        "DataFile=recording.eeg\n"
+        "[Marker Infos]\n"
+        "Mk1=Pulse Artifact,R,101,1,32\n",
+        encoding="utf-8",
+    )
+
+    data_file_name, markers = read_brainvision_markers(marker_path)
+
+    assert data_file_name == "recording.eeg"
+    assert markers == (BrainVisionMarker("Pulse Artifact", "R", 101, 1, 32),)
+
+
+def test_brainvision_marker_user_infos_round_trip(tmp_path: Path) -> None:
+    marker_path = tmp_path / "recording.vmrk"
+    original = (
+        BrainVisionMarker(
+            "Pulse Artifact",
+            "R",
+            101,
+            1,
+            32,
+            user_infos=(("bool", "BrainVision.CustomMarker", "true"),),
+        ),
+    )
+
+    write_brainvision_markers(marker_path, "recording.eeg", original)
+
+    assert read_brainvision_markers(marker_path) == ("recording.eeg", original)
+
+
 def test_read_brainvision_markers_rejects_out_of_order_indices(
     tmp_path: Path,
 ) -> None:

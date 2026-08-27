@@ -71,14 +71,18 @@ It does not infer missing markers from the EEG waveform.
 The public pipeline uses the acquisition-group variant of FASTR for multiband data:
 the validated BIDS slice timing determines repeated acquisition-time slots, and
 templates are formed from neighboring volumes in the same slot while excluding the
-target group. Alignment is fitted once from the configured reference channel and
-reused for channel batches. See [`docs/algorithm.md`](docs/algorithm.md) for the
-processing model and its limitations.
+target group. Alignment and the least-squares template are estimated from a 1 Hz
+high-passed copy of each channel (Niazy et al. 2005 stage 2); the fitted artifact is
+subtracted from the unfiltered recording. See [`docs/algorithm.md`](docs/algorithm.md)
+for the processing model, the stages that are not run (residual OBS and ANC), and
+the 1/TR limitation.
 
-The default example uses 20 neighboring volumes for the acquisition-slot template.
+The default example uses 60 neighboring volumes for the acquisition-slot template.
 This is a validated starting point, not a protocol-independent guarantee; tune and
 report it only through the YAML configuration and compare results with appropriate
-signal-preservation controls.
+signal-preservation controls. Set `trim.mode` to `first_to_last_volume` on untrimmed
+recordings so boundary volumes keep the margin FASTR needs; uncorrected spans and
+blocks over `residual_threshold_uv` are annotated `Bad Interval, Bad_Gradient`.
 
 ## Development
 
@@ -97,3 +101,9 @@ invariance checks, and end-to-end pipeline tests. See
 
 Analyzer comparison code and private benchmark data are intentionally kept outside
 the tracked public package in `.local/analyzer_comparison/`.
+
+## Related pipelines
+
+Cardiac detection and AAS/PCA-OBS BCG correction now live in **BCG-Python**
+(`bcg-correct`). The deep-learning BCGNet path lives in **BCGNet-Python**
+(`bcgnet`). This package only removes scanner-gradient artifact.

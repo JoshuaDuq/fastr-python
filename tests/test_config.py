@@ -170,3 +170,149 @@ def test_config_rejects_non_mapping_yaml(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="mapping"):
         load_config(config_path)
+
+
+def document_with_trim(trim: str | None) -> str:
+    document = valid_document()
+    if trim is None:
+        return document
+    return document + trim
+
+
+def test_trim_defaults_to_no_trimming(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document_with_trim(None), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.trim.mode == "none"
+
+
+def test_trim_section_is_parsed(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        document_with_trim("trim:\n  mode: first_to_last_volume\n"),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.trim.mode == "first_to_last_volume"
+
+
+def test_trim_accepts_an_empty_section(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document_with_trim("trim: {}\n"), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.trim.mode == "none"
+
+
+def test_trim_rejects_an_unknown_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        document_with_trim("trim:\n  mode: everything\n"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match=r"trim\.mode"):
+        load_config(config_path)
+
+
+def test_trim_rejects_unknown_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        document_with_trim("trim:\n  margin_samples: 10\n"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="trim"):
+        load_config(config_path)
+
+
+def test_adaptive_window_defaults_to_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.adaptive_window is False
+    assert config.processing.local_neighbor_count == 20
+
+
+def test_adaptive_window_can_be_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  adaptive_window: true\n  local_neighbor_count: 20\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.adaptive_window is True
+    assert config.processing.local_neighbor_count == 20
+
+
+def test_residual_gate_defaults_to_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate is False
+
+
+def test_residual_gate_can_be_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_gate: true\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_gate is True
+
+
+def test_residual_gate_rejects_a_non_boolean(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_gate: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="residual_gate"):
+        load_config(config_path)
+
+
+def test_template_high_pass_defaults_to_one_hertz(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.template_high_pass_hz == 1.0
+
+
+def test_template_high_pass_can_be_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  template_high_pass_hz: 0.0\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.template_high_pass_hz == 0.0
+
+
+def test_template_high_pass_rejects_a_negative_cutoff(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  template_high_pass_hz: -1.0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="template_high_pass_hz"):
+        load_config(config_path)

@@ -10,7 +10,6 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import mne
 import numpy as np
 from scipy.signal import butter, filtfilt
@@ -31,19 +30,25 @@ from .fastr import (
     FastrGeometry,
     FastrInputError,
     FmriAcquisitionTiming,
+    adapt_fastr_geometry,
     apply_fastr_batch,
     fit_fastr_alignment,
+    gate_fastr_geometry,
     load_bids_fmri_timing,
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
+from .psd import PSD_MAX_FREQUENCY_HZ, prepare_psd_raw, save_psd_plot
+from .residual_qc import block_residual_uv, slice_harmonics
+from .window import OutputWindow, resolve_output_window
 
 
 class PipelineInputError(ValueError):
     """Raised when a configured correction run cannot be performed."""
 
 
-_PSD_MAX_FREQUENCY_HZ = 100.0
+_PSD_MAX_FREQUENCY_HZ = PSD_MAX_FREQUENCY_HZ
+_RESIDUAL_BLOCK_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +116,11 @@ def _run_correction(
         config.processing.output_sampling_rate_hz,
         config.processing.lowpass_hz,
     )
+    window = resolve_output_window(
+        volume_starts,
+        mode=config.trim.mode,
+        input_sample_count=int(raw.n_times),
+    )
     reference_index = _resolve_reference_channel(
         raw.ch_names,
         config.processing.reference_channel,
@@ -129,11 +139,33 @@ def _run_correction(
         start=0,
         stop=raw.n_times,
     )[0]
-    alignment = fit_fastr_alignment(reference_channel, geometry)
+    alignment = fit_fastr_alignment(
+        reference_channel,
+        geometry,
+        template_high_pass_hz=config.processing.template_high_pass_hz,
+        sampling_rate=input_rate,
+    )
+    if config.processing.residual_gate:
+        geometry = gate_fastr_geometry(
+            geometry,
+            alignment,
+            reference_channel,
+            template_high_pass_hz=config.processing.template_high_pass_hz,
+            sampling_rate=input_rate,
+        )
+    if config.processing.adaptive_window:
+        geometry = adapt_fastr_geometry(
+            geometry,
+            alignment,
+            reference_channel,
+            local_neighbor_count=config.processing.local_neighbor_count,
+            template_high_pass_hz=config.processing.template_high_pass_hz,
+            sampling_rate=input_rate,
+        )
 
     channel_count = len(raw.ch_names)
     input_sample_count = int(raw.n_times)
-    output_sample_count = (input_sample_count - 1) // decimation + 1
+    output_sample_count = (window.length - 1) // decimation + 1
     amplitude_means = np.empty(channel_count, dtype=np.float64)
     amplitude_rms = np.empty(channel_count, dtype=np.float64)
     with tempfile.TemporaryDirectory(
@@ -157,7 +189,13 @@ def _run_correction(
                 start=0,
                 stop=raw.n_times,
             )
-            correction = apply_fastr_batch(batch, geometry, alignment)
+            correction = apply_fastr_batch(
+                batch,
+                geometry,
+                alignment,
+                template_high_pass_hz=config.processing.template_high_pass_hz,
+                sampling_rate=input_rate,
+            )
             amplitude_means[start:stop] = correction.provenance.amplitudes.mean(
                 axis=1
             )
@@ -169,11 +207,29 @@ def _run_correction(
                 sampling_rate=input_rate,
                 output_sampling_rate=output_rate,
                 lowpass_hz=config.processing.lowpass_hz,
+                window=window,
             )
         corrected_output.flush()
+        residual_qc = _measure_residual_qc(
+            corrected_output,
+            channel_names=raw.ch_names,
+            output_rate=output_rate,
+            timing=timing,
+            threshold_uv=config.processing.residual_threshold_uv,
+        )
         transformed_markers = resample_markers(
             recording.markers,
             factor=decimation,
+            window=window,
+        ) + _bad_gradient_markers(
+            _skipped_group_spans(group_triggers, geometry),
+            window=window,
+            decimation=decimation,
+            output_sample_count=output_sample_count,
+        ) + _residual_qc_markers(
+            residual_qc,
+            output_rate=output_rate,
+            output_sample_count=output_sample_count,
         )
         _validate_marker_output_positions(
             transformed_markers,
@@ -192,15 +248,16 @@ def _run_correction(
     psd_tmin, psd_tmax = _corrected_psd_window(
         geometry,
         input_sampling_rate=input_rate,
-        recording_duration_seconds=float(raw.times[-1]),
+        window=window,
     )
+    window_offset_seconds = window.start / input_rate
     _save_psd_plot(
         raw,
         output_paths["psd_before"],
         title="Before scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
-        tmin=psd_tmin,
-        tmax=psd_tmax,
+        tmin=psd_tmin + window_offset_seconds,
+        tmax=psd_tmax + window_offset_seconds,
     )
     corrected_raw = mne.io.read_raw_brainvision(
         output_paths["vhdr"],
@@ -229,6 +286,8 @@ def _run_correction(
         amplitude_rms=amplitude_rms,
         decimation=decimation,
         output_sample_count=output_sample_count,
+        window=window,
+        residual_qc=residual_qc,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         runtime_seconds=time.perf_counter() - started,
@@ -332,11 +391,18 @@ def _lowpass_and_decimate(
     sampling_rate: float,
     output_sampling_rate: float,
     lowpass_hz: float,
+    window: OutputWindow,
 ) -> np.ndarray:
+    """Low-pass the whole array, then take the output window and decimate.
+
+    Filtering before slicing keeps ``filtfilt``'s edge transient outside the
+    emitted span. Slicing before decimating anchors the decimation phase to the
+    window start, so the output sample grid does not shift.
+    """
     ratio = round(sampling_rate / output_sampling_rate)
     coefficients = butter(2, lowpass_hz, fs=sampling_rate)
     filtered = filtfilt(*coefficients, data, axis=1)
-    return filtered[:, ::ratio]
+    return filtered[:, window.start : window.stop : ratio]
 
 
 def _save_psd_plot(
@@ -348,81 +414,42 @@ def _save_psd_plot(
     tmin: float,
     tmax: float,
 ) -> None:
-    plot_raw = _prepare_psd_raw(raw)
-    with mne.use_log_level("ERROR"):
-        figure = mne.viz.plot_raw_psd(
-            plot_raw,
-            fmin=0.0,
-            fmax=fmax,
-            tmin=tmin,
-            tmax=tmax,
-            spatial_colors=plot_raw.get_montage() is not None,
-            show=False,
-            n_jobs=1,
-            verbose="ERROR",
-        )
-    try:
-        for axis in figure.axes:
-            if axis.get_xlabel():
-                axis.set_xlim(0.0, fmax)
-        figure.suptitle(title)
-        figure.savefig(output_path, dpi=150, bbox_inches="tight")
-    finally:
-        plt.close(figure)
+    save_psd_plot(
+        raw,
+        output_path,
+        fmax=fmax,
+        title=title,
+        tmin=tmin,
+        tmax=tmax,
+    )
 
 
 def _prepare_psd_raw(raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
-    """Give PSD plots standard positions when the file has no montage."""
-    prepared = raw.copy()
-    montage = prepared.get_montage()
-    if montage is not None:
-        positioned_names = _positioned_channel_names(prepared, montage)
-        if len(positioned_names) >= 2:
-            prepared.pick(positioned_names)
-            return prepared
-
-    standard = mne.channels.make_standard_montage("standard_1020")
-    standard_names = {name.casefold() for name in standard.ch_names}
-    matched_names = [
-        name for name in prepared.ch_names if name.casefold() in standard_names
-    ]
-    if len(matched_names) >= 2:
-        prepared.pick(matched_names)
-        prepared.set_montage(
-            standard,
-            match_case=False,
-            on_missing="raise",
-            verbose="ERROR",
-        )
-    return prepared
-
-
-def _positioned_channel_names(
-    raw: mne.io.BaseRaw,
-    montage: mne.channels.DigMontage,
-) -> list[str]:
-    positions = montage.get_positions()["ch_pos"]
-    return [
-        name
-        for name in raw.ch_names
-        if name in positions and np.isfinite(positions[name]).all()
-    ]
+    return prepare_psd_raw(raw)
 
 
 def _corrected_psd_window(
     geometry: FastrGeometry,
     *,
     input_sampling_rate: float,
-    recording_duration_seconds: float,
+    window: OutputWindow,
 ) -> tuple[float, float]:
-    """Return a common PSD interval containing only corrected samples."""
+    """Return a PSD interval, relative to the window, holding only corrected samples.
+
+    Both figures are drawn over the same interval so they can be compared, so
+    the bounds are expressed relative to the emitted window rather than to the
+    start of the input recording. The before-figure is drawn from the input
+    recording and must have ``window.start`` added back.
+    """
     first_sample = float(geometry.triggers[0])
     last_sample = float(
         geometry.triggers[-1]
         + geometry.epoch.samples_after / geometry.interpolation_factor
     )
-    tmin = first_sample / input_sampling_rate
-    tmax = min(last_sample / input_sampling_rate, recording_duration_seconds)
+    first_sample = max(first_sample, float(window.start))
+    last_sample = min(last_sample, float(window.stop - 1))
+    tmin = (first_sample - window.start) / input_sampling_rate
+    tmax = (last_sample - window.start) / input_sampling_rate
     if not 0.0 <= tmin < tmax:
         raise PipelineInputError("the corrected PSD interval is empty")
     return tmin, tmax
@@ -438,6 +465,172 @@ def _validate_marker_output_positions(
         )
 
 
+def _measure_residual_qc(
+    corrected: np.ndarray,
+    *,
+    channel_names: list[str],
+    output_rate: float,
+    timing: FmriAcquisitionTiming,
+    threshold_uv: float,
+) -> dict[str, object]:
+    """Measure residual gradient artifact across the whole corrected recording.
+
+    The existing sidecar reports alignment correlations and amplitude fits, and
+    neither moves when a correction fails: on this cohort both stayed healthy
+    through blocks carrying twenty microvolts of residual artifact.
+    """
+    harmonics = slice_harmonics(
+        groups_per_volume=timing.groups_per_volume,
+        repetition_time_seconds=timing.repetition_time_seconds,
+        nyquist_hz=output_rate / 2.0,
+    )
+    residuals = block_residual_uv(
+        np.asarray(corrected) * 1e6,
+        sampling_rate=output_rate,
+        harmonics=harmonics,
+        block_seconds=_RESIDUAL_BLOCK_SECONDS,
+    )
+    if residuals.shape[1] == 0:
+        worst_block = [-1] * residuals.shape[0]
+        worst_uv = [0.0] * residuals.shape[0]
+    else:
+        worst_block = [int(index) for index in residuals.argmax(axis=1)]
+        worst_uv = [float(value) for value in residuals.max(axis=1)]
+    return {
+        "block_seconds": _RESIDUAL_BLOCK_SECONDS,
+        "harmonics_hz": [float(value) for value in harmonics],
+        "threshold_uv": float(threshold_uv),
+        "channel_names": list(channel_names),
+        "block_residual_uv": [[float(v) for v in row] for row in residuals],
+        "worst_block_index": worst_block,
+        "worst_block_uv": worst_uv,
+        "blocks_over_threshold": int((residuals > threshold_uv).any(axis=0).sum()),
+    }
+
+
+def _residual_qc_markers(
+    residual_qc: dict[str, object],
+    *,
+    output_rate: float,
+    output_sample_count: int,
+) -> tuple[BrainVisionMarker, ...]:
+    """Annotate every block whose residual artifact exceeds the threshold."""
+    residuals = np.asarray(residual_qc["block_residual_uv"], dtype=np.float64)
+    if residuals.size == 0:
+        return ()
+    threshold = float(residual_qc["threshold_uv"])
+    block_samples = round(float(residual_qc["block_seconds"]) * output_rate)
+    flagged = np.flatnonzero((residuals > threshold).any(axis=0))
+    markers = []
+    for block in flagged:
+        position = int(block) * block_samples + 1
+        if position > output_sample_count:
+            continue
+        size = min(block_samples, output_sample_count - position + 1)
+        markers.append(
+            BrainVisionMarker(
+                marker_type="Bad Interval",
+                description="Bad_Gradient",
+                position=position,
+                size=int(max(size, 1)),
+                channel=0,
+            )
+        )
+    return tuple(markers)
+
+
+def _skipped_group_spans(
+    group_triggers: np.ndarray,
+    geometry: FastrGeometry,
+) -> tuple[tuple[int, int], ...]:
+    """Group the uncorrected acquisition groups into contiguous input-sample spans."""
+    skipped = np.asarray(geometry.skipped_group_indices, dtype=np.int64)
+    if skipped.size == 0:
+        return ()
+    factor = geometry.interpolation_factor
+    before = math.ceil(geometry.epoch.samples_before / factor)
+    after = math.ceil(geometry.epoch.samples_after / factor)
+    last_index = group_triggers.size - 1
+
+    breaks = np.flatnonzero(np.diff(skipped) != 1)
+    starts = np.concatenate(([0], breaks + 1))
+    stops = np.concatenate((breaks, [skipped.size - 1]))
+
+    spans = []
+    for start, stop in zip(starts, stops, strict=True):
+        first_group = int(skipped[start])
+        last_group = int(skipped[stop])
+        first_sample = int(group_triggers[first_group]) - before
+        if last_group < last_index:
+            last_sample = int(group_triggers[last_group + 1]) - 1
+        else:
+            last_sample = int(group_triggers[last_group]) + after
+        spans.append((max(first_sample, 0), last_sample))
+    return tuple(spans)
+
+
+def _bad_gradient_markers(
+    spans: tuple[tuple[int, int], ...],
+    *,
+    window: OutputWindow,
+    decimation: int,
+    output_sample_count: int,
+) -> tuple[BrainVisionMarker, ...]:
+    """Annotate every emitted span the correction left untouched.
+
+    Without these a corrected file gives no sign that part of it still carries
+    the raw gradient artifact.
+    """
+    markers = []
+    for first_sample, last_sample in spans:
+        first = max(first_sample, window.start)
+        last = min(last_sample, window.stop - 1)
+        if last < first:
+            continue
+        start = (first - window.start) // decimation + 1
+        stop = (last - window.start) // decimation + 1
+        if start > output_sample_count:
+            continue
+        stop = min(stop, output_sample_count)
+        markers.append(
+            BrainVisionMarker(
+                marker_type="Bad Interval",
+                description="Bad_Gradient",
+                position=int(start),
+                size=int(max(stop - start + 1, 1)),
+                channel=0,
+            )
+        )
+    return tuple(markers)
+
+
+def _trim_provenance(
+    window: OutputWindow,
+    *,
+    geometry: FastrGeometry,
+    input_sample_count: int,
+    mode: str,
+) -> dict[str, object]:
+    """Report the emitted window against the margin the epochs actually need."""
+    factor = geometry.interpolation_factor
+    required_head = math.ceil(
+        (geometry.epoch.samples_before + geometry.search_radius) / factor
+    )
+    required_tail = math.ceil(
+        (geometry.epoch.samples_after + geometry.search_radius) / factor
+    )
+    return {
+        "mode": mode,
+        "window_start_sample": window.start,
+        "window_stop_sample": window.stop,
+        "window_length": window.length,
+        "head_margin_samples": window.start,
+        "tail_margin_samples": input_sample_count - window.stop,
+        "required_head_margin_samples": int(required_head),
+        "required_tail_margin_samples": int(required_tail),
+    }
+
+
 def _make_provenance(
     config: CorrectionConfig,
     *,
@@ -451,6 +644,8 @@ def _make_provenance(
     amplitude_rms: np.ndarray,
     decimation: int,
     output_sample_count: int,
+    window: OutputWindow,
+    residual_qc: dict[str, object],
     psd_tmin: float,
     psd_tmax: float,
     runtime_seconds: float,
@@ -481,6 +676,13 @@ def _make_provenance(
                 "end": psd_tmax,
             },
         },
+        "trim": _trim_provenance(
+            window,
+            geometry=geometry,
+            input_sample_count=int(raw.n_times),
+            mode=config.trim.mode,
+        ),
+        "residual_qc": residual_qc,
         "configuration": _jsonable_config(config),
         "timing": {
             "repetition_time_seconds": timing.repetition_time_seconds,
@@ -504,6 +706,17 @@ def _make_provenance(
             },
             "amplitude_mean_by_channel": amplitude_means.tolist(),
             "amplitude_rms_by_channel": amplitude_rms.tolist(),
+            "residual_gate": {
+                "enabled": config.processing.residual_gate,
+                "excluded_group_indices": geometry.excluded_group_indices.tolist(),
+                "excluded_group_count": int(geometry.excluded_group_indices.size),
+            },
+            "adaptive_window": {
+                "enabled": config.processing.adaptive_window,
+                "local_neighbor_count": config.processing.local_neighbor_count,
+                "adapted_group_indices": geometry.adapted_group_indices.tolist(),
+                "adapted_group_count": int(geometry.adapted_group_indices.size),
+            },
         },
         "runtime_seconds": runtime_seconds,
     }
