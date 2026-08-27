@@ -209,6 +209,7 @@ def write_brainvision_recording(
             events=[],
             unit="µV",
             fmt="binary_float32",
+            resolution=1.0,
             overwrite=False,
         )
         temporary_marker_path = temporary_directory_path / f"{header_path.stem}.vmrk"

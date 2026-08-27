@@ -269,3 +269,33 @@ def test_resample_markers_preserves_fields_through_a_window() -> None:
     assert resampled[0].size == 2
     assert resampled[0].channel == 3
     assert resampled[0].date == "20260209105307691816"
+
+
+def test_float_output_stores_microvolts_without_a_scale_factor(
+    tmp_path: Path,
+) -> None:
+    """Analyzer writes float32 with no resolution, so the stored value is the value.
+
+    A reader that ignores ``Resolution`` on a floating-point format, which is a
+    reasonable assumption because float needs no scaling, would otherwise read
+    every one of our files off by the resolution factor.
+    """
+    data = np.array([[1.0e-6, -2.5e-6, 0.0], [3.0e-6, 4.0e-6, -1.0e-6]])
+    output = tmp_path / "scaled.vhdr"
+    write_brainvision_recording(
+        data=data,
+        sampling_rate=1000.0,
+        channel_names=["EEG 001", "EEG 002"],
+        output_vhdr=output,
+        markers=(),
+    )
+
+    header = output.read_text(encoding="utf-8")
+    assert "BinaryFormat=IEEE_FLOAT_32" in header
+    assert "Ch1=EEG 001,,1,µV" in header
+
+    stored = np.fromfile(output.with_suffix(".eeg"), dtype="<f4").reshape(-1, 2).T
+    assert np.allclose(stored, data * 1e6, atol=1e-4)
+
+    raw = mne.io.read_raw_brainvision(output, preload=True, verbose="ERROR")
+    assert np.allclose(raw.get_data(), data, atol=1e-12)
