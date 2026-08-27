@@ -414,3 +414,34 @@ def test_trimmed_run_uses_the_margin_to_correct_the_boundary_volumes(
     assert trim["head_margin_samples"] >= trim["required_head_margin_samples"]
     assert trim["tail_margin_samples"] >= trim["required_tail_margin_samples"]
     assert provenance["markers"]["skipped_group_indices"] == []
+
+
+def test_uncorrected_boundary_spans_are_annotated(tmp_path: Path) -> None:
+    config = load_config(make_fixture(tmp_path))
+
+    summary = run_correction(config)
+
+    assert summary.skipped_group_count > 0
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    bad = [marker for marker in markers if marker.description == "Bad_Gradient"]
+    assert bad
+    assert all(marker.marker_type == "Bad Interval" for marker in bad)
+    assert all(1 <= marker.position <= summary.output_sample_count for marker in bad)
+    assert all(
+        marker.position + marker.size - 1 <= summary.output_sample_count
+        for marker in bad
+    )
+
+
+def test_a_fully_corrected_run_carries_no_bad_gradient_annotation(
+    tmp_path: Path,
+) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    assert summary.skipped_group_count == 0
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    assert not [
+        marker for marker in markers if marker.description == "Bad_Gradient"
+    ]
