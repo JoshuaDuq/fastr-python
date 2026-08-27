@@ -19,11 +19,11 @@ The tests cover:
 - exact BrainVision marker selection and lossless marker round trips;
 - BIDS timing, TR-sample, marker-gap, and boundary validation;
 - shared FASTR alignment and channel-batch invariance;
-- output-rate, filter, and output-collision checks; and
+- output-rate, filter, and output-collision checks;
 - reopening the generated BrainVision recording with MNE; and
 - generation of before/after MNE PSD figures.
 
-The BCG-Python package (AAS/PCA-OBS) additionally verifies that the FASTR input contains no
+The BCG-Correction package (AAS/PCA-OBS) additionally verifies that the FASTR input contains no
 pre-existing `Pulse Artifact,R` markers, detects R samples from ECG only, preserves the
 source marker collection while appending detector markers, preserves ECG and all samples
 outside bounded correction windows, and compares methods with held-out cardiac residuals
@@ -68,3 +68,7 @@ baseline. Verify the paired recordings have the same channel order, compatible s
 rate and sample geometry, and high interior ECG correlation before interpreting method
 differences. Analyzer marker agreement is not ground truth when Analyzer is known to miss
 beats.
+
+BCG/ECG detection and correction are outside this package. FASTR-Python retains
+cardiac validation metrics and deterministic simulation helpers so those downstream
+checks can be run without making BCG-Correction a runtime dependency.

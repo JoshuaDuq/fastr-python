@@ -228,7 +228,7 @@ def test_pipeline_forwards_configured_psd_settings(
     config_path = make_fixture(tmp_path)
     values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     values["diagnostics"] = {
-        "psd_max_frequency_hz": 80.0,
+        "psd_max_frequency_hz": 400.0,
         "psd_n_fft": 128,
     }
     config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
@@ -252,7 +252,7 @@ def test_pipeline_forwards_configured_psd_settings(
 
     run_correction(config)
 
-    assert calls == [(80.0, 128), (80.0, 128)]
+    assert calls == [(250.0, 128), (250.0, 128)]
 
 
 def test_pipeline_forwards_configured_fastr_robustness_settings(
@@ -360,6 +360,37 @@ def test_psd_plot_requests_spatial_colors(
 
     assert seen["spatial_colors"] is True
     assert seen["fmax"] == 100.0
+    assert "n_fft" not in seen
+
+
+def test_psd_plot_forwards_a_configured_fft_length(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    info = mne.create_info(["Fp1", "Fp2"], sfreq=1_000.0, ch_types="eeg")
+    raw = mne.io.RawArray(np.zeros((2, 100)), info, verbose="ERROR")
+    seen: dict[str, object] = {}
+
+    def capture_plot(*args: object, **kwargs: object) -> object:
+        seen.update(kwargs)
+        return plt.figure()
+
+    monkeypatch.setattr(
+        pipeline_module.mne.viz,
+        "plot_raw_psd",
+        capture_plot,
+    )
+    pipeline_module._save_psd_plot(
+        raw,
+        tmp_path / "psd.png",
+        fmax=100.0,
+        title="test",
+        tmin=0.0,
+        tmax=0.1,
+        n_fft=128,
+    )
+
+    assert seen["n_fft"] == 128
 
 
 def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:

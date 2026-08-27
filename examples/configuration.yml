@@ -19,7 +19,14 @@ processing:
   channel_batch_size: 8
   reference_channel: EEG 001
   template_high_pass_hz: 1.0
+  residual_threshold_uv: 1.0
   residual_gate: false
+  residual_gate_mad_multiplier: 8.0
+  residual_gate_ratio: 8.0
+  residual_gate_max_fraction: 0.02
+  adaptive_window: false
+  local_neighbor_count: 20
+  adaptive_improvement_ratio: 0.85
 
 # Optional quality-control settings. These describe how residuals are measured;
 # they do not enable or change correction stages by themselves.

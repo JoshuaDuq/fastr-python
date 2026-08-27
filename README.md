@@ -41,11 +41,18 @@ being repaired implicitly.
 The output consists of the requested `.vhdr`, its `.eeg` and `.vmrk` companions,
 `*_psd_before.png`, `*_psd_after.png`, and a `.json` provenance sidecar. The PSD
 figures are generated with MNE's `mne.viz.plot_raw_psd`, use the same complete-epoch
-interval for both conditions, and show 0--100 Hz with spatial channel colors when
-standard EEG positions can be identified. Boundary groups without complete FASTR
-epochs are excluded from both PSD figures and recorded in the sidecar. The sidecar
-also records resolved settings, source hashes, timing validation, alignment shifts,
-and fitted amplitudes.
+interval for both conditions, and use the configured frequency limit, capped at the
+output Nyquist frequency. Boundary groups without complete FASTR epochs are excluded
+from both PSD figures and recorded in the sidecar. The sidecar also records resolved
+settings, source hashes, timing validation, alignment shifts, and fitted amplitudes.
+
+All user-tunable run settings live in the YAML file. `processing` controls FASTR
+geometry, filtering, batching, optional residual gating, and adaptive windows;
+`quality_control` controls residual-QC block length and mains exclusion; `diagnostics`
+controls the PSD frequency limit and optional FFT length; and `trim` controls the
+emitted recording span. Values such as the interpolation filter design, residual
+OBS high-pass design, and protected boundary policy are method implementation
+details and are intentionally not configuration knobs.
 
 ## Validate timing only
 
@@ -84,6 +91,18 @@ signal-preservation controls. Set `trim.mode` to `first_to_last_volume` on untri
 recordings so boundary volumes keep the margin FASTR needs; uncorrected spans and
 blocks over `residual_threshold_uv` are annotated `Bad Interval, Bad_Gradient`.
 
+## Maintainer map
+
+The package keeps public entry points in small facades and puts implementation in
+focused modules. `fastr_types` defines immutable results and domain errors;
+`fastr_timing` validates BIDS timing; `fastr_geometry` handles acquisition windows
+and boundary policies; `fastr_templates` contains interpolation and template math;
+`fastr_processing` runs alignment, batch correction, and residual OBS; and
+`fastr_validation` owns shared input checks. The configuration-driven orchestration
+lives in `pipeline`, with I/O, marker, and provenance helpers separated into their
+own modules. This layout keeps numerical code testable without making pipeline
+state part of the FASTR algorithm.
+
 ## Development
 
 Run the complete test and lint checks:
@@ -104,6 +123,7 @@ the tracked public package in `.local/analyzer_comparison/`.
 
 ## Related pipelines
 
-Cardiac detection and AAS/PCA-OBS BCG correction now live in **BCG-Python**
+Cardiac detection and AAS/PCA-OBS BCG correction now live in **BCG-Correction**
 (`bcg-correct`). The deep-learning BCGNet path lives in **BCGNet-Python**
-(`bcgnet`). This package only removes scanner-gradient artifact.
+(`bcgnet`). This package only removes scanner-gradient artifact; its validation-only
+cardiac metrics and simulation helpers remain available for research checks.

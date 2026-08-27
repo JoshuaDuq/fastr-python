@@ -24,11 +24,10 @@ For each run, the pipeline:
    reference channel. Optional `residual_gate` then flags volumes whose
    first-pass leftover at the slice harmonics is an extreme outlier and drops
    those volumes from *clean* neighbours' templates. Outlier volumes keep their
-   local window. The gate is off by default: on this cohort an 8× harmonic
-   threshold is a no-op on the worst motion run, and looser thresholds made
-   that run's worst 30 s block worse by replacing local neighbours. Then it
-   fits and subtracts a scaled template for every channel batch. The estimate
-   is subtracted from the unfiltered channel, so slow content survives
+   local window. The gate is off by default, and its robust thresholds, maximum
+   exclusion fraction, mains frequency, and mains exclusion width are configurable.
+   It then fits and subtracts a scaled template for every channel batch. The
+   estimate is subtracted from the unfiltered channel, so slow content survives
    correction.
 8. Applies the configured zero-phase low-pass filter, then takes the output window
    and decimates.
@@ -86,8 +85,9 @@ as `residual_obs` but is not part of the pipeline, and adaptive noise cancellati
 is not implemented. Neither absence is hidden by the sidecar, which records exactly
 what ran. PSD figures use the same interval containing
 only complete corrected epochs, so uncorrected boundary data cannot dominate the
-diagnostic. They are limited to 0--100 Hz and use standard MNE spatial channel colors
-when channel positions can be identified. A marker gap or more than one native
+diagnostic. They use the configured PSD frequency limit, capped at the output
+Nyquist, and use standard MNE spatial channel colors when channel positions can be
+identified. A marker gap or more than one native
 sample of timing inconsistency is a hard error; the pipeline does not interpolate
 missing acquisition events. A single sample (0.2 ms at 5 kHz) is treated as clock
 quantization inside the alignment search.
@@ -98,6 +98,17 @@ In multiband acquisitions, adjacent groups can represent different acquisition-t
 slots. Matching templates by the unique values in `SliceTiming` prevents those
 different temporal positions from being averaged together. The number of repeated
 slice groups is derived from the metadata and checked against the multiband factor.
+
+## Configuration and provenance
+
+The example YAML is the single user-facing configuration surface. Protocol and
+analysis choices include the interpolation factor, template neighbour count,
+search radius, template high-pass, output filter/rate, residual threshold, optional
+gate/adaptive settings, trim mode, residual-QC block and mains settings, and PSD
+limits. Fixed implementation details include the interpolation kernel shape, the
+residual OBS 70 Hz high-pass design, and the protected boundary volumes. The
+provenance sidecar stores the resolved configuration plus the effective PSD limit,
+FFT length, and residual-QC mains/block settings used for the run.
 
 ## The 1/TR limitation
 
