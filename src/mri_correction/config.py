@@ -53,6 +53,24 @@ class ProcessingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TrimConfig:
+    """How the pipeline restricts its output to the scanning period."""
+
+    mode: str = "none"
+    minimum_epoch_coverage: float = 0.75
+
+    def __post_init__(self) -> None:
+        if self.mode not in _TRIM_MODES:
+            raise ConfigurationError(
+                f"trim.mode must be one of {sorted(_TRIM_MODES)}"
+            )
+        if not 0.0 < self.minimum_epoch_coverage <= 1.0:
+            raise ConfigurationError(
+                "trim.minimum_epoch_coverage must be greater than 0 and at most 1"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class CorrectionConfig:
     """Complete immutable configuration for a correction run."""
 
@@ -60,9 +78,13 @@ class CorrectionConfig:
     output: OutputConfig
     timing: TimingConfig
     processing: ProcessingConfig
+    trim: TrimConfig
 
 
-_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"})
+_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing", "trim"})
+_REQUIRED_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"})
+_TRIM_MODES = frozenset({"none", "first_to_last_volume"})
+_TRIM_KEYS = frozenset({"mode", "minimum_epoch_coverage"})
 _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
 _TIMING_KEYS = frozenset({"marker_type", "marker_description"})
@@ -100,7 +122,7 @@ def load_config(path: str | Path) -> CorrectionConfig:
 
     root = _require_mapping(document, "configuration")
     _reject_unknown_keys(root, _TOP_LEVEL_KEYS, "configuration")
-    for section in _TOP_LEVEL_KEYS:
+    for section in sorted(_REQUIRED_TOP_LEVEL_KEYS):
         if section not in root:
             raise ConfigurationError(f"missing required field: {section}")
 
@@ -130,7 +152,24 @@ def load_config(path: str | Path) -> CorrectionConfig:
             ),
         ),
         processing=_processing_config(processing_values),
+        trim=_trim_config(root),
     )
+
+
+def _trim_config(root: Mapping[str, object]) -> TrimConfig:
+    """Read the optional trim section, defaulting each absent field."""
+    if "trim" not in root:
+        return TrimConfig()
+    values = _require_mapping(root["trim"], "trim")
+    _reject_unknown_keys(values, _TRIM_KEYS, "trim")
+    defaults = TrimConfig()
+    mode = _string_value(values, "mode") if "mode" in values else defaults.mode
+    coverage = (
+        _finite_number(values, "minimum_epoch_coverage", minimum=0.0)
+        if "minimum_epoch_coverage" in values
+        else defaults.minimum_epoch_coverage
+    )
+    return TrimConfig(mode=mode, minimum_epoch_coverage=coverage)
 
 
 def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
