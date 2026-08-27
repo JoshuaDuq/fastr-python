@@ -37,6 +37,7 @@ from .fastr import (
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
+from .residual_qc import block_residual_uv, slice_harmonics
 from .window import OutputWindow, resolve_output_window
 
 
@@ -45,6 +46,7 @@ class PipelineInputError(ValueError):
 
 
 _PSD_MAX_FREQUENCY_HZ = 100.0
+_RESIDUAL_BLOCK_SECONDS = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,13 @@ def _run_correction(
                 window=window,
             )
         corrected_output.flush()
+        residual_qc = _measure_residual_qc(
+            corrected_output,
+            channel_names=raw.ch_names,
+            output_rate=output_rate,
+            timing=timing,
+            threshold_uv=config.processing.residual_threshold_uv,
+        )
         transformed_markers = resample_markers(
             recording.markers,
             factor=decimation,
@@ -192,6 +201,10 @@ def _run_correction(
             _skipped_group_spans(group_triggers, geometry),
             window=window,
             decimation=decimation,
+            output_sample_count=output_sample_count,
+        ) + _residual_qc_markers(
+            residual_qc,
+            output_rate=output_rate,
             output_sample_count=output_sample_count,
         )
         _validate_marker_output_positions(
@@ -250,6 +263,7 @@ def _run_correction(
         decimation=decimation,
         output_sample_count=output_sample_count,
         window=window,
+        residual_qc=residual_qc,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         runtime_seconds=time.perf_counter() - started,
@@ -474,6 +488,80 @@ def _validate_marker_output_positions(
         )
 
 
+def _measure_residual_qc(
+    corrected: np.ndarray,
+    *,
+    channel_names: list[str],
+    output_rate: float,
+    timing: FmriAcquisitionTiming,
+    threshold_uv: float,
+) -> dict[str, object]:
+    """Measure residual gradient artifact across the whole corrected recording.
+
+    The existing sidecar reports alignment correlations and amplitude fits, and
+    neither moves when a correction fails: on this cohort both stayed healthy
+    through blocks carrying twenty microvolts of residual artifact.
+    """
+    harmonics = slice_harmonics(
+        groups_per_volume=timing.groups_per_volume,
+        repetition_time_seconds=timing.repetition_time_seconds,
+        nyquist_hz=output_rate / 2.0,
+    )
+    residuals = block_residual_uv(
+        np.asarray(corrected) * 1e6,
+        sampling_rate=output_rate,
+        harmonics=harmonics,
+        block_seconds=_RESIDUAL_BLOCK_SECONDS,
+    )
+    if residuals.shape[1] == 0:
+        worst_block = [-1] * residuals.shape[0]
+        worst_uv = [0.0] * residuals.shape[0]
+    else:
+        worst_block = [int(index) for index in residuals.argmax(axis=1)]
+        worst_uv = [float(value) for value in residuals.max(axis=1)]
+    return {
+        "block_seconds": _RESIDUAL_BLOCK_SECONDS,
+        "harmonics_hz": [float(value) for value in harmonics],
+        "threshold_uv": float(threshold_uv),
+        "channel_names": list(channel_names),
+        "block_residual_uv": [[float(v) for v in row] for row in residuals],
+        "worst_block_index": worst_block,
+        "worst_block_uv": worst_uv,
+        "blocks_over_threshold": int((residuals > threshold_uv).any(axis=0).sum()),
+    }
+
+
+def _residual_qc_markers(
+    residual_qc: dict[str, object],
+    *,
+    output_rate: float,
+    output_sample_count: int,
+) -> tuple[BrainVisionMarker, ...]:
+    """Annotate every block whose residual artifact exceeds the threshold."""
+    residuals = np.asarray(residual_qc["block_residual_uv"], dtype=np.float64)
+    if residuals.size == 0:
+        return ()
+    threshold = float(residual_qc["threshold_uv"])
+    block_samples = round(float(residual_qc["block_seconds"]) * output_rate)
+    flagged = np.flatnonzero((residuals > threshold).any(axis=0))
+    markers = []
+    for block in flagged:
+        position = int(block) * block_samples + 1
+        if position > output_sample_count:
+            continue
+        size = min(block_samples, output_sample_count - position + 1)
+        markers.append(
+            BrainVisionMarker(
+                marker_type="Bad Interval",
+                description="Bad_Gradient",
+                position=position,
+                size=int(max(size, 1)),
+                channel=0,
+            )
+        )
+    return tuple(markers)
+
+
 def _skipped_group_spans(
     group_triggers: np.ndarray,
     geometry: FastrGeometry,
@@ -580,6 +668,7 @@ def _make_provenance(
     decimation: int,
     output_sample_count: int,
     window: OutputWindow,
+    residual_qc: dict[str, object],
     psd_tmin: float,
     psd_tmax: float,
     runtime_seconds: float,
@@ -616,6 +705,7 @@ def _make_provenance(
             input_sample_count=int(raw.n_times),
             mode=config.trim.mode,
         ),
+        "residual_qc": residual_qc,
         "configuration": _jsonable_config(config),
         "timing": {
             "repetition_time_seconds": timing.repetition_time_seconds,

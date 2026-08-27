@@ -51,6 +51,7 @@ class ProcessingConfig:
     channel_batch_size: int
     reference_channel: str | int
     template_high_pass_hz: float = 1.0
+    residual_threshold_uv: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +96,12 @@ _PROCESSING_KEYS = frozenset(
         "channel_batch_size",
         "reference_channel",
         "template_high_pass_hz",
+        "residual_threshold_uv",
     }
 )
-_OPTIONAL_PROCESSING_KEYS = frozenset({"template_high_pass_hz"})
+_OPTIONAL_PROCESSING_KEYS = frozenset(
+    {"template_high_pass_hz", "residual_threshold_uv"}
+)
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
 
 
@@ -198,8 +202,15 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
             "processing.template_high_pass_hz must be zero or greater"
         )
 
+    residual_threshold_uv = (
+        _finite_number(values, "residual_threshold_uv", minimum=0.0)
+        if "residual_threshold_uv" in values
+        else ProcessingConfig.__dataclass_fields__["residual_threshold_uv"].default
+    )
+
     return ProcessingConfig(
         method=method,
+        residual_threshold_uv=residual_threshold_uv,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         template_high_pass_hz=template_high_pass_hz,

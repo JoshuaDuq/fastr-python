@@ -445,3 +445,32 @@ def test_a_fully_corrected_run_carries_no_bad_gradient_annotation(
     assert not [
         marker for marker in markers if marker.description == "Bad_Gradient"
     ]
+
+
+def test_residual_qc_is_reported_in_the_sidecar(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    qc = provenance["residual_qc"]
+    assert qc["threshold_uv"] == 1.0
+    assert qc["block_seconds"] == 30.0
+    assert qc["channel_names"] == ["EEG 001", "EEG 002", "ECG"]
+    assert len(qc["block_residual_uv"]) == summary.channel_count
+    assert len(qc["worst_block_uv"]) == summary.channel_count
+    # a 0.3 s output holds no complete 30 s block, so there is nothing to report
+    assert qc["block_residual_uv"] == [[], [], []]
+    assert qc["blocks_over_threshold"] == 0
+
+
+def test_residual_qc_excludes_the_mains_harmonic(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=200))
+
+    summary = run_correction(config)
+
+    qc = json.loads(summary.provenance_json.read_text(encoding="utf-8"))["residual_qc"]
+    # 2 groups per 0.1 s volume gives a 20 Hz slice rate, whose 3rd harmonic is mains
+    assert 20.0 in qc["harmonics_hz"]
+    assert 40.0 in qc["harmonics_hz"]
+    assert 60.0 not in qc["harmonics_hz"]
