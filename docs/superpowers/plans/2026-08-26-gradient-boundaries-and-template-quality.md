@@ -827,6 +827,13 @@ git commit -m "feat: correct partial boundary epochs and annotate untouched span
 
 ---
 
+> **Implementation note (2026-08-26):** `minimum_epoch_coverage` and the
+> partial-epoch fit it gated were dropped. Measured on real untrimmed input, the
+> only group that still lacks a complete epoch is the final volume's first group,
+> which contributes three output samples; those are annotated
+> `Bad Interval, Bad_Gradient` instead. A configuration option that gates nothing
+> is worse than no option.
+
 ### Task 7: Residual QC in microvolts, with derived harmonics
 
 **Files:**

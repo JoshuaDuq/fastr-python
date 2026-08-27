@@ -186,27 +186,9 @@ def test_trim_defaults_to_no_trimming(tmp_path: Path) -> None:
     config = load_config(config_path)
 
     assert config.trim.mode == "none"
-    assert config.trim.minimum_epoch_coverage == 0.75
 
 
 def test_trim_section_is_parsed(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yml"
-    config_path.write_text(
-        document_with_trim(
-            "trim:\n"
-            "  mode: first_to_last_volume\n"
-            "  minimum_epoch_coverage: 0.5\n"
-        ),
-        encoding="utf-8",
-    )
-
-    config = load_config(config_path)
-
-    assert config.trim.mode == "first_to_last_volume"
-    assert config.trim.minimum_epoch_coverage == 0.5
-
-
-def test_trim_accepts_a_partial_section(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yml"
     config_path.write_text(
         document_with_trim("trim:\n  mode: first_to_last_volume\n"),
@@ -216,7 +198,15 @@ def test_trim_accepts_a_partial_section(tmp_path: Path) -> None:
     config = load_config(config_path)
 
     assert config.trim.mode == "first_to_last_volume"
-    assert config.trim.minimum_epoch_coverage == 0.75
+
+
+def test_trim_accepts_an_empty_section(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document_with_trim("trim: {}\n"), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.trim.mode == "none"
 
 
 def test_trim_rejects_an_unknown_mode(tmp_path: Path) -> None:
@@ -227,17 +217,6 @@ def test_trim_rejects_an_unknown_mode(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigurationError, match=r"trim\.mode"):
-        load_config(config_path)
-
-
-def test_trim_rejects_coverage_above_one(tmp_path: Path) -> None:
-    config_path = tmp_path / "config.yml"
-    config_path.write_text(
-        document_with_trim("trim:\n  minimum_epoch_coverage: 1.5\n"),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigurationError, match="minimum_epoch_coverage"):
         load_config(config_path)
 
 

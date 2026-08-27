@@ -22,4 +22,3 @@ processing:
 
 trim:
   mode: first_to_last_volume
-  minimum_epoch_coverage: 0.75

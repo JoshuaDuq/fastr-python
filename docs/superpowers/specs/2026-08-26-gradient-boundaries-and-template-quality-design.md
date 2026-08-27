@@ -162,6 +162,13 @@ fitted over the available samples only, and the fitted epoch is subtracted over
 those samples. Below `minimum_epoch_coverage` the group is left uncorrected and
 annotated.
 
+> **Implementation note (2026-08-26):** `minimum_epoch_coverage` and the
+> partial-epoch fit it gated were dropped. Measured on real untrimmed input, the
+> only group that still lacks a complete epoch is the final volume's first group,
+> which contributes three output samples; those are annotated
+> `Bad Interval, Bad_Gradient` instead. A configuration option that gates nothing
+> is worse than no option.
+
 ### B. Neighbour count chosen from measurement
 
 An analysis pass, not a code change, run before any default moves.
