@@ -10,7 +10,8 @@ software while preserving the current numerical algorithm, public module imports
 configuration behavior, output files, marker semantics, and failure policy.
 
 The separate BCG-Correction project remains out of scope. This repository contains
-scanner-gradient correction only.
+scanner-gradient correction only; its existing cardiac-named metrics and pulse
+simulation are validation utilities, not BCG detection or correction.
 
 ## Current context
 
@@ -63,16 +64,18 @@ split by responsibility into these modules:
 | Module | Responsibility |
 | --- | --- |
 | `fastr_types.py` | `FastrInputError`, immutable result/provenance models, and private geometry value objects. |
+| `fastr_validation.py` | Shared recording, channel, parameter, and scalar validation with no implementation-module dependencies. |
 | `fastr_timing.py` | `FmriAcquisitionTiming`, BIDS JSON loading, volume-marker validation, and fractional group-trigger construction. |
-| `fastr_geometry.py` | Geometry validation/building, boundary handling, acquisition-slot and alternating neighbour windows, residual gating, and adaptive-window selection. |
+| `fastr_geometry.py` | Geometry-specific validation/building, boundary handling, acquisition-slot and alternating neighbour windows, residual gating, and adaptive-window selection. |
 | `fastr_templates.py` | Interpolation, epoch extraction/placement, template means, high-pass template signals, amplitude fitting, and correlation helpers. |
-| `fastr_processing.py` | Shared alignment fitting, batch application, residual OBS, and processing-specific input validation. |
+| `fastr_processing.py` | FASTR run orchestration, shared alignment fitting, batch application, and residual OBS. |
 | `fastr.py` | Public convenience wrappers (`slice_fastr`, acquisition-group variants, and re-exports). |
 
-The dependency direction is one-way: timing and types are foundational; geometry
-depends on types and template helpers; processing depends on geometry, types, and
-template helpers; the façade depends on all public implementation modules. No moved
-module imports the façade, so circular imports cannot hide behavior.
+The dependency direction is one-way: types are foundational; shared validation
+depends only on types; timing and templates depend on types; geometry depends on
+validation, types, and template helpers; processing depends on validation, geometry,
+types, and template helpers; and the façade depends on the implementation modules.
+No moved module imports the façade, so circular imports cannot hide behavior.
 
 The existing public `FastrGeometry`, `FastrAlignment`, `FastrCorrection`,
 `FastrProvenance`, `FmriAcquisitionTiming`, and `FastrInputError` names are imported
@@ -87,6 +90,7 @@ behind focused helpers:
 
 | Module | Responsibility |
 | --- | --- |
+| `pipeline_types.py` | Stable `PipelineInputError` shared by the orchestrator and extracted helpers. |
 | `pipeline_io.py` | Input/output path validation, rate validation, reference-channel resolution, and full-recording filtering/decimation. |
 | `pipeline_markers.py` | Mapping output markers, skipped-group spans, residual-QC annotations, and output-position validation. |
 | `pipeline_provenance.py` | JSON-safe configuration conversion, hashes, trim/QC/FASTR provenance assembly. |

@@ -13,17 +13,24 @@
 ## Scope and invariants
 
 - Work from local main, currently aligned with GitHub’s merge commit f3aec7d.
-- Preserve every existing public symbol imported from mri_correction.fastr, mri_correction.pipeline, and the existing utility modules.
+- Preserve every existing public symbol imported from mri_correction.fastr,
+  mri_correction.pipeline, and the existing FASTR utility modules.
 - Preserve the current YAML keys and defaults. New quality_control and diagnostics sections and new optional robustness fields are additive.
 - Keep the current numerical operations and operation order. Do not change filters, interpolation taps, marker serialization, output naming, or floating-point arithmetic as part of this cleanup.
 - Keep explicit errors. Do not add repair, inference, or silent fallback behavior.
-- Keep BCG/ECG implementation out of FASTR-Python; it remains in the separate BCG-Correction project.
+- Do not add or reintroduce BCG/ECG detection or correction implementation. The
+  existing cardiac-named metrics and pulse simulation are validation-only utilities;
+  leave their public behavior unchanged and document that boundary clearly.
 
 ## File map
 
 ### New modules
 
+- src/mri_correction/pipeline_types.py — stable pipeline exception type shared by
+  orchestration and extracted helpers.
 - src/mri_correction/fastr_types.py — FASTR error, immutable result models, and private geometry value objects.
+- src/mri_correction/fastr_validation.py — shared array, channel, parameter, and
+  recording validation used by the implementation modules.
 - src/mri_correction/fastr_timing.py — BIDS timing loading and volume-to-group trigger conversion.
 - src/mri_correction/fastr_geometry.py — geometry validation/building, boundary policy, template-window selection, residual gate, and adaptive-window selection.
 - src/mri_correction/fastr_templates.py — interpolation, epoch operations, template means, high-pass estimation, alignment correlation, and amplitude fitting.
@@ -37,9 +44,16 @@
 - src/mri_correction/fastr.py — thin public facade and convenience wrappers.
 - src/mri_correction/pipeline.py — orchestration and compatibility wrappers only.
 - src/mri_correction/config.py — typed QC/diagnostic settings and explicit defaults.
-- src/mri_correction/psd.py — use the caller’s optional FFT size without changing the omitted default.
+- src/mri_correction/psd.py — retain the caller’s optional FFT size and remove only
+  the unused FFT constant if it remains unreferenced.
 - src/mri_correction/residual_qc.py — keep existing defaults while accepting explicit pipeline values.
 - examples/configuration.yml, README.md, docs/algorithm.md, docs/validation.md — document the configuration surface and module boundary.
+
+### Verified unchanged during the refactor
+
+- src/mri_correction/metrics.py and src/mri_correction/simulation.py — retain the
+  existing general signal-transfer metrics and validation-only cardiac simulation;
+  no BCG detector or corrector is moved into the FASTR execution path.
 
 ### Tests
 
@@ -47,6 +61,49 @@
 - Add tests/test_fastr_modules.py for implementation-module import boundaries and public re-exports.
 - Add tests/test_pipeline_modules.py for pipeline helper boundaries and compatibility seams.
 - Keep the existing synthetic, marker, boundary, QC, and end-to-end tests unchanged unless they need an explicit assertion for a new setting.
+
+## Task 0: Establish the baseline and resolve the package boundary
+
+Before editing implementation code, record the current checkout and quality baseline:
+
+```
+git status --short --branch
+git log -1 --oneline
+uv run pytest
+uv run ruff check src tests
+git diff --check
+```
+
+The source baseline under review is the clean local main code at f3aec7d, with 308
+passing tests and the seven pre-existing Ruff E501 findings. The design and plan
+commits may be present as docs-only commits above that source commit. The
+implementation must reduce the Ruff findings to zero without weakening the configured
+checks.
+
+Audit the current import graph and the sibling BCG-Correction repository before the
+first code change. Confirm that the correction entry points contain only scanner-
+gradient correction. Keep `metrics.py` and `simulation.py` in place because their
+cardiac-named functions are validation measurements/fixtures, not correction code;
+do not delete or duplicate those public utilities as part of this cleanup. Update
+README.md and docs/validation.md only to make this distinction unambiguous.
+
+This task prevents the modularization from accidentally restoring the stale BCG code
+that was removed by the GitHub merge, while also preventing an accidental API break
+in the validation utilities.
+
+Run:
+
+```
+rg -n "Bcg|BCG|cardiac|pulse|ECG|correction" src/mri_correction README.md docs
+git diff --check
+```
+
+Commit only if the boundary documentation needs a standalone change:
+
+```
+git add README.md docs/validation.md
+git commit -m "docs: clarify FASTR and BCG package boundaries"
+```
 
 ---
 
@@ -111,6 +168,8 @@ diagnostics:
 Add parameterized invalid-value coverage for non-positive block length, non-positive
 mains frequency, negative mains exclusion, non-positive PSD limit, non-positive FFT
 size, and non-integer FFT size. Add unknown-key tests for both new sections.
+Add one partial-section test for each new section to prove omitted fields inside a
+present section receive their documented defaults rather than becoming required.
 
 Run:
 
@@ -164,9 +223,11 @@ missing keys use documented defaults. The parser must perform these exact action
 - parse psd_max_frequency_hz as a strictly positive finite number;
 - parse psd_n_fft as either null/None or a positive integer, rejecting booleans.
 
-Add quality_control and diagnostics to load_config and serialize them through the
-existing asdict-based provenance path. Use explicit defaults in the parser rather
-than ProcessingConfig.__dataclass_fields__.
+Add quality_control and diagnostics to `_TOP_LEVEL_KEYS`, parse them through
+dedicated optional-section helpers in `load_config`, and serialize them through the
+existing asdict-based provenance path. The helpers must accept an absent section and
+must reject a non-mapping section. Use explicit defaults in the parser rather than
+ProcessingConfig.__dataclass_fields__.
 
 Update examples/configuration.yml with the two optional sections and comments that
 the values are protocol/reporting settings, not automatic corrections.
@@ -197,10 +258,7 @@ git commit -m "feat: expose QC and diagnostic configuration"
 **Files:**
 
 - Modify: src/mri_correction/config.py
-- Modify: src/mri_correction/fastr.py during the facade transition in Task 4
-- Modify: src/mri_correction/fastr_geometry.py during extraction in Task 4
 - Modify: tests/test_config.py
-- Modify: tests/test_residual_gate.py
 
 Add four optional processing settings with today’s values:
 
@@ -211,8 +269,13 @@ residual_gate_max_fraction: float = 0.02
 adaptive_improvement_ratio: float = 0.85
 ```
 
-Add them to the optional processing key set and parse them using finite-number
-validation. Enforce:
+Append these defaulted fields after the existing ProcessingConfig fields so existing
+positional construction remains valid. Add the names to both the accepted processing
+key set and the optional processing key set. Parse absent values with explicit
+8.0/8.0/0.02/0.85 defaults rather than reading dataclass metadata, and include the
+resolved values in the existing serialized configuration.
+
+Parse them using finite-number validation. Enforce:
 
 - both multiplier and ratio are strictly positive;
 - maximum excluded fraction is in (0, 1];
@@ -222,33 +285,23 @@ Add tests for defaults, custom values, unknown fields, booleans, non-finite valu
 and out-of-range values. The tests must continue to assert that residual_gate and
 adaptive_window default to False.
 
-During the FASTR extraction, add these keyword-only parameters to gate_fastr_geometry:
-residual_gate_mad_multiplier=8.0, residual_gate_ratio=8.0,
-residual_gate_max_fraction=0.02, mains_frequency_hz=60.0, and
-mains_exclusion_hz=1.0. Add adaptive_improvement_ratio=0.85 as a keyword-only
-parameter to adapt_fastr_geometry. Keep the existing parameters and ordering
-unchanged.
-
-Replace only the uses of the residual-gate and adaptive-improvement constants inside
-those call paths. Validate the new direct-call values at the function boundary.
-Leave fixed implementation details such as the minimum usable-neighbour count and
-protected edge volumes as code constants.
-
-Add a gate test with non-default thresholds and an adaptive-window test with a
-non-default improvement ratio, then verify the existing default behavior remains
-unchanged.
+The public FASTR function parameters are added only in Task 4, after the implementation
+module exists. Do not edit fastr.py, fastr_geometry.py, or the gate/adaptive tests in
+this task; this keeps each intermediate commit runnable and preserves the dependency
+order. Task 4 owns the direct-call validation and numerical regression tests.
 
 Run:
 
 ```
-uv run pytest tests/test_config.py tests/test_residual_gate.py tests/test_adaptive_window.py -v
-uv run ruff check src tests
+uv run pytest tests/test_config.py -v
+uv run ruff check src/mri_correction/config.py tests/test_config.py
+git diff --check
 ```
 
 Commit:
 
 ```
-git add src/mri_correction/config.py tests/test_config.py tests/test_residual_gate.py tests/test_adaptive_window.py
+git add src/mri_correction/config.py tests/test_config.py
 git commit -m "feat: configure FASTR robustness thresholds"
 ```
 
@@ -258,6 +311,7 @@ git commit -m "feat: configure FASTR robustness thresholds"
 
 **Files:**
 
+- Create: src/mri_correction/pipeline_types.py
 - Create: src/mri_correction/pipeline_io.py
 - Create: src/mri_correction/pipeline_markers.py
 - Create: src/mri_correction/pipeline_provenance.py
@@ -270,7 +324,7 @@ git commit -m "feat: configure FASTR robustness thresholds"
 Create tests/test_pipeline_modules.py with import and delegation checks:
 
 ```
-from mri_correction import pipeline, pipeline_io, pipeline_markers
+from mri_correction import pipeline, pipeline_io, pipeline_markers, pipeline_provenance
 
 
 def test_pipeline_keeps_existing_private_test_seams() -> None:
@@ -282,13 +336,49 @@ def test_pipeline_keeps_existing_private_test_seams() -> None:
 def test_pipeline_helpers_are_available_in_focused_modules() -> None:
     assert callable(pipeline_io.lowpass_and_decimate)
     assert callable(pipeline_markers.bad_gradient_markers)
+    assert callable(pipeline_provenance.make_provenance)
+
+
+def test_pipeline_exception_identity_is_preserved() -> None:
+    from mri_correction.pipeline_types import PipelineInputError
+
+    assert pipeline.PipelineInputError is PipelineInputError
+
+
+def test_pipeline_wrapper_delegates_to_lowpass_helper(monkeypatch) -> None:
+    sentinel = object()
+    monkeypatch.setattr(
+        pipeline_io,
+        "lowpass_and_decimate",
+        lambda *args, **kwargs: sentinel,
+    )
+
+    result = pipeline._lowpass_and_decimate(
+        np.zeros((1, 4)),
+        sampling_rate=100.0,
+        output_sampling_rate=100.0,
+        lowpass_hz=20.0,
+        window=OutputWindow(start=0, stop=4),
+    )
+
+    assert result is sentinel
 ```
 
+Import the small test fixtures required by the example (`numpy`, `OutputWindow`) and
+add equivalent focused delegation checks for the I/O, marker, and provenance wrappers
+that remain private in pipeline.py. Each wrapper test must monkeypatch the focused
+module function and assert the wrapper returns its sentinel, so the tests prove there
+is one implementation rather than merely proving that both names are callable.
 Move the existing pipeline tests’ direct helper calls to focused modules only where
 they test the new module’s behavior; keep the original calls that verify compatibility
 wrappers.
 
 ### Step 2: Move I/O and filtering helpers unchanged
+
+Create pipeline_types.py with PipelineInputError and import that same class from
+pipeline.py, pipeline_io.py, and pipeline_markers.py. This preserves the public
+identity of `mri_correction.pipeline.PipelineInputError` while preventing focused
+modules from importing pipeline.py.
 
 Create pipeline_io.py with six functions, retaining the existing signatures and
 validation bodies under public non-underscore names: validate_input_files,
@@ -325,16 +415,21 @@ tests remain effective.
 
 Create pipeline_markers.py with validate_marker_output_positions,
 skipped_group_spans, bad_gradient_markers, and residual_qc_markers. Pass all
-required values explicitly; do not read pipeline globals.
+required values explicitly; do not read pipeline globals. Keep BrainVision marker
+types and serialization unchanged.
 
 Create pipeline_provenance.py with trim_provenance, make_provenance,
 jsonable_config, stringify_paths, and sha256. Keep the current sidecar keys and
 value types. make_provenance must include new quality_control and diagnostics
-values through serialized configuration and add actual PSD/QC settings to their
-respective report blocks.
+values through serialized configuration. Its signature must accept the effective
+residual-QC settings and effective PSD settings explicitly, and it must add those
+values to their respective report blocks without changing any existing key or value
+type.
 
 Keep underscore wrappers in pipeline.py for existing private helper names, and make
-the wrappers pure delegates. Avoid adding a second implementation of any helper.
+the wrappers pure delegates. Keep `_save_psd_plot`, `_prepare_psd_raw`, and
+`_corrected_psd_window` in the pipeline/PSD boundary unless a later task explicitly
+changes their signatures. Avoid adding a second implementation of any helper.
 
 ### Step 4: Verify extraction
 
@@ -342,7 +437,7 @@ Run:
 
 ```
 uv run pytest tests/test_pipeline.py tests/test_pipeline_modules.py -v
-uv run ruff check src tests
+uv run ruff check src/mri_correction/pipeline.py src/mri_correction/pipeline_types.py src/mri_correction/pipeline_io.py src/mri_correction/pipeline_markers.py src/mri_correction/pipeline_provenance.py tests/test_pipeline.py tests/test_pipeline_modules.py
 git diff --check
 ```
 
@@ -352,7 +447,7 @@ low-pass phase tests, marker annotations, and provenance assertions.
 Commit:
 
 ```
-git add src/mri_correction/pipeline.py src/mri_correction/pipeline_io.py src/mri_correction/pipeline_markers.py src/mri_correction/pipeline_provenance.py tests/test_pipeline.py tests/test_pipeline_modules.py
+git add src/mri_correction/pipeline.py src/mri_correction/pipeline_types.py src/mri_correction/pipeline_io.py src/mri_correction/pipeline_markers.py src/mri_correction/pipeline_provenance.py tests/test_pipeline.py tests/test_pipeline_modules.py
 git commit -m "refactor: split pipeline support modules"
 ```
 
@@ -363,6 +458,7 @@ git commit -m "refactor: split pipeline support modules"
 **Files:**
 
 - Create: src/mri_correction/fastr_types.py
+- Create: src/mri_correction/fastr_validation.py
 - Create: src/mri_correction/fastr_timing.py
 - Create: src/mri_correction/fastr_geometry.py
 - Create: src/mri_correction/fastr_templates.py
@@ -372,31 +468,38 @@ git commit -m "refactor: split pipeline support modules"
 
 ### Step 1: Establish the dependency direction
 
-Use this import graph and do not import the facade from an implementation module:
+Use this one-way import graph and do not import the facade from an implementation
+module:
 
 ```
-fastr_types
-    ^
-fastr_timing       fastr_templates
-    ^                    ^
-    |              fastr_geometry
-    |                    ^
-    +------------ fastr_processing
-                         ^
-                      fastr.py
+fastr_types -> fastr_validation
+fastr_types -> fastr_timing -> fastr.py
+fastr_types -> fastr_templates -> fastr_geometry -> fastr_processing -> fastr.py
+fastr_validation -> fastr_timing
+fastr_validation -> fastr_templates
+fastr_validation -> fastr_geometry
+fastr_validation -> fastr_processing
 ```
+
+The arrows describe allowed imports; there must be no reverse imports or cycles.
 
 fastr_types.py owns FastrInputError, FastrProvenance, FastrCorrection,
 FastrGeometry, FastrAlignment, _TemplateWindow, and _ArtifactEpoch. Keep the
 current frozen/slot settings, array-copy behavior, read-only flags, field order,
 and docstrings.
 
+fastr_validation.py owns shared recording, channel, reference, basis, interpolation,
+sampling-rate, and scalar-parameter validators. It must not import geometry,
+processing, or the facade. Geometry-specific epoch/window validation stays with
+fastr_geometry.py. Timing-specific repetition-time, slice-timing, multiband, volume-
+start, and contiguous-start validation stays with fastr_timing.py.
+
 fastr_timing.py owns FmriAcquisitionTiming, load_bids_fmri_timing,
 make_group_trigger_samples, and timing/file validators.
 
 fastr_geometry.py owns prepare_fastr_geometry, gate_fastr_geometry,
-adapt_fastr_geometry, _build_fastr_geometry, _run_fastr_with_edges,
-template-window selection, epoch-bound checks, residual-gate scoring,
+adapt_fastr_geometry, _build_fastr_geometry, template-window selection,
+interpolated-grid and epoch construction, epoch-bound checks, residual-gate scoring,
 adaptive-window selection, and corresponding validators.
 
 fastr_templates.py owns _make_template_high_pass, _template_estimate_signal,
@@ -404,9 +507,11 @@ _make_interpolation_filter, _interpolate, _extract_epochs, _place_epochs,
 _make_templates, _mean_selected_epochs, _template_residual, _correlate,
 _fit_group_shifts, and _fit_channel_noise.
 
-fastr_processing.py owns fit_fastr_alignment, apply_fastr_batch, residual_obs,
-and recording/reference/channel/basis validation. It imports the types, geometry
-objects, and template helpers directly.
+fastr_processing.py owns _run_fastr, _run_fastr_with_edges, fit_fastr_alignment,
+apply_fastr_batch, residual_obs, neighbor-index mapping, and residual-basis helpers.
+It imports shared validation from fastr_validation.py and imports the types, geometry
+objects, and template helpers directly. No validator is copied into more than one
+module.
 
 ### Step 2: Move code without semantic edits
 
@@ -439,15 +544,37 @@ __all__ = [
 
 The facade’s four convenience wrappers must call extracted geometry and processing
 functions with the same defaults as today. Direct calls that omit new robustness
-parameters must produce the same results as before.
+parameters must produce the same results as before. Keep the facade’s import-time
+surface stable: importing mri_correction.fastr must not import pipeline modules or
+the BCG-Correction package.
 
 ### Step 3: Thread explicit robustness values
 
-In fastr_geometry.py, add small validators for positive ratios and fractions, then
-pass values through _residual_outlier_scores, _slice_harmonic_energy,
-_outlier_groups, _robust_outliers, _cap_outliers, and
-_volumes_helped_by_local_window. Defaults must be exactly 8.0, 8.0, 0.02,
-60.0, 1.0, and 0.85 at the public boundary.
+In fastr_validation.py, add the shared finite, positive, and bounded-number
+validators needed by the new public parameters. In fastr_geometry.py, pass values
+through `_residual_outlier_scores`, `_slice_harmonic_energy`, `_outlier_groups`,
+`_robust_outliers`, `_cap_outliers`, and `_volumes_helped_by_local_window`. The
+internal signatures must carry the values explicitly all the way to the operation
+that uses them; do not read configuration from module state. Defaults must be
+exactly 8.0, 8.0, 0.02, 60.0, 1.0, and 0.85 at the public boundary. Validate both
+YAML-derived values and direct function-call values before any array work begins;
+reject booleans and non-finite values consistently.
+
+Add these keyword-only parameters after the existing parameters, preserving the
+relative order of every existing argument:
+
+- gate_fastr_geometry: residual_gate_mad_multiplier=8.0,
+  residual_gate_ratio=8.0, residual_gate_max_fraction=0.02,
+  mains_frequency_hz=60.0, mains_exclusion_hz=1.0;
+- adapt_fastr_geometry: adaptive_improvement_ratio=0.85.
+
+Pass `mains_frequency_hz` and `mains_exclusion_hz` into harmonic scoring rather than
+leaving a hidden mains-frequency or exclusion-width constant in the residual gate.
+Pass the MAD multiplier, ratio, and maximum fraction into the robust-outlier and
+cap functions. Pass the improvement ratio into the local-window comparison. Remove
+the corresponding tunable module constants after all call sites are migrated. Leave
+fixed implementation details such as the minimum usable-neighbour count and protected
+edge volumes as code constants.
 
 In fastr_processing.py, retain residual_obs defaults rank=4 and
 interpolation_factor=10; leave its fixed 70 Hz residual high-pass implementation
@@ -470,8 +597,15 @@ def test_fastr_facade_reexports_extracted_implementations() -> None:
 
 Retain and run all existing FASTR geometry, alignment, batch invariance, boundary,
 residual OBS, and synthetic tests. Add one explicit default-vs-explicit comparison:
-call gate/adaptive functions once with omitted optional values and once with the
-documented defaults, then assert equal arrays and equal provenance.
+build independent geometry fixtures, call gate/adaptive functions once with omitted
+optional values and once with the documented defaults, then assert equal arrays and
+equal provenance. Add parameterized direct-call validation tests for zero, negative,
+non-finite, and boolean values for each new numeric setting; assert FastrInputError
+before the call can produce a result.
+
+Apply only formatting-safe line wrapping to any moved code or affected tests that
+Ruff identifies; do not alter expressions, constants, or test intent while clearing
+the baseline E501 findings.
 
 ### Step 5: Verify extraction and commit
 
@@ -488,7 +622,7 @@ Expected: all existing FASTR results and provenance arrays remain unchanged.
 Commit:
 
 ```
-git add src/mri_correction/fastr.py src/mri_correction/fastr_types.py src/mri_correction/fastr_timing.py src/mri_correction/fastr_geometry.py src/mri_correction/fastr_templates.py src/mri_correction/fastr_processing.py tests/test_fastr_modules.py tests/test_fastr.py tests/test_fastr_batch.py tests/test_slice_fastr.py tests/test_adaptive_window.py tests/test_residual_gate.py
+git add src/mri_correction/fastr.py src/mri_correction/fastr_types.py src/mri_correction/fastr_validation.py src/mri_correction/fastr_timing.py src/mri_correction/fastr_geometry.py src/mri_correction/fastr_templates.py src/mri_correction/fastr_processing.py tests/test_fastr_modules.py tests/test_fastr.py tests/test_fastr_batch.py tests/test_slice_fastr.py tests/test_adaptive_window.py tests/test_residual_gate.py
 git commit -m "refactor: split FASTR implementation modules"
 ```
 
@@ -499,7 +633,6 @@ git commit -m "refactor: split FASTR implementation modules"
 **Files:**
 
 - Modify: src/mri_correction/pipeline.py
-- Modify: src/mri_correction/pipeline_io.py
 - Modify: src/mri_correction/psd.py
 - Modify: src/mri_correction/residual_qc.py
 - Modify: src/mri_correction/pipeline_provenance.py
@@ -515,7 +648,9 @@ Extend pipeline fixture tests so a configuration containing custom values proves
 - diagnostics.psd_n_fft is passed to MNE when non-null and omitted when null.
 
 Use the existing PSD capture seam in tests/test_pipeline.py rather than inspecting MNE
-internals. Assert the sidecar contains effective settings.
+internals. Capture keyword arguments for both a non-null and a null n_fft. Assert the
+sidecar contains effective settings, including the Nyquist-capped fmax actually sent
+to the plotter rather than only the configured request.
 
 ### Step 2: Wire values without changing omitted behavior
 
@@ -545,12 +680,20 @@ Call gate_fastr_geometry with the four processing robustness values and the two
 quality-control mains values. Call adapt_fastr_geometry with
 adaptive_improvement_ratio.
 
-Call _save_psd_plot with
+Retain the existing optional `n_fft: int | None = None` support in
+`mri_correction.psd.save_psd_plot`, and extend its private pipeline wrapper to accept
+the same keyword-only value. Call _save_psd_plot with
 fmax=min(config.diagnostics.psd_max_frequency_hz, output_rate / 2.0) and
-n_fft=config.diagnostics.psd_n_fft. Keep the wrapper’s n_fft=None behavior unchanged.
+n_fft=config.diagnostics.psd_n_fft. When n_fft is None, omit the argument from the
+MNE call so the library default remains in force; when it is non-null, pass the exact
+validated integer. Remove the unused PSD_FFT_SAMPLES constant if no call site needs
+it. Keep all existing PSD windows, titles, and output paths unchanged.
 
-Update pipeline_provenance.py to add effective values under residual_qc and an
-output.psd_settings object while retaining all existing keys.
+Update pipeline_provenance.py to accept the effective PSD fmax and n_fft explicitly,
+add `mains_frequency_hz` and `mains_exclusion_hz` under residual_qc, and add an
+`output.psd_settings` object containing the effective fmax and n_fft. Retain every
+existing sidecar key and value type, and serialize the resolved configuration as
+before.
 
 ### Step 3: Verify and commit
 
@@ -568,7 +711,7 @@ sidecar and diagnostic captures.
 Commit:
 
 ```
-git add src/mri_correction/pipeline.py src/mri_correction/pipeline_io.py src/mri_correction/psd.py src/mri_correction/residual_qc.py src/mri_correction/pipeline_provenance.py tests/test_pipeline.py tests/test_residual_qc.py
+git add src/mri_correction/pipeline.py src/mri_correction/psd.py src/mri_correction/residual_qc.py src/mri_correction/pipeline_provenance.py tests/test_pipeline.py tests/test_residual_qc.py
 git commit -m "feat: wire configurable pipeline diagnostics"
 ```
 
@@ -592,7 +735,8 @@ Document:
   in the YAML example;
 - which values are protocol/scientific choices and which remain fixed implementation
   details;
-- that BCG/ECG code lives in BCG-Correction and is not part of this package; and
+- that BCG/ECG detection and correction live in BCG-Correction and are not part of
+  this package, while validation-only cardiac metrics/simulation remain available;
 - that provenance records resolved settings.
 
 Remove redundant assertions and fix the seven existing Ruff line-length violations as
@@ -606,14 +750,16 @@ uv run ruff check src tests
 git diff --check
 ```
 
-Expected: 308 or more tests pass with zero failures, Ruff exits 0, and
-git diff --check is silent. If the test count changes, explain the added regression
-coverage in the commit summary rather than deleting existing tests.
+Expected: the complete suite passes with zero failures, Ruff exits 0, and
+git diff --check is silent. Do not use a numeric test-count threshold because Task 0
+explicitly protects existing validation tests and later tasks add coverage. If the
+count changes, explain the reason in the commit summary and do not delete tests to
+make the count fit a target.
 
 Commit:
 
 ```
-git add README.md docs/algorithm.md docs/validation.md examples/configuration.yml pyproject.toml tests src
+git add README.md docs/algorithm.md docs/validation.md examples/configuration.yml tests/test_adaptive_window.py tests/test_residual_gate.py
 git commit -m "docs: organize FASTR configuration and maintenance guidance"
 ```
 
@@ -628,5 +774,6 @@ git commit -m "docs: organize FASTR configuration and maintenance guidance"
 - [ ] Existing YAML without new sections produces the same CorrectionConfig behavior and output defaults.
 - [ ] New configurable values are validated at both YAML and direct function boundaries.
 - [ ] Provenance contains resolved configuration and effective QC/PSD settings.
-- [ ] No BCG/ECG code or dependency was added to FASTR-Python.
+- [ ] No BCG/ECG detector, corrector, or dependency was added to FASTR-Python;
+      validation-only metrics and simulation behavior are unchanged.
 - [ ] Full pytest, Ruff, and diff checks have fresh passing evidence.
