@@ -1,10 +1,12 @@
-"""Adaptive local FASTR windows must shrink only where the artifact is non-stationary."""
+"""Adaptive FASTR windows shrink only where the artifact is non-stationary."""
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from mri_correction.fastr import (
+    FastrInputError,
     FmriAcquisitionTiming,
     adapt_fastr_geometry,
     apply_fastr_batch,
@@ -28,7 +30,7 @@ def make_nonstationary_burst(
     burst: tuple[int, int] = (18, 26),
     shift: int = 8,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Stationary 12-sample pulse, shifted later during a contiguous burst of volumes."""
+    """A pulse shifts later during a contiguous burst of volumes."""
     timing = make_timing()
     interval = 50
     volume_starts = np.arange(volume_count, dtype=np.int64) * interval
@@ -141,3 +143,48 @@ def test_volumes_far_from_the_burst_keep_the_wide_window() -> None:
         adapted.window.indices[far],
         geometry.window.indices[far],
     )
+
+
+def test_adapt_explicit_default_matches_implicit_default() -> None:
+    data, _starts, triggers = make_nonstationary_burst()
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    implicit = adapt_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        local_neighbor_count=4,
+        sampling_rate=1_000.0,
+    )
+    explicit = adapt_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        local_neighbor_count=4,
+        sampling_rate=1_000.0,
+        adaptive_improvement_ratio=0.85,
+    )
+
+    np.testing.assert_array_equal(implicit.window.indices, explicit.window.indices)
+    np.testing.assert_array_equal(
+        implicit.adapted_group_indices,
+        explicit.adapted_group_indices,
+    )
+
+
+@pytest.mark.parametrize("value", [0.0, 1.1, np.inf, True, "0.85"])
+def test_adapt_rejects_invalid_improvement_ratio(value: object) -> None:
+    data, _starts, triggers = make_nonstationary_burst()
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    with pytest.raises(FastrInputError, match="adaptive improvement ratio"):
+        adapt_fastr_geometry(
+            geometry,
+            alignment,
+            data[0],
+            local_neighbor_count=4,
+            sampling_rate=1_000.0,
+            adaptive_improvement_ratio=value,
+        )

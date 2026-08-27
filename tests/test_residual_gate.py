@@ -1,10 +1,12 @@
-"""Residual-gated FASTR templates must drop motion volumes from the neighbour set."""
+"""Residual-gated FASTR templates drop motion volumes from neighbours."""
 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from mri_correction.fastr import (
+    FastrInputError,
     FmriAcquisitionTiming,
     apply_fastr_batch,
     fit_fastr_alignment,
@@ -28,7 +30,7 @@ def make_stationary_artifact(
     contamination_volume: int | None = None,
     contamination: float = 8000.0,
 ) -> tuple[np.ndarray, np.ndarray, FmriAcquisitionTiming, np.ndarray]:
-    """Repeating two-slot artifact, optionally with an orthogonal spike in one volume."""
+    """Create a two-slot artifact with an optional orthogonal spike."""
     timing = make_timing()
     interval = 50
     volume_starts = np.arange(volume_count, dtype=np.int64) * interval
@@ -141,8 +143,12 @@ def test_gated_templates_stop_motion_leaking_into_neighbouring_volumes() -> None
     )
 
     neighbor_start = int(triggers[(contaminated - 1) * 2])
-    ungated_leftover = float(np.max(np.abs(ungated.data[0, neighbor_start : neighbor_start + 25])))
-    gated_leftover = float(np.max(np.abs(gated.data[0, neighbor_start : neighbor_start + 25])))
+    ungated_leftover = float(
+        np.max(np.abs(ungated.data[0, neighbor_start : neighbor_start + 25]))
+    )
+    gated_leftover = float(
+        np.max(np.abs(gated.data[0, neighbor_start : neighbor_start + 25]))
+    )
 
     assert ungated_leftover > 50.0
     assert gated_leftover < 1.0
@@ -170,3 +176,93 @@ def test_clean_volumes_far_from_the_spike_stay_unchanged() -> None:
         ungated.data[0, far_start : far_start + 25],
         atol=1e-9,
     )
+
+
+def test_gate_explicit_defaults_match_implicit_defaults() -> None:
+    data, _starts, _timing, triggers = make_stationary_artifact(
+        contamination_volume=20,
+    )
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    implicit = gate_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        sampling_rate=1_000.0,
+    )
+    explicit = gate_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        sampling_rate=1_000.0,
+        residual_gate_mad_multiplier=8.0,
+        residual_gate_ratio=8.0,
+        residual_gate_max_fraction=0.02,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+    )
+
+    np.testing.assert_array_equal(implicit.window.indices, explicit.window.indices)
+    np.testing.assert_array_equal(
+        implicit.excluded_group_indices,
+        explicit.excluded_group_indices,
+    )
+
+
+def test_gate_accepts_non_default_thresholds() -> None:
+    data, _starts, timing, triggers = make_stationary_artifact(
+        contamination_volume=20,
+    )
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    gated = gate_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        sampling_rate=1_000.0,
+        residual_gate_mad_multiplier=4.0,
+        residual_gate_ratio=4.0,
+        residual_gate_max_fraction=0.5,
+        mains_frequency_hz=50.0,
+        mains_exclusion_hz=0.5,
+    )
+
+    contaminated_groups = {40, 41}
+    assert contaminated_groups <= set(gated.excluded_group_indices.tolist())
+    assert timing.groups_per_volume == 2
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("residual gate MAD multiplier", 0.0),
+        ("residual gate ratio", -1.0),
+        ("residual gate maximum fraction", 0.0),
+        ("residual gate maximum fraction", 1.1),
+        ("mains frequency", np.nan),
+        ("mains exclusion", -0.1),
+        ("mains exclusion", True),
+    ],
+)
+def test_gate_rejects_invalid_thresholds(name: str, value: object) -> None:
+    data, _starts, _timing, triggers = make_stationary_artifact()
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+    parameter = {
+        "residual gate MAD multiplier": "residual_gate_mad_multiplier",
+        "residual gate ratio": "residual_gate_ratio",
+        "residual gate maximum fraction": "residual_gate_max_fraction",
+        "mains frequency": "mains_frequency_hz",
+        "mains exclusion": "mains_exclusion_hz",
+    }[name]
+
+    with pytest.raises(FastrInputError, match=name):
+        gate_fastr_geometry(
+            geometry,
+            alignment,
+            data[0],
+            sampling_rate=1_000.0,
+            **{parameter: value},
+        )
