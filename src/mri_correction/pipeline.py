@@ -37,6 +37,7 @@ from .fastr import (
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
+from .window import OutputWindow, resolve_output_window
 
 
 class PipelineInputError(ValueError):
@@ -111,6 +112,11 @@ def _run_correction(
         config.processing.output_sampling_rate_hz,
         config.processing.lowpass_hz,
     )
+    window = resolve_output_window(
+        volume_starts,
+        mode=config.trim.mode,
+        input_sample_count=int(raw.n_times),
+    )
     reference_index = _resolve_reference_channel(
         raw.ch_names,
         config.processing.reference_channel,
@@ -133,7 +139,7 @@ def _run_correction(
 
     channel_count = len(raw.ch_names)
     input_sample_count = int(raw.n_times)
-    output_sample_count = (input_sample_count - 1) // decimation + 1
+    output_sample_count = (window.length - 1) // decimation + 1
     amplitude_means = np.empty(channel_count, dtype=np.float64)
     amplitude_rms = np.empty(channel_count, dtype=np.float64)
     with tempfile.TemporaryDirectory(
@@ -169,11 +175,13 @@ def _run_correction(
                 sampling_rate=input_rate,
                 output_sampling_rate=output_rate,
                 lowpass_hz=config.processing.lowpass_hz,
+                window=window,
             )
         corrected_output.flush()
         transformed_markers = resample_markers(
             recording.markers,
             factor=decimation,
+            window=window,
         )
         _validate_marker_output_positions(
             transformed_markers,
@@ -192,15 +200,16 @@ def _run_correction(
     psd_tmin, psd_tmax = _corrected_psd_window(
         geometry,
         input_sampling_rate=input_rate,
-        recording_duration_seconds=float(raw.times[-1]),
+        window=window,
     )
+    window_offset_seconds = window.start / input_rate
     _save_psd_plot(
         raw,
         output_paths["psd_before"],
         title="Before scanner-gradient correction (complete epochs)",
         fmax=psd_max_frequency,
-        tmin=psd_tmin,
-        tmax=psd_tmax,
+        tmin=psd_tmin + window_offset_seconds,
+        tmax=psd_tmax + window_offset_seconds,
     )
     corrected_raw = mne.io.read_raw_brainvision(
         output_paths["vhdr"],
@@ -229,6 +238,7 @@ def _run_correction(
         amplitude_rms=amplitude_rms,
         decimation=decimation,
         output_sample_count=output_sample_count,
+        window=window,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         runtime_seconds=time.perf_counter() - started,
@@ -332,11 +342,18 @@ def _lowpass_and_decimate(
     sampling_rate: float,
     output_sampling_rate: float,
     lowpass_hz: float,
+    window: OutputWindow,
 ) -> np.ndarray:
+    """Low-pass the whole array, then take the output window and decimate.
+
+    Filtering before slicing keeps ``filtfilt``'s edge transient outside the
+    emitted span. Slicing before decimating anchors the decimation phase to the
+    window start, so the output sample grid does not shift.
+    """
     ratio = round(sampling_rate / output_sampling_rate)
     coefficients = butter(2, lowpass_hz, fs=sampling_rate)
     filtered = filtfilt(*coefficients, data, axis=1)
-    return filtered[:, ::ratio]
+    return filtered[:, window.start : window.stop : ratio]
 
 
 def _save_psd_plot(
@@ -413,16 +430,24 @@ def _corrected_psd_window(
     geometry: FastrGeometry,
     *,
     input_sampling_rate: float,
-    recording_duration_seconds: float,
+    window: OutputWindow,
 ) -> tuple[float, float]:
-    """Return a common PSD interval containing only corrected samples."""
+    """Return a PSD interval, relative to the window, holding only corrected samples.
+
+    Both figures are drawn over the same interval so they can be compared, so
+    the bounds are expressed relative to the emitted window rather than to the
+    start of the input recording. The before-figure is drawn from the input
+    recording and must have ``window.start`` added back.
+    """
     first_sample = float(geometry.triggers[0])
     last_sample = float(
         geometry.triggers[-1]
         + geometry.epoch.samples_after / geometry.interpolation_factor
     )
-    tmin = first_sample / input_sampling_rate
-    tmax = min(last_sample / input_sampling_rate, recording_duration_seconds)
+    first_sample = max(first_sample, float(window.start))
+    last_sample = min(last_sample, float(window.stop - 1))
+    tmin = (first_sample - window.start) / input_sampling_rate
+    tmax = (last_sample - window.start) / input_sampling_rate
     if not 0.0 <= tmin < tmax:
         raise PipelineInputError("the corrected PSD interval is empty")
     return tmin, tmax
@@ -438,6 +463,33 @@ def _validate_marker_output_positions(
         )
 
 
+def _trim_provenance(
+    window: OutputWindow,
+    *,
+    geometry: FastrGeometry,
+    input_sample_count: int,
+    mode: str,
+) -> dict[str, object]:
+    """Report the emitted window against the margin the epochs actually need."""
+    factor = geometry.interpolation_factor
+    required_head = math.ceil(
+        (geometry.epoch.samples_before + geometry.search_radius) / factor
+    )
+    required_tail = math.ceil(
+        (geometry.epoch.samples_after + geometry.search_radius) / factor
+    )
+    return {
+        "mode": mode,
+        "window_start_sample": window.start,
+        "window_stop_sample": window.stop,
+        "window_length": window.length,
+        "head_margin_samples": window.start,
+        "tail_margin_samples": input_sample_count - window.stop,
+        "required_head_margin_samples": int(required_head),
+        "required_tail_margin_samples": int(required_tail),
+    }
+
+
 def _make_provenance(
     config: CorrectionConfig,
     *,
@@ -451,6 +503,7 @@ def _make_provenance(
     amplitude_rms: np.ndarray,
     decimation: int,
     output_sample_count: int,
+    window: OutputWindow,
     psd_tmin: float,
     psd_tmax: float,
     runtime_seconds: float,
@@ -481,6 +534,12 @@ def _make_provenance(
                 "end": psd_tmax,
             },
         },
+        "trim": _trim_provenance(
+            window,
+            geometry=geometry,
+            input_sample_count=int(raw.n_times),
+            mode=config.trim.mode,
+        ),
         "configuration": _jsonable_config(config),
         "timing": {
             "repetition_time_seconds": timing.repetition_time_seconds,
