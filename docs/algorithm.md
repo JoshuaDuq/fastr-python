@@ -60,7 +60,8 @@ finished acquiring, which no amount of margin can recover.
 
 ## The stage-2 template high-pass
 
-Niazy et al. (2005) build the moving-average template, and fit the least-squares
+[Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/) build the
+moving-average template, and fit the least-squares
 scalar, on a 1 Hz high-passed copy of the interpolated signal so that segments
 entering the average share a baseline, then subtract the estimate from the original
 signal. The released `fmrib_fastr.m` does not apply that high-pass; it high-passes
@@ -136,4 +137,6 @@ decimation factor.
 
 - [MNE-Python BrainVision reader](https://mne.tools/stable/generated/mne.io.read_raw_brainvision.html)
 - [BIDS MRI data acquisition specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html)
-- [FASTR implementation reference](https://github.com/jesuslmc/FMRIB-FASTR)
+- [Niazy et al. (2005), “Removal of FMRI environment artifacts from EEG data using optimal basis sets”](https://pubmed.ncbi.nlm.nih.gov/16150610/)
+- [FMRIB fMRIb FASTR implementation (`fmrib_fastr.m`)](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
+- [FMRIB fMRIb repository](https://github.com/sccn/fMRIb)

@@ -75,12 +75,14 @@ It does not infer missing markers from the EEG waveform.
 
 ## Method
 
-The public pipeline uses the acquisition-group variant of FASTR for multiband data:
+The public pipeline uses the acquisition-group variant of FASTR for multiband data,
+following the [FMRIB fMRIb FASTR implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
+and [Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/):
 the validated BIDS slice timing determines repeated acquisition-time slots, and
 templates are formed from neighboring volumes in the same slot while excluding the
 target group. Alignment and the least-squares template are estimated from a 1 Hz
-high-passed copy of each channel (Niazy et al. 2005 stage 2); the fitted artifact is
-subtracted from the unfiltered recording. See [`docs/algorithm.md`](docs/algorithm.md)
+high-passed copy of each channel (stage 2); the fitted artifact is subtracted from
+the unfiltered recording. See [`docs/algorithm.md`](docs/algorithm.md)
 for the processing model, the stages that are not run (residual OBS and ANC), and
 the 1/TR limitation.
 
