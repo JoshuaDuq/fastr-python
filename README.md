@@ -42,6 +42,19 @@ configuration rejects ambiguous markers, invalid timing, unsuitable filters, and
 existing output files. The run produces BrainVision files, before/after PSD figures,
 and a JSON provenance sidecar.
 
+## Compare uncorrected vs FASTR folders
+
+Pair an uncorrected scanner-artifact folder with FASTR-corrected recordings
+and write PSD/epoch overlays plus a CSV of band-power ratios:
+
+```text
+mri-correct compare --config examples/compare.yaml
+```
+
+The example compares
+`step1_scanner_artifact_pulse_marked` with `fastr_python`. Matching uses the
+shared recording stem (`…_fastr` vs `…_first_to_last_volume_scanner_artifact_with_pulse_markers`).
+
 ## Validate timing only
 
 Validate configured volume markers against BIDS timing metadata before correction:

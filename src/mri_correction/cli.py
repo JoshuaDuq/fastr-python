@@ -30,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
             _run(arguments)
         elif arguments.command == "validate-timing":
             _validate_timing(arguments)
+        elif arguments.command == "compare":
+            _compare(arguments)
     except (
         BrainVisionInputError,
         BrainVisionMarkerError,
@@ -69,12 +71,26 @@ def _make_parser() -> argparse.ArgumentParser:
     starts = timing.add_mutually_exclusive_group(required=True)
     starts.add_argument("--volume-starts", type=int, nargs="+")
     starts.add_argument("--vhdr", type=Path)
+
+    compare = commands.add_parser(
+        "compare",
+        help="plot uncorrected vs FASTR-corrected recordings from two folders",
+    )
+    compare.add_argument("--config", type=Path, required=True)
     return parser
 
 
 def _run(arguments: argparse.Namespace) -> None:
     summary = run_correction(load_config(arguments.config))
     print(json.dumps(asdict(summary), indent=2, default=str))
+
+
+def _compare(arguments: argparse.Namespace) -> None:
+    from .compare.config import load_compare_config
+    from .compare.pipeline import run_comparison
+
+    rows = run_comparison(load_compare_config(arguments.config))
+    print(f"COMPARE DONE recordings={len(rows)}")
 
 
 def _validate_timing(arguments: argparse.Namespace) -> None:

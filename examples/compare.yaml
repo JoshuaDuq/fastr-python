@@ -1,0 +1,17 @@
+# Uncorrected scanner-artifact EEG vs FASTR-corrected EEG.
+# Both folders are already processed; this command only pairs and plots.
+
+paths:
+  uncorrected_root: /Volumes/KINGSTON/EEG_fMRI_data/source_data/step1_scanner_artifact_pulse_marked
+  fastr_root: /Volumes/KINGSTON/EEG_fMRI_data/source_data/fastr_python
+  output_root: /Volumes/KINGSTON/EEG_fMRI_data/source_data/fastr_compare
+
+plot:
+  channel: Cz
+  epoch_start_seconds: 10
+  epoch_seconds: 3
+  psd_max_hz: 100
+
+subjects:
+  include: []
+  exclude: []
