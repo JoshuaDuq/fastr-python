@@ -1,6 +1,7 @@
 # Algorithm
 
-FASTR-Python implements an acquisition-slot scanner-gradient correction pipeline.
+The EEG-fMRI FASTR project implements an acquisition-slot scanner-gradient
+correction pipeline.
 The implementation is designed around explicit timing metadata and exact marker
 validation so that acquisition geometry is never guessed from the EEG waveform.
 
@@ -99,6 +100,16 @@ In multiband acquisitions, adjacent groups can represent different acquisition-t
 slots. Matching templates by the unique values in `SliceTiming` prevents those
 different temporal positions from being averaged together. The number of repeated
 slice groups is derived from the metadata and checked against the multiband factor.
+
+## Relationship to the FMRIB implementation
+
+The official FMRIB FASTR plug-in is a MATLAB/EEGLAB implementation. This project
+shares the FASTR method's trigger alignment and moving-template subtraction stages,
+but it is a separately organized Python implementation with a different input
+contract and processing boundary. In particular, its acquisition-group geometry is
+derived from BIDS multiband timing, while the FMRIB plug-in accepts EEGLAB slice or
+volume events. This project is not the official FMRIB plug-in and makes no
+affiliation or endorsement claim.
 
 ## Configuration and provenance
 

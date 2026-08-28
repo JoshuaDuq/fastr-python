@@ -1,12 +1,17 @@
-# FASTR-Python
+# EEG-fMRI FASTR
 
-FASTR-Python corrects scanner-gradient artifacts in simultaneous EEG-fMRI
-recordings. It accepts a BrainVision recording and BIDS fMRI timing metadata,
-validates the acquisition markers, applies acquisition-slot FASTR correction, and
-writes a corrected BrainVision recording with preserved markers and provenance.
+`eegfmri-fastr` is a Python implementation of the FASTR scanner-gradient artifact
+correction method for simultaneous EEG-fMRI recordings. It accepts a BrainVision
+recording and BIDS fMRI timing metadata, validates the acquisition markers, applies
+acquisition-slot FASTR correction, and writes a corrected BrainVision recording
+with preserved markers and provenance.
 
 This is research software. Inspect the provenance and validate the correction for
 each acquisition protocol before using the output for inference.
+
+It is not the FMRIB EEGLAB plug-in and is not affiliated with, sponsored by, or
+endorsed by the FMRIB Centre or the University of Oxford. The project is released
+under GPL-2.0-only; see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
 ## Installation
 
@@ -58,11 +63,12 @@ the EEG waveform.
 ## Method
 
 The pipeline implements the acquisition-group variant of FASTR for multiband data,
-following the [FMRIB fMRIb FASTR implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
-and [Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/). See
-[`docs/algorithm.md`](docs/algorithm.md) for the processing model, limitations, and
-validation details. Residual OBS and adaptive noise cancellation are not part of
-the pipeline.
+following the published method and using the
+[FMRIB fMRIb FASTR implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
+as a reference. It is a separate Python implementation, not a drop-in port of the
+FMRIB plug-in. See [`docs/algorithm.md`](docs/algorithm.md) for the processing model,
+limitations, and validation details. Residual OBS is available separately and
+adaptive noise cancellation is not implemented in the pipeline.
 
 ## Development
 
@@ -80,4 +86,4 @@ See [`docs/validation.md`](docs/validation.md) for the validation checklist.
 
 Cardiac detection and AAS/PCA-OBS BCG correction live in **BCG-Correction**
 (`bcg-correct`). The deep-learning BCGNet path lives in **BCGNet-Python**
-(`bcgnet`). FASTR-Python only removes scanner-gradient artifacts.
+(`bcgnet`). This package only removes scanner-gradient artifacts.

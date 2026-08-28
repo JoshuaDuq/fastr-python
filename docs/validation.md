@@ -1,6 +1,7 @@
 # Validation checklist
 
-FASTR-Python is intended to be validated at two levels: deterministic software
+The EEG-fMRI FASTR implementation is intended to be validated at two levels:
+deterministic software
 checks and protocol-specific signal checks.
 
 ## Software checks
@@ -69,6 +70,7 @@ rate and sample geometry, and high interior ECG correlation before interpreting 
 differences. Analyzer marker agreement is not ground truth when Analyzer is known to miss
 beats.
 
-BCG/ECG detection and correction are outside this package. FASTR-Python retains
-cardiac validation metrics and deterministic simulation helpers so those downstream
-checks can be run without making BCG-Correction a runtime dependency.
+BCG/ECG detection and correction are outside this package. The EEG-fMRI FASTR
+implementation retains cardiac validation metrics and deterministic simulation
+helpers so those downstream checks can be run without making BCG-Correction a
+runtime dependency.

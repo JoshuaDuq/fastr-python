@@ -1,0 +1,18 @@
+# Attribution
+
+This project implements the FASTR scanner-gradient artifact correction method
+described by:
+
+Rami K. Niazy, Christian F. Beckmann, Gian Domenico Iannetti, John M. Brady,
+and Stephen M. Smith. “Removal of FMRI environment artifacts from EEG data
+using optimal basis sets.” NeuroImage 28(3), 720–737 (2005).
+
+The tracked implementation is written in Python and does not include the
+upstream MATLAB source file. This project is not the FMRIB EEGLAB plug-in and
+is not affiliated with, sponsored by, or endorsed by the FMRIB Centre or the
+University of Oxford.
+
+The upstream fMRIb FASTR implementation, `fmrib_fastr.m`, is Copyright (C) 2006
+University of Oxford, authored by Rami K. Niazy, and distributed under the
+GNU General Public License version 2. This project is distributed under
+GPL-2.0-only; see LICENSE.

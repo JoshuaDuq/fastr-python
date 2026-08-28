@@ -3,9 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fastr-python"
+name = "eegfmri-fastr"
 version = "0.1.0"
 description = "Validated scanner-gradient artifact correction for simultaneous EEG-fMRI"
+license = "GPL-2.0-only"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
