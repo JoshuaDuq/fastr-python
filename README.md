@@ -1,10 +1,9 @@
 # FASTR-Python
 
-FASTR-Python is a configuration-driven Python tool for scanner-gradient artifact
-correction in simultaneous EEG-fMRI recordings. It accepts a BrainVision recording
-and BIDS fMRI timing metadata, validates the acquisition markers, applies an
-acquisition-slot FASTR correction, and writes a BrainVision recording with preserved
-markers plus a provenance sidecar.
+FASTR-Python corrects scanner-gradient artifacts in simultaneous EEG-fMRI
+recordings. It accepts a BrainVision recording and BIDS fMRI timing metadata,
+validates the acquisition markers, applies acquisition-slot FASTR correction, and
+writes a corrected BrainVision recording with preserved markers and provenance.
 
 This is research software. Inspect the provenance and validate the correction for
 each acquisition protocol before using the output for inference.
@@ -24,40 +23,23 @@ Or install the package into an existing environment:
 uv pip install .
 ```
 
-## Run a correction
+## Correct a recording
 
-Copy [`examples/configuration.yml`](examples/configuration.yml), edit every path and
-processing value for the recording, then run:
+Copy [`examples/configuration.yml`](examples/configuration.yml), set the paths and
+processing values for the recording, then run:
 
 ```text
 mri-correct run --config /path/to/configuration.yml
 ```
 
-The configuration is deliberately strict. Marker type and description are exact
-matches; input and output paths are explicit; and existing output files, timing
-gaps, non-integer rate conversions, and invalid filter settings fail rather than
-being repaired implicitly.
-
-The output consists of the requested `.vhdr`, its `.eeg` and `.vmrk` companions,
-`*_psd_before.png`, `*_psd_after.png`, and a `.json` provenance sidecar. The PSD
-figures are generated with MNE's `mne.viz.plot_raw_psd`, use the same complete-epoch
-interval for both conditions, and use the configured frequency limit, capped at the
-output Nyquist frequency. Boundary groups without complete FASTR epochs are excluded
-from both PSD figures and recorded in the sidecar. The sidecar also records resolved
-settings, source hashes, timing validation, alignment shifts, and fitted amplitudes.
-
-All user-tunable run settings live in the YAML file. `processing` controls FASTR
-geometry, filtering, batching, optional residual gating, and adaptive windows;
-`quality_control` controls residual-QC block length and mains exclusion; `diagnostics`
-controls the PSD frequency limit and optional FFT length; and `trim` controls the
-emitted recording span. Values such as the interpolation filter design, residual
-OBS high-pass design, and protected boundary policy are method implementation
-details and are intentionally not configuration knobs.
+All important run settings are defined in YAML rather than hardcoded. The strict
+configuration rejects ambiguous markers, invalid timing, unsuitable filters, and
+existing output files. The run produces BrainVision files, before/after PSD figures,
+and a JSON provenance sidecar.
 
 ## Validate timing only
 
-For a BrainVision recording, validate the configured volume markers against the BIDS
-timing metadata before running correction:
+Validate configured volume markers against BIDS timing metadata before correction:
 
 ```text
 mri-correct validate-timing \
@@ -69,45 +51,22 @@ mri-correct validate-timing \
   --output /path/to/timing-validation.json
 ```
 
-This command fails on missing markers, duplicate positions, marker gaps, timing
-jitter beyond the declared tolerance, or an inconsistent TR-to-sample conversion.
-It does not infer missing markers from the EEG waveform.
+The command fails on missing or duplicate markers, marker gaps, excessive timing
+jitter, or an inconsistent TR-to-sample conversion. It does not infer markers from
+the EEG waveform.
 
 ## Method
 
-The public pipeline uses the acquisition-group variant of FASTR for multiband data,
+The pipeline implements the acquisition-group variant of FASTR for multiband data,
 following the [FMRIB fMRIb FASTR implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
-and [Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/):
-the validated BIDS slice timing determines repeated acquisition-time slots, and
-templates are formed from neighboring volumes in the same slot while excluding the
-target group. Alignment and the least-squares template are estimated from a 1 Hz
-high-passed copy of each channel (stage 2); the fitted artifact is subtracted from
-the unfiltered recording. See [`docs/algorithm.md`](docs/algorithm.md)
-for the processing model, the stages that are not run (residual OBS and ANC), and
-the 1/TR limitation.
-
-The default example uses 60 neighboring volumes for the acquisition-slot template.
-This is a validated starting point, not a protocol-independent guarantee; tune and
-report it only through the YAML configuration and compare results with appropriate
-signal-preservation controls. Set `trim.mode` to `first_to_last_volume` on untrimmed
-recordings so boundary volumes keep the margin FASTR needs; uncorrected spans and
-blocks over `residual_threshold_uv` are annotated `Bad Interval, Bad_Gradient`.
-
-## Maintainer map
-
-The package keeps public entry points in small facades and puts implementation in
-focused modules. `fastr_types` defines immutable results and domain errors;
-`fastr_timing` validates BIDS timing; `fastr_geometry` handles acquisition windows
-and boundary policies; `fastr_templates` contains interpolation and template math;
-`fastr_processing` runs alignment, batch correction, and residual OBS; and
-`fastr_validation` owns shared input checks. The configuration-driven orchestration
-lives in `pipeline`, with I/O, marker, and provenance helpers separated into their
-own modules. This layout keeps numerical code testable without making pipeline
-state part of the FASTR algorithm.
+and [Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/). See
+[`docs/algorithm.md`](docs/algorithm.md) for the processing model, limitations, and
+validation details. Residual OBS and adaptive noise cancellation are not part of
+the pipeline.
 
 ## Development
 
-Run the complete test and lint checks:
+Run the test and lint checks:
 
 ```text
 uv run pytest
@@ -115,17 +74,10 @@ uv run ruff check src tests
 git diff --check
 ```
 
-The public test suite contains synthetic BrainVision round trips, strict
-configuration and marker validation, FASTR geometry/alignment tests, batch-size
-invariance checks, and end-to-end pipeline tests. See
-[`docs/validation.md`](docs/validation.md) for a validation checklist.
-
-Analyzer comparison code and private benchmark data are intentionally kept outside
-the tracked public package in `.local/analyzer_comparison/`.
+See [`docs/validation.md`](docs/validation.md) for the validation checklist.
 
 ## Related pipelines
 
-Cardiac detection and AAS/PCA-OBS BCG correction now live in **BCG-Correction**
+Cardiac detection and AAS/PCA-OBS BCG correction live in **BCG-Correction**
 (`bcg-correct`). The deep-learning BCGNet path lives in **BCGNet-Python**
-(`bcgnet`). This package only removes scanner-gradient artifact; its validation-only
-cardiac metrics and simulation helpers remain available for research checks.
+(`bcgnet`). FASTR-Python only removes scanner-gradient artifacts.
