@@ -1,4 +1,4 @@
-"""Uncorrected vs FASTR overlays, matching the BCG compare figure style."""
+"""Uncorrected vs FASTR PSD overlays."""
 
 from __future__ import annotations
 
@@ -16,21 +16,68 @@ def load_vhdr(path: Path) -> mne.io.BaseRaw:
     return mne.io.read_raw_brainvision(path, preload=True, verbose="ERROR")
 
 
+class AlignmentError(RuntimeError):
+    """The two recordings do not share a common time origin."""
+
+
+def volume_onsets(raw: mne.io.BaseRaw) -> np.ndarray:
+    """Onsets of the MR volume markers, in seconds from the file start."""
+    descriptions = np.asarray(raw.annotations.description, dtype=str)
+    is_volume = np.char.startswith(np.char.lower(descriptions), "volume")
+    return np.asarray(raw.annotations.onset, dtype=float)[is_volume]
+
+
+def verify_shared_origin(
+    uncorrected: mne.io.BaseRaw,
+    fastr: mne.io.BaseRaw,
+    *,
+    tolerance_seconds: float = 0.005,
+) -> None:
+    """Confirm both files are trimmed to the same first volume.
+
+    ``align_to_fastr`` crops from sample 0, which only yields a meaningful
+    comparison if sample 0 is the same instant in both recordings. Rather
+    than assume that, check it against the volume markers and fail loudly
+    when it does not hold.
+    """
+    left = volume_onsets(uncorrected)
+    right = volume_onsets(fastr)
+    if left.size == 0 or right.size == 0:
+        raise AlignmentError(
+            "cannot verify alignment: volume markers are missing from "
+            f"{'uncorrected' if left.size == 0 else 'FASTR'} recording"
+        )
+    shared = min(left.size, right.size)
+    deviation = float(np.max(np.abs(left[:shared] - right[:shared])))
+    if deviation > tolerance_seconds:
+        raise AlignmentError(
+            "uncorrected and FASTR volume markers disagree by "
+            f"{deviation * 1e3:.1f} ms (tolerance "
+            f"{tolerance_seconds * 1e3:.1f} ms); the recordings are not "
+            "trimmed to the same first volume"
+        )
+
+
 def align_to_fastr(
     uncorrected: mne.io.BaseRaw, fastr: mne.io.BaseRaw
-) -> mne.io.BaseRaw:
-    """Resample and crop uncorrected EEG onto the FASTR time base."""
+) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw]:
+    """Crop both recordings to a common, verified time base.
+
+    Returns new objects; neither argument is modified in place.
+    """
     aligned = uncorrected
     fastr_fs = float(fastr.info["sfreq"])
     if not np.isclose(float(aligned.info["sfreq"]), fastr_fs):
         aligned = aligned.copy().resample(fastr_fs, verbose="ERROR")
+    verify_shared_origin(aligned, fastr)
     n_times = min(aligned.n_times, fastr.n_times)
     tmax = (n_times - 1) / fastr_fs
     if aligned.n_times > n_times:
         aligned = aligned.copy().crop(tmin=0.0, tmax=tmax)
+    cropped_fastr = fastr
     if fastr.n_times > n_times:
-        fastr.crop(tmin=0.0, tmax=tmax)
-    return aligned
+        cropped_fastr = fastr.copy().crop(tmin=0.0, tmax=tmax)
+    return aligned, cropped_fastr
 
 
 def _eeg_indices(raw: mne.io.BaseRaw) -> np.ndarray:
@@ -40,6 +87,16 @@ def _eeg_indices(raw: mne.io.BaseRaw) -> np.ndarray:
             [index for index, name in enumerate(names) if name != "ECG"]
         )
     return np.arange(len(names))
+
+
+def eeg_rms(raw: mne.io.BaseRaw) -> float:
+    """RMS over EEG channels only.
+
+    ECG carries ~50x the amplitude of EEG here, so including it would make
+    the metric report the ECG channel rather than the correction.
+    """
+    data = raw.get_data(picks=_eeg_indices(raw)) * 1e6
+    return float(np.sqrt(np.mean(np.square(data))))
 
 
 def mean_eeg_psd(
@@ -80,75 +137,6 @@ def plot_psd(
     plt.close()
 
 
-def plot_epoch(
-    traces: dict[str, mne.io.BaseRaw],
-    *,
-    channel: str,
-    start: float,
-    duration: float,
-    title: str,
-    output: Path,
-) -> None:
-    uncorrected = traces["Uncorrected"]
-    if channel not in uncorrected.ch_names:
-        raise ValueError(
-            f"channel {channel!r} is not in {uncorrected.ch_names}"
-        )
-    fs = float(uncorrected.info["sfreq"])
-    start_sample = int(start * fs)
-    stop_sample = start_sample + int(duration * fs)
-    if stop_sample > uncorrected.n_times:
-        start_sample = 0
-        stop_sample = min(int(duration * fs), uncorrected.n_times)
-    t = np.arange(stop_sample - start_sample) / fs
-    ch = uncorrected.ch_names.index(channel)
-    before = uncorrected.get_data()[ch, start_sample:stop_sample] * 1e6
-
-    plt.figure(figsize=(8, 10))
-    plt.suptitle(title, fontweight="bold")
-
-    plt.subplot(311)
-    plt.title("ECG")
-    if "ECG" in uncorrected.ch_names:
-        ecg = (
-            uncorrected.get_data(picks=["ECG"])[0, start_sample:stop_sample]
-            * 1e6
-        )
-        plt.plot(t, ecg, "C0")
-    plt.xlabel("Time (s)")
-    plt.ylabel(r"Amplitude ($\mu$V)")
-
-    plt.subplot(312)
-    plt.title("Estimated gradient artifact (uncorrected - FASTR)")
-    if "FASTR" in traces:
-        n = min(stop_sample, traces["FASTR"].n_times)
-        if n > start_sample:
-            after = traces["FASTR"].get_data()[ch, start_sample:n] * 1e6
-            predicted = before[: after.size] - after
-            plt.plot(t[: predicted.size], predicted, "C4")
-    plt.xlabel("Time (s)")
-    plt.ylabel(r"Amplitude ($\mu$V)")
-
-    plt.subplot(313)
-    plt.title("Uncorrected and FASTR")
-    plt.plot(t, before, "C1", label="Uncorrected")
-    if "FASTR" in traces:
-        n = min(stop_sample, traces["FASTR"].n_times)
-        if n > start_sample:
-            plt.plot(
-                t[: n - start_sample],
-                traces["FASTR"].get_data()[ch, start_sample:n] * 1e6,
-                "C3",
-                label="FASTR",
-            )
-    plt.xlabel("Time (s)")
-    plt.ylabel(r"Amplitude ($\mu$V)")
-    plt.legend(loc="upper right")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output, format="png")
-    plt.close()
-
-
 def band_power(freqs: np.ndarray, pxx: np.ndarray, low: float, high: float) -> float:
     mask = (freqs >= low) & (freqs <= high)
     return float(np.sum(pxx[mask]))
@@ -166,13 +154,9 @@ def metrics_row(
         name: mean_eeg_psd(raw, max_hz=max_hz) for name, raw in traces.items()
     }
     uncorr_f, uncorr_p = psds["Uncorrected"]
-    row["rms_uncorrected"] = float(
-        np.sqrt(np.mean(np.square(traces["Uncorrected"].get_data() * 1e6)))
-    )
+    row["rms_uncorrected"] = eeg_rms(traces["Uncorrected"])
     if "FASTR" in traces:
-        row["rms_fastr"] = float(
-            np.sqrt(np.mean(np.square(traces["FASTR"].get_data() * 1e6)))
-        )
+        row["rms_fastr"] = eeg_rms(traces["FASTR"])
     bands = {
         "delta": (0.5, 4.0),
         "theta": (4.0, 8.0),

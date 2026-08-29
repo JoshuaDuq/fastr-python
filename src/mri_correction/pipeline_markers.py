@@ -28,23 +28,29 @@ def residual_qc_markers(
     output_rate: float,
     output_sample_count: int,
 ) -> tuple[BrainVisionMarker, ...]:
-    """Annotate every block whose residual artifact exceeds the threshold."""
-    residuals = np.asarray(residual_qc["block_residual_uv"], dtype=np.float64)
-    if residuals.size == 0:
+    """Annotate blocks carrying an unusually high residual, advisorily.
+
+    These are deliberately not "Bad Interval" markers. MNE rejects any
+    annotation whose "type/description" begins with "bad", so labelling a
+    soft quality signal that way silently drops the affected epochs from
+    every downstream analysis. A block flagged here is worth looking at; it
+    is not established as unusable. Uncorrected spans, which genuinely do
+    still carry raw artifact, keep the Bad Interval marker below.
+    """
+    flagged = np.asarray(residual_qc["flagged_blocks"], dtype=bool)
+    if flagged.size == 0:
         return ()
-    threshold = float(residual_qc["threshold_uv"])
     block_samples = round(float(residual_qc["block_seconds"]) * output_rate)
-    flagged = np.flatnonzero((residuals > threshold).any(axis=0))
     markers = []
-    for block in flagged:
+    for block in np.flatnonzero(flagged):
         position = int(block) * block_samples + 1
         if position > output_sample_count:
             continue
         size = min(block_samples, output_sample_count - position + 1)
         markers.append(
             BrainVisionMarker(
-                marker_type="Bad Interval",
-                description="Bad_Gradient",
+                marker_type="Comment",
+                description="QC_ResidualHigh",
                 position=position,
                 size=int(max(size, 1)),
                 channel=0,

@@ -205,6 +205,43 @@ def _run_fastr_with_edges(
     return apply_fastr_batch(recording, geometry, alignment)
 
 
+def obs_trigger_subset(
+    group_triggers: npt.ArrayLike,
+    *,
+    sample_count: int,
+    interpolation_factor: int = 10,
+) -> np.ndarray:
+    """Return the triggers whose residual epochs fit inside the recording.
+
+    `residual_obs` refuses to run when an epoch would read past either end. The
+    boundary triggers are the ones at risk, so callers that want the stage
+    applied to everything it can reach select the usable subset here rather
+    than guessing a margin. Dropping a boundary trigger leaves that epoch
+    uncorrected, which is the same treatment template subtraction gives it.
+    """
+    triggers = validate_group_triggers(group_triggers)
+    validate_interpolation_factor(interpolation_factor)
+    if isinstance(sample_count, bool) or not isinstance(
+        sample_count, (int, np.integer)
+    ):
+        raise FastrInputError("sample_count must be an integer")
+    if sample_count < 1:
+        raise FastrInputError("sample_count must be positive")
+
+    fine = _to_interpolated_grid(triggers, interpolation_factor)
+    epoch = _measure_artifact_epoch(fine, cover_full_gap=False)
+    limit = sample_count * interpolation_factor
+    keep = (fine - epoch.samples_before >= 0) & (
+        fine + epoch.residual_samples_after <= limit
+    )
+    kept = triggers[keep]
+    if kept.size < 2:
+        raise FastrInputError(
+            "no residual epochs fit inside the recording"
+        )
+    return kept
+
+
 def residual_obs(
     residual: npt.ArrayLike,
     group_triggers: npt.ArrayLike,

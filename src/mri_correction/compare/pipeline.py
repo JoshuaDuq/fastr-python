@@ -13,10 +13,10 @@ matplotlib.use("Agg")
 from .config import CompareConfig
 from .pairs import RecordingPair, pair_recordings
 from .plots import (
+    AlignmentError,
     align_to_fastr,
     load_vhdr,
     metrics_row,
-    plot_epoch,
     plot_psd,
 )
 
@@ -35,14 +35,6 @@ def run_comparison(config: CompareConfig) -> list[dict]:
             title=f"Average PSD {pair.bids_id} run {pair.idx_run}",
             output=dest / f"psd_run{pair.idx_run}_avg.png",
             max_hz=config.plot.psd_max_hz,
-        )
-        plot_epoch(
-            traces,
-            channel=config.plot.channel,
-            start=config.plot.epoch_start_seconds,
-            duration=config.plot.epoch_seconds,
-            title=f"{pair.bids_id} {config.plot.channel} run {pair.idx_run}",
-            output=dest / f"epoch_run{pair.idx_run}_{config.plot.channel}.png",
         )
         rows.append(metrics_row(pair, traces, max_hz=config.plot.psd_max_hz))
         print(f"compared {pair.bids_id} run {pair.idx_run} {pair.key}")
@@ -65,9 +57,18 @@ def _load_traces(pair: RecordingPair) -> dict[str, object]:
         print(f"failed to load uncorrected {pair.uncorrected_vhdr}: {error}")
         fastr.close()
         return traces
-    traces["FASTR"] = fastr
-    traces["Uncorrected"] = align_to_fastr(uncorrected, fastr)
-    if uncorrected is not traces["Uncorrected"]:
+    try:
+        aligned, cropped_fastr = align_to_fastr(uncorrected, fastr)
+    except AlignmentError as error:
+        print(f"skip {pair.fastr_vhdr.name}: {error}")
+        fastr.close()
+        uncorrected.close()
+        return traces
+    traces["FASTR"] = cropped_fastr
+    traces["Uncorrected"] = aligned
+    if fastr is not cropped_fastr:
+        fastr.close()
+    if uncorrected is not aligned:
         uncorrected.close()
     return traces
 

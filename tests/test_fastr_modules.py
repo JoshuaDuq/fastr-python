@@ -59,6 +59,7 @@ def test_fastr_facade_declares_only_public_names() -> None:
         "gate_fastr_geometry",
         "load_bids_fmri_timing",
         "make_group_trigger_samples",
+        "obs_trigger_subset",
         "prepare_fastr_geometry",
         "residual_obs",
         "slice_fastr",

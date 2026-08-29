@@ -30,8 +30,8 @@ For each run, the pipeline:
    It then fits and subtracts a scaled template for every channel batch. The
    estimate is subtracted from the unfiltered channel, so slow content survives
    correction.
-8. Applies the configured zero-phase low-pass filter, then takes the output window
-   and decimates.
+8. Applies the configured zero-phase low-pass filter, takes the output window and
+   decimates, then regresses any explicitly configured stationary line frequencies.
 9. Writes the corrected data, windowed markers, before/after PSD figures, and a
    provenance sidecar.
 
@@ -80,11 +80,24 @@ about 7 % more neighbour noise. Set it to 0.0 to restore the unfiltered estimate
 
 ## Stages this implementation does not perform
 
-FASTR as published has four stages. This pipeline performs the first two: trigger
-alignment and moving-average template subtraction, which the paper reports removes
-more than 98 % of the artifact. Residual removal by optimal basis set is available
-as `residual_obs` but is not part of the pipeline, and adaptive noise cancellation
-is not implemented. Neither absence is hidden by the sidecar, which records exactly
+FASTR as published has four stages. This pipeline performs the first three: trigger
+alignment, moving-average template subtraction, which the paper reports removes
+more than 98 % of the artifact, and optional residual removal by optimal basis set.
+Adaptive noise cancellation, the fourth stage, is not implemented.
+
+`processing.residual_obs` enables the optimal basis set and defaults to off, so
+the stage never changes an existing configuration silently.
+`processing.residual_obs_rank` sets the number of principal components and
+defaults to 4. The stage runs over whole volumes rather than acquisition groups.
+What it removes is the volume-to-volume variability the template stage leaves
+behind: on `sub-0001` run 1 the stationary volume-locked mean carries 0.03 % of
+the residual comb's tooth power between 10 and 110 Hz, so averaging cannot reach
+it, while a rank-4 basis over volume epochs cut the comb by 1.4 dB at 0.9994
+injected-signal retention. The same basis estimated over acquisition-group
+epochs made the comb worse, because a 50-sample epoch cannot represent a pattern
+that spans a volume. Boundary volumes whose epochs would read past either end of
+the recording are left uncorrected, the same treatment template subtraction gives
+them, and the sidecar records how many epochs the stage actually corrected. Neither absence is hidden by the sidecar, which records exactly
 what ran. PSD figures use the same interval containing
 only complete corrected epochs, so uncorrected boundary data cannot dominate the
 diagnostic. They use the configured PSD frequency limit, capped at the output
@@ -115,12 +128,14 @@ affiliation or endorsement claim.
 
 The example YAML is the single user-facing configuration surface. Protocol and
 analysis choices include the interpolation factor, template neighbour count,
-search radius, template high-pass, output filter/rate, residual threshold, optional
-gate/adaptive settings, trim mode, residual-QC block and mains settings, and PSD
-limits. Fixed implementation details include the interpolation kernel shape, the
+search radius, template high-pass, output filter/rate, exact line-noise frequencies,
+residual threshold, optional gate/adaptive settings, trim mode, residual-QC block
+and mains settings, and PSD limits. Line regression deliberately removes all signal
+at each configured frequency, so the YAML requires an explicit list; `[]` disables
+it. Fixed implementation details include the interpolation kernel shape, the
 residual OBS 70 Hz high-pass design, and the protected boundary volumes. The
-provenance sidecar stores the resolved configuration plus the effective PSD limit,
-FFT length, and residual-QC mains/block settings used for the run.
+provenance sidecar stores the resolved configuration, exact-bin and local-sideband
+volume-harmonic spectra, effective PSD limit, FFT length, and residual-QC settings.
 
 ## The 1/TR limitation
 

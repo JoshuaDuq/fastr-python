@@ -20,9 +20,6 @@ class ComparePaths:
 
 @dataclass(frozen=True, slots=True)
 class PlotSettings:
-    channel: str
-    epoch_start_seconds: float
-    epoch_seconds: float
     psd_max_hz: float
 
 
@@ -36,9 +33,7 @@ class CompareConfig:
 
 _TOP = frozenset({"paths", "plot", "subjects"})
 _PATH_KEYS = frozenset({"uncorrected_root", "fastr_root", "output_root"})
-_PLOT_KEYS = frozenset(
-    {"channel", "epoch_start_seconds", "epoch_seconds", "psd_max_hz"}
-)
+_PLOT_KEYS = frozenset({"psd_max_hz"})
 _SUBJECT_KEYS = frozenset({"include", "exclude"})
 
 
@@ -79,9 +74,6 @@ def load_compare_config(path: str | Path) -> CompareConfig:
             output_root=_path(paths, "output_root", base),
         ),
         plot=PlotSettings(
-            channel=_string(plot, "channel"),
-            epoch_start_seconds=float(plot["epoch_start_seconds"]),
-            epoch_seconds=float(plot["epoch_seconds"]),
             psd_max_hz=float(plot["psd_max_hz"]),
         ),
         include=_string_list(subjects, "include"),

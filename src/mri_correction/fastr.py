@@ -14,6 +14,7 @@ from .fastr_processing import (
     _run_fastr_with_edges,
     apply_fastr_batch,
     fit_fastr_alignment,
+    obs_trigger_subset,
     residual_obs,
 )
 from .fastr_timing import (
@@ -44,6 +45,7 @@ __all__ = [
     "gate_fastr_geometry",
     "load_bids_fmri_timing",
     "make_group_trigger_samples",
+    "obs_trigger_subset",
     "prepare_fastr_geometry",
     "residual_obs",
     "slice_fastr",

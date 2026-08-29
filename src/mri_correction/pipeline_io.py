@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
+import mne
 import numpy as np
 from scipy.signal import butter, filtfilt
 
@@ -101,3 +103,32 @@ def lowpass_and_decimate(
     coefficients = butter(2, lowpass_hz, fs=sampling_rate)
     filtered = filtfilt(*coefficients, data, axis=1)
     return filtered[:, window.start : window.stop : ratio]
+
+
+def remove_line_noise(
+    data: np.ndarray,
+    *,
+    sampling_rate: float,
+    frequencies_hz: Sequence[float],
+) -> np.ndarray:
+    """Regress configured stationary sinusoids without widening the notch."""
+    frequencies = np.asarray(frequencies_hz, dtype=np.float64)
+    nyquist = 0.5 * sampling_rate
+    if (
+        frequencies.ndim != 1
+        or not np.all(np.isfinite(frequencies))
+        or np.any(frequencies <= 0.0)
+        or np.any(frequencies >= nyquist)
+    ):
+        raise ValueError(
+            "line-noise frequencies must be finite, positive, and below "
+            "the Nyquist frequency"
+        )
+    return mne.filter.notch_filter(
+        data,
+        Fs=sampling_rate,
+        freqs=frequencies,
+        method="spectrum_fit",
+        filter_length="10s",
+        verbose="ERROR",
+    )

@@ -40,7 +40,8 @@ mri-correct run --config /path/to/configuration.yml
 All important run settings are defined in YAML rather than hardcoded. The strict
 configuration rejects ambiguous markers, invalid timing, unsuitable filters, and
 existing output files. The run produces BrainVision files, before/after PSD figures,
-and a JSON provenance sidecar.
+and a JSON provenance sidecar. `line_noise_frequencies_hz` is required: use
+`[60.0]` for explicit 60 Hz sinusoidal regression or `[]` to retain every line.
 
 ## Compare uncorrected vs FASTR folders
 

@@ -18,9 +18,18 @@ processing:
   output_sampling_rate_hz: 1000.0
   channel_batch_size: 8
   reference_channel: EEG 001
+  # Exact frequencies are removed by sinusoidal regression. Use [] to disable.
+  line_noise_frequencies_hz: [60.0]
   template_high_pass_hz: 1.0
+  # Absolute floor for the QC annotation: a block below this is never flagged
+  # however far it sits from the channel median. Not a threshold on its own.
   residual_threshold_uv: 1.0
   residual_gate: false
+  # FASTR stage 3. The basis is estimated per channel from a 70 Hz high-passed
+  # copy of the residual and applied over whole volumes, because what it removes
+  # is the volume-to-volume variability the template stage leaves behind.
+  residual_obs: false
+  residual_obs_rank: 4
   residual_gate_mad_multiplier: 8.0
   residual_gate_ratio: 8.0
   residual_gate_max_fraction: 0.02
@@ -31,9 +40,17 @@ processing:
 # Optional quality-control settings. These describe how residuals are measured;
 # they do not enable or change correction stages by themselves.
 quality_control:
+  # Rounded down to a whole number of volumes so no block boundary falls
+  # mid-acquisition.
   block_seconds: 30.0
   mains_frequency_hz: 60.0
   mains_exclusion_hz: 1.0
+  # A block is annotated only when its residual exceeds the channel's own
+  # median by this many robust sigma, on at least this many channels at once.
+  # The comparison is relative to the recording's own baseline, so a uniformly
+  # noisy run is not flagged end to end for being noisy.
+  residual_mad_multiplier: 6.0
+  residual_minimum_channels: 4
 
 # Optional diagnostic settings. Set psd_n_fft to null to use the MNE default.
 diagnostics:

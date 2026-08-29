@@ -59,6 +59,7 @@ def make_provenance(
     output_sample_count: int,
     window: OutputWindow,
     residual_qc: dict[str, object],
+    obs_epoch_count: int,
     psd_tmin: float,
     psd_tmax: float,
     psd_max_frequency_hz: float,
@@ -129,6 +130,12 @@ def make_provenance(
                 "enabled": config.processing.residual_gate,
                 "excluded_group_indices": geometry.excluded_group_indices.tolist(),
                 "excluded_group_count": int(geometry.excluded_group_indices.size),
+            },
+            "residual_obs": {
+                "enabled": config.processing.residual_obs,
+                "rank": config.processing.residual_obs_rank,
+                "granularity": "volume",
+                "corrected_epoch_count": obs_epoch_count,
             },
             "adaptive_window": {
                 "enabled": config.processing.adaptive_window,

@@ -29,6 +29,7 @@ processing:
   output_sampling_rate_hz: 1000.0
   channel_batch_size: 8
   reference_channel: EEG 001
+  line_noise_frequencies_hz: [60.0]
 """
 
 
@@ -44,6 +45,7 @@ def test_load_config_resolves_paths_relative_to_yaml(tmp_path: Path) -> None:
     assert config.output.vhdr == (tmp_path / "output/corrected.vhdr").resolve()
     assert config.timing.marker_type == "Volume"
     assert config.processing.reference_channel == "EEG 001"
+    assert config.processing.line_noise_frequencies_hz == (60.0,)
 
 
 def test_config_is_immutable(tmp_path: Path) -> None:
@@ -71,6 +73,7 @@ def test_config_is_immutable(tmp_path: Path) -> None:
         ("processing", "output_sampling_rate_hz"),
         ("processing", "channel_batch_size"),
         ("processing", "reference_channel"),
+        ("processing", "line_noise_frequencies_hz"),
     ],
 )
 def test_config_rejects_missing_required_fields(
@@ -94,6 +97,7 @@ def test_config_rejects_missing_required_fields(
             "output_sampling_rate_hz": 1000.0,
             "channel_batch_size": 8,
             "reference_channel": "EEG 001",
+            "line_noise_frequencies_hz": [60.0],
         },
     }
     del document[section][field]
@@ -112,6 +116,36 @@ def test_config_rejects_unknown_keys(tmp_path: Path) -> None:
     config_path.write_text(valid_document() + "unexpected: true\n", encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="unexpected"):
+        load_config(config_path)
+
+
+def test_config_accepts_an_explicit_empty_line_noise_list(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    document = valid_document().replace(
+        "  line_noise_frequencies_hz: [60.0]\n",
+        "  line_noise_frequencies_hz: []\n",
+    )
+    config_path.write_text(document, encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.line_noise_frequencies_hz == ()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["60.0", [0.0], [500.0], [60.0, 60.0], [True]],
+)
+def test_config_rejects_invalid_line_noise_frequencies(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["line_noise_frequencies_hz"] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="line_noise_frequencies_hz"):
         load_config(config_path)
 
 
@@ -515,4 +549,91 @@ def test_processing_rejects_unknown_robustness_threshold(tmp_path: Path) -> None
     config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="robustness_threshold"):
+        load_config(config_path)
+
+
+def test_residual_flag_settings_default_to_the_qc_module_values(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.residual_mad_multiplier == 6.0
+    assert config.quality_control.residual_minimum_channels == 4
+
+
+def test_residual_flag_settings_are_configurable(tmp_path: Path) -> None:
+    document = valid_document() + """
+quality_control:
+  residual_mad_multiplier: 4.5
+  residual_minimum_channels: 8
+"""
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document, encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.residual_mad_multiplier == 4.5
+    assert config.quality_control.residual_minimum_channels == 8
+
+
+def test_residual_minimum_channels_must_be_at_least_one(tmp_path: Path) -> None:
+    document = valid_document() + """
+quality_control:
+  residual_minimum_channels: 0
+"""
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(document, encoding="utf-8")
+
+    with pytest.raises(
+        ConfigurationError,
+        match="residual_minimum_channels must be a positive integer",
+    ):
+        load_config(config_path)
+
+
+def test_residual_obs_defaults_to_disabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_obs is False
+    assert config.processing.residual_obs_rank == 4
+
+
+def test_residual_obs_can_be_enabled(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_obs: true\n  residual_obs_rank: 6\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.processing.residual_obs is True
+    assert config.processing.residual_obs_rank == 6
+
+
+def test_residual_obs_rejects_a_non_boolean(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_obs: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="residual_obs"):
+        load_config(config_path)
+
+
+def test_residual_obs_rank_must_be_a_positive_integer(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "  residual_obs_rank: 0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match="residual_obs_rank"):
         load_config(config_path)

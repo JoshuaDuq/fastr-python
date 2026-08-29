@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from .residual_qc import residual_qc_defaults
+
 
 class ConfigurationError(ValueError):
     """Raised when a YAML configuration does not describe a valid run."""
@@ -50,9 +52,12 @@ class ProcessingConfig:
     output_sampling_rate_hz: float
     channel_batch_size: int
     reference_channel: str | int
+    line_noise_frequencies_hz: tuple[float, ...]
     template_high_pass_hz: float = 1.0
     residual_threshold_uv: float = 1.0
     residual_gate: bool = False
+    residual_obs: bool = False
+    residual_obs_rank: int = 4
     adaptive_window: bool = False
     local_neighbor_count: int = 20
     residual_gate_mad_multiplier: float = 8.0
@@ -81,6 +86,10 @@ class QualityControlConfig:
     block_seconds: float = 30.0
     mains_frequency_hz: float = 60.0
     mains_exclusion_hz: float = 1.0
+    # How far above a channel's own median residual a block must sit, and on
+    # how many channels at once, before it is annotated. See residual_qc.
+    residual_mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER
+    residual_minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +133,13 @@ _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
 _TIMING_KEYS = frozenset({"marker_type", "marker_description"})
 _QUALITY_CONTROL_KEYS = frozenset(
-    {"block_seconds", "mains_frequency_hz", "mains_exclusion_hz"}
+    {
+        "block_seconds",
+        "mains_frequency_hz",
+        "mains_exclusion_hz",
+        "residual_mad_multiplier",
+        "residual_minimum_channels",
+    }
 )
 _DIAGNOSTICS_KEYS = frozenset({"psd_max_frequency_hz", "psd_n_fft"})
 _PROCESSING_KEYS = frozenset(
@@ -137,9 +152,12 @@ _PROCESSING_KEYS = frozenset(
         "output_sampling_rate_hz",
         "channel_batch_size",
         "reference_channel",
+        "line_noise_frequencies_hz",
         "template_high_pass_hz",
         "residual_threshold_uv",
         "residual_gate",
+        "residual_obs",
+        "residual_obs_rank",
         "adaptive_window",
         "local_neighbor_count",
         "residual_gate_mad_multiplier",
@@ -153,6 +171,8 @@ _OPTIONAL_PROCESSING_KEYS = frozenset(
         "template_high_pass_hz",
         "residual_threshold_uv",
         "residual_gate",
+        "residual_obs",
+        "residual_obs_rank",
         "adaptive_window",
         "local_neighbor_count",
         "residual_gate_mad_multiplier",
@@ -252,6 +272,18 @@ def _quality_control_config(
             default=60.0,
             minimum=0.0,
         ),
+        residual_mad_multiplier=_optional_finite_number(
+            values,
+            "residual_mad_multiplier",
+            default=residual_qc_defaults.MAD_MULTIPLIER,
+            minimum=0.0,
+            inclusive=True,
+        ),
+        residual_minimum_channels=_optional_positive_integer(
+            values,
+            "residual_minimum_channels",
+            default=residual_qc_defaults.MINIMUM_CHANNELS,
+        ),
         mains_exclusion_hz=_optional_finite_number(
             values,
             "mains_exclusion_hz",
@@ -320,6 +352,16 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         if "residual_gate" in values
         else ProcessingConfig.__dataclass_fields__["residual_gate"].default
     )
+    residual_obs = (
+        _boolean_value(values, "residual_obs")
+        if "residual_obs" in values
+        else ProcessingConfig.__dataclass_fields__["residual_obs"].default
+    )
+    residual_obs_rank = _optional_positive_integer(
+        values,
+        "residual_obs_rank",
+        default=ProcessingConfig.__dataclass_fields__["residual_obs_rank"].default,
+    )
     adaptive_window = (
         _boolean_value(values, "adaptive_window")
         if "adaptive_window" in values
@@ -359,11 +401,22 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         minimum=0.0,
         maximum=1.0,
     )
+    output_sampling_rate_hz = _finite_number(
+        values,
+        "output_sampling_rate_hz",
+        minimum=0.0,
+    )
+    line_noise_frequencies_hz = _line_noise_frequencies(
+        values,
+        nyquist_hz=0.5 * output_sampling_rate_hz,
+    )
 
     return ProcessingConfig(
         method=method,
         residual_threshold_uv=residual_threshold_uv,
         residual_gate=residual_gate,
+        residual_obs=residual_obs,
+        residual_obs_rank=residual_obs_rank,
         adaptive_window=adaptive_window,
         local_neighbor_count=local_neighbor_count,
         residual_gate_mad_multiplier=residual_gate_mad_multiplier,
@@ -379,17 +432,14 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
             minimum=0,
         ),
         lowpass_hz=_finite_number(values, "lowpass_hz", minimum=0.0),
-        output_sampling_rate_hz=_finite_number(
-            values,
-            "output_sampling_rate_hz",
-            minimum=0.0,
-        ),
+        output_sampling_rate_hz=output_sampling_rate_hz,
         channel_batch_size=_integer_value(
             values,
             "channel_batch_size",
             minimum=1,
         ),
         reference_channel=_reference_channel(values),
+        line_noise_frequencies_hz=line_noise_frequencies_hz,
     )
 
 
@@ -407,6 +457,36 @@ def _reference_channel(values: Mapping[str, object]) -> str | int:
             "processing.reference_channel must be nonnegative"
         )
     return value
+
+
+def _line_noise_frequencies(
+    values: Mapping[str, object],
+    *,
+    nyquist_hz: float,
+) -> tuple[float, ...]:
+    value = values.get("line_noise_frequencies_hz")
+    if not isinstance(value, list):
+        raise ConfigurationError(
+            "processing.line_noise_frequencies_hz must be a list"
+        )
+    frequencies: list[float] = []
+    for frequency in value:
+        if isinstance(frequency, bool) or not isinstance(frequency, Real):
+            raise ConfigurationError(
+                "processing.line_noise_frequencies_hz must contain numbers"
+            )
+        numeric = float(frequency)
+        if not math.isfinite(numeric) or numeric <= 0.0 or numeric >= nyquist_hz:
+            raise ConfigurationError(
+                "processing.line_noise_frequencies_hz must contain finite, "
+                "positive frequencies below the output Nyquist frequency"
+            )
+        frequencies.append(numeric)
+    if len(frequencies) != len(set(frequencies)):
+        raise ConfigurationError(
+            "processing.line_noise_frequencies_hz must not contain duplicates"
+        )
+    return tuple(frequencies)
 
 
 def _section(
@@ -456,6 +536,20 @@ def _optional_finite_number(
         inclusive=inclusive,
         maximum=maximum,
     )
+
+
+def _optional_positive_integer(
+    values: Mapping[str, object],
+    name: str,
+    *,
+    default: int,
+) -> int:
+    if name not in values or values[name] is None:
+        return default
+    value = values[name]
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigurationError(f"{name} must be a positive integer")
+    return value
 
 
 def _optional_integer_or_none(

@@ -78,6 +78,7 @@ def make_fixture(tmp_path: Path, *, gap: bool = False) -> Path:
             "output_sampling_rate_hz": 500.0,
             "channel_batch_size": 2,
             "reference_channel": "EEG 001",
+            "line_noise_frequencies_hz": [],
         },
     }
     config_path = tmp_path / "config.yml"
@@ -115,7 +116,7 @@ def test_run_correction_writes_reopenable_output_and_provenance(
     assert provenance["output"]["psd_before"] == str(summary.psd_before)
     assert provenance["output"]["psd_after"] == str(summary.psd_after)
     assert provenance["output"]["psd_settings"] == {
-        "fmax_hz": 100.0,
+        "fmax_hz": 20.0,
         "n_fft": None,
     }
     assert provenance["output"]["psd_interval_seconds"]["start"] > 0.0
@@ -216,7 +217,7 @@ def test_psd_diagnostics_use_only_corrected_time_window(
 
     assert len(calls) == 2
     assert calls[0] == calls[1]
-    assert fmax_values == [100.0, 100.0]
+    assert fmax_values == [20.0, 20.0]
     assert calls[0][0] > 0.0
     assert calls[0][1] < 0.8
 
@@ -252,7 +253,38 @@ def test_pipeline_forwards_configured_psd_settings(
 
     run_correction(config)
 
-    assert calls == [(250.0, 128), (250.0, 128)]
+    assert calls == [(20.0, 128), (20.0, 128)]
+
+
+def test_pipeline_applies_configured_line_noise_regression(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"]["line_noise_frequencies_hz"] = [10.0]
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    config = load_config(config_path)
+    calls: list[tuple[float, tuple[float, ...]]] = []
+
+    def capture_line_noise(
+        data: np.ndarray,
+        *,
+        sampling_rate: float,
+        frequencies_hz: tuple[float, ...],
+    ) -> np.ndarray:
+        calls.append((sampling_rate, frequencies_hz))
+        return data
+
+    monkeypatch.setattr(
+        pipeline_module.pipeline_io,
+        "remove_line_noise",
+        capture_line_noise,
+    )
+
+    run_correction(config)
+
+    assert calls == [(500.0, (10.0,))]
 
 
 def test_pipeline_forwards_configured_fastr_robustness_settings(
@@ -491,6 +523,7 @@ def make_untrimmed_fixture(
             "output_sampling_rate_hz": 500.0,
             "channel_batch_size": 2,
             "reference_channel": "EEG 001",
+            "line_noise_frequencies_hz": [],
         },
         "trim": {"mode": trim_mode},
     }
@@ -590,14 +623,18 @@ def test_residual_qc_is_reported_in_the_sidecar(tmp_path: Path) -> None:
 
     provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
     qc = provenance["residual_qc"]
-    assert qc["threshold_uv"] == 1.0
-    assert qc["block_seconds"] == 30.0
+    assert qc["floor_uv"] == 1.0
+    assert qc["mad_multiplier"] == 6.0
+    assert qc["minimum_channels"] == 4
+    assert qc["block_seconds"] == 30.0  # 300 volumes of 0.1 s
+    assert qc["volumes_per_block"] == 300
     assert qc["channel_names"] == ["EEG 001", "EEG 002", "ECG"]
     assert len(qc["block_residual_uv"]) == summary.channel_count
     assert len(qc["worst_block_uv"]) == summary.channel_count
     # a 0.3 s output holds no complete 30 s block, so there is nothing to report
     assert qc["block_residual_uv"] == [[], [], []]
-    assert qc["blocks_over_threshold"] == 0
+    assert qc["flagged_blocks"] == []
+    assert qc["flagged_block_count"] == 0
 
 
 def test_residual_qc_excludes_the_mains_harmonic(tmp_path: Path) -> None:

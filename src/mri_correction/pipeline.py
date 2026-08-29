@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import mne
@@ -33,11 +33,19 @@ from .fastr import (
     gate_fastr_geometry,
     load_bids_fmri_timing,
     make_group_trigger_samples,
+    obs_trigger_subset,
     prepare_fastr_geometry,
+    residual_obs,
 )
 from .pipeline_types import PipelineInputError
 from .psd import prepare_psd_raw, save_psd_plot
-from .residual_qc import block_residual_uv, slice_harmonics
+from .residual_qc import (
+    block_residual_uv,
+    flag_blocks,
+    residual_qc_defaults,
+    slice_harmonics,
+    volume_harmonic_spectrum,
+)
 from .window import OutputWindow, resolve_output_window
 
 
@@ -161,6 +169,16 @@ def _run_correction(
             adaptive_improvement_ratio=config.processing.adaptive_improvement_ratio,
         )
 
+    obs_triggers = (
+        obs_trigger_subset(
+            volume_starts,
+            sample_count=int(raw.n_times),
+            interpolation_factor=config.processing.interpolation_factor,
+        )
+        if config.processing.residual_obs
+        else None
+    )
+
     channel_count = len(raw.ch_names)
     input_sample_count = int(raw.n_times)
     output_sample_count = (window.length - 1) // decimation + 1
@@ -200,13 +218,42 @@ def _run_correction(
             amplitude_rms[start:stop] = np.sqrt(
                 np.mean(correction.provenance.amplitudes**2, axis=1)
             )
-            corrected_output[start:stop] = _lowpass_and_decimate(
-                correction.data,
+            corrected_batch = correction.data
+            if config.processing.residual_obs:
+                corrected_batch = residual_obs(
+                    corrected_batch,
+                    obs_triggers,
+                    sampling_rate=input_rate,
+                    excluded_channels=[
+                        channel - start
+                        for channel in range(start, stop)
+                        if raw.ch_names[channel] == "ECG"
+                    ],
+                    rank=config.processing.residual_obs_rank,
+                    interpolation_factor=config.processing.interpolation_factor,
+                )
+            output_batch = _lowpass_and_decimate(
+                corrected_batch,
                 sampling_rate=input_rate,
                 output_sampling_rate=output_rate,
                 lowpass_hz=config.processing.lowpass_hz,
                 window=window,
             )
+            if config.processing.line_noise_frequencies_hz:
+                eeg_rows = [
+                    channel - start
+                    for channel in range(start, stop)
+                    if raw.ch_names[channel] != "ECG"
+                ]
+                if eeg_rows:
+                    output_batch[eeg_rows] = pipeline_io.remove_line_noise(
+                        output_batch[eeg_rows],
+                        sampling_rate=output_rate,
+                        frequencies_hz=(
+                            config.processing.line_noise_frequencies_hz
+                        ),
+                    )
+            corrected_output[start:stop] = output_batch
         corrected_output.flush()
         residual_qc = _measure_residual_qc(
             corrected_output,
@@ -217,6 +264,8 @@ def _run_correction(
             block_seconds=config.quality_control.block_seconds,
             mains_frequency_hz=config.quality_control.mains_frequency_hz,
             mains_exclusion_hz=config.quality_control.mains_exclusion_hz,
+            mad_multiplier=config.quality_control.residual_mad_multiplier,
+            minimum_channels=config.quality_control.residual_minimum_channels,
         )
         transformed_markers = resample_markers(
             recording.markers,
@@ -247,6 +296,7 @@ def _run_correction(
 
     psd_max_frequency = min(
         config.diagnostics.psd_max_frequency_hz,
+        config.processing.lowpass_hz,
         output_rate / 2.0,
     )
     psd_tmin, psd_tmax = _corrected_psd_window(
@@ -294,6 +344,7 @@ def _run_correction(
         output_sample_count=output_sample_count,
         window=window,
         residual_qc=residual_qc,
+        obs_epoch_count=(0 if obs_triggers is None else int(obs_triggers.size)),
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         psd_max_frequency_hz=psd_max_frequency,
@@ -436,6 +487,8 @@ def _measure_residual_qc(
     block_seconds: float,
     mains_frequency_hz: float,
     mains_exclusion_hz: float,
+    mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER,
+    minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS,
 ) -> dict[str, object]:
     """Measure residual gradient artifact across the whole corrected recording.
 
@@ -450,11 +503,38 @@ def _measure_residual_qc(
         mains_hz=mains_frequency_hz,
         exclusion_hz=mains_exclusion_hz,
     )
+    # A block boundary falling mid-volume splits one acquisition across two
+    # blocks, so round the requested length to whole volumes.
+    volumes_per_block = max(
+        1, round(block_seconds / timing.repetition_time_seconds)
+    )
+    aligned_block_seconds = volumes_per_block * timing.repetition_time_seconds
     residuals = block_residual_uv(
         np.asarray(corrected) * 1e6,
         sampling_rate=output_rate,
         harmonics=harmonics,
-        block_seconds=block_seconds,
+        block_seconds=aligned_block_seconds,
+    )
+    flagged = flag_blocks(
+        residuals,
+        mad_multiplier=mad_multiplier,
+        minimum_channels=minimum_channels,
+        floor_uv=threshold_uv,
+    )
+    maximum_spectrum_frequency = min(
+        110.0,
+        float(np.nextafter(output_rate / 2.0, 0.0)),
+    )
+    eeg_indices = [
+        index for index, name in enumerate(channel_names) if name != "ECG"
+    ]
+    volume_spectrum = volume_harmonic_spectrum(
+        np.asarray(corrected)[eeg_indices] * 1e6,
+        sampling_rate=output_rate,
+        repetition_time_seconds=timing.repetition_time_seconds,
+        maximum_frequency_hz=maximum_spectrum_frequency,
+        mains_frequency_hz=mains_frequency_hz,
+        mains_exclusion_hz=mains_exclusion_hz,
     )
     if residuals.shape[1] == 0:
         worst_block = [-1] * residuals.shape[0]
@@ -463,16 +543,23 @@ def _measure_residual_qc(
         worst_block = [int(index) for index in residuals.argmax(axis=1)]
         worst_uv = [float(value) for value in residuals.max(axis=1)]
     return {
-        "block_seconds": float(block_seconds),
+        "block_seconds": float(aligned_block_seconds),
+        "volumes_per_block": int(volumes_per_block),
         "harmonics_hz": [float(value) for value in harmonics],
         "mains_frequency_hz": float(mains_frequency_hz),
         "mains_exclusion_hz": float(mains_exclusion_hz),
-        "threshold_uv": float(threshold_uv),
+        "floor_uv": float(threshold_uv),
+        "mad_multiplier": float(mad_multiplier),
+        "minimum_channels": int(minimum_channels),
         "channel_names": list(channel_names),
         "block_residual_uv": [[float(v) for v in row] for row in residuals],
         "worst_block_index": worst_block,
         "worst_block_uv": worst_uv,
-        "blocks_over_threshold": int((residuals > threshold_uv).any(axis=0).sum()),
+        "flagged_blocks": [bool(value) for value in flagged],
+        "flagged_block_count": int(flagged.sum()),
+        "volume_harmonic_spectrum": [
+            asdict(measurement) for measurement in volume_spectrum
+        ],
     }
 
 
@@ -541,6 +628,7 @@ def _make_provenance(
     output_sample_count: int,
     window: OutputWindow,
     residual_qc: dict[str, object],
+    obs_epoch_count: int,
     psd_tmin: float,
     psd_tmax: float,
     psd_max_frequency_hz: float,
@@ -561,6 +649,7 @@ def _make_provenance(
         output_sample_count=output_sample_count,
         window=window,
         residual_qc=residual_qc,
+        obs_epoch_count=obs_epoch_count,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         psd_max_frequency_hz=psd_max_frequency_hz,
