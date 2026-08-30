@@ -87,6 +87,20 @@ class FastrCorrection:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
+class ResidualObsCorrection:
+    """Residual-OBS output and the rank fitted in each channel section."""
+
+    data: np.ndarray
+    selected_ranks: np.ndarray
+
+    def __post_init__(self) -> None:
+        for field_name in ("data", "selected_ranks"):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
 class FastrGeometry:
     """Validated acquisition geometry shared by all channel batches."""
 

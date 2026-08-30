@@ -14,8 +14,10 @@ from .fastr_processing import (
     _run_fastr_with_edges,
     apply_fastr_batch,
     fit_fastr_alignment,
+    fit_residual_obs,
     obs_trigger_subset,
     residual_obs,
+    select_obs_rank,
 )
 from .fastr_timing import (
     FmriAcquisitionTiming,
@@ -29,6 +31,7 @@ from .fastr_types import (
     FastrGeometry,
     FastrInputError,
     FastrProvenance,
+    ResidualObsCorrection,
 )
 
 __all__ = [
@@ -38,11 +41,13 @@ __all__ = [
     "FastrInputError",
     "FastrProvenance",
     "FmriAcquisitionTiming",
+    "ResidualObsCorrection",
     "acquisition_group_fastr",
     "acquisition_group_fastr_with_edges",
     "adapt_fastr_geometry",
     "apply_fastr_batch",
     "fit_fastr_alignment",
+    "fit_residual_obs",
     "gate_fastr_geometry",
     "load_bids_fmri_timing",
     "make_group_trigger_samples",
@@ -50,6 +55,7 @@ __all__ = [
     "prepare_fastr_geometry",
     "repair_volume_starts",
     "residual_obs",
+    "select_obs_rank",
     "slice_fastr",
     "slice_fastr_with_edges",
 ]

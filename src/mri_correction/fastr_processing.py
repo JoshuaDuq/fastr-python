@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import pairwise
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -32,6 +33,7 @@ from .fastr_types import (
     FastrGeometry,
     FastrInputError,
     FastrProvenance,
+    ResidualObsCorrection,
     _ArtifactEpoch,
 )
 from .fastr_validation import (
@@ -269,7 +271,7 @@ def residual_obs(
     *,
     sampling_rate: float,
     excluded_channels: Sequence[int],
-    rank: int = 4,
+    rank: int | Literal["auto"] = 4,
     interpolation_factor: int = 10,
     section_seconds: float | None = None,
 ) -> np.ndarray:
@@ -288,6 +290,29 @@ def residual_obs(
     are not appropriate for residual artifact subtraction. Adaptive noise
     cancellation, the published fourth stage, is not implemented here.
     """
+    result = fit_residual_obs(
+        residual,
+        group_triggers,
+        sampling_rate=sampling_rate,
+        excluded_channels=excluded_channels,
+        rank=rank,
+        interpolation_factor=interpolation_factor,
+        section_seconds=section_seconds,
+    )
+    return np.array(result.data, copy=True)
+
+
+def fit_residual_obs(
+    residual: npt.ArrayLike,
+    group_triggers: npt.ArrayLike,
+    *,
+    sampling_rate: float,
+    excluded_channels: Sequence[int],
+    rank: int | Literal["auto"] = 4,
+    interpolation_factor: int = 10,
+    section_seconds: float | None = None,
+) -> ResidualObsCorrection:
+    """Fit residual OBS and report the rank selected in every section."""
     recording = validate_recording(residual)
     triggers = validate_group_triggers(group_triggers)
     validate_interpolation_factor(interpolation_factor)
@@ -306,32 +331,92 @@ def residual_obs(
         samples_after=epoch.residual_samples_after,
         sample_count=recording.shape[1] * interpolation_factor,
     )
-    validate_basis_rank(rank, triggers.size)
+    rank_mode = _validate_obs_rank(rank, triggers.size)
 
     sections = _residual_sections(
         fine_triggers,
         section_seconds=section_seconds,
         sampling_rate=rate,
         interpolation_factor=interpolation_factor,
-        rank=rank,
+        rank=rank_mode if isinstance(rank_mode, int) else 1,
     )
 
     taps = _make_interpolation_filter(interpolation_factor)
     high_pass = _make_residual_high_pass(rate, interpolation_factor)
     corrected = recording.astype(np.float64, copy=True)
+    selected_ranks = np.zeros(
+        (recording.shape[0], len(sections)),
+        dtype=np.int64,
+    )
     for index, channel in enumerate(recording):
         if index in excluded:
             continue
-        fitted = _fit_residual_basis(
+        fitted, channel_ranks = _fit_residual_basis(
             _interpolate(channel, taps, interpolation_factor),
             fine_triggers,
             epoch,
             high_pass,
-            rank,
+            rank_mode,
             sections,
         )
         corrected[index] -= fitted[::interpolation_factor]
-    return corrected
+        selected_ranks[index] = channel_ranks
+    return ResidualObsCorrection(
+        data=corrected,
+        selected_ranks=selected_ranks,
+    )
+
+
+def select_obs_rank(explained_variance_percent: npt.ArrayLike) -> int:
+    """Select residual-basis order with the three FMRIB knee criteria."""
+    values = np.asarray(explained_variance_percent, dtype=np.float64)
+    if (
+        values.ndim != 1
+        or values.size < 5
+        or not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or not np.any(values > 0.0)
+    ):
+        raise FastrInputError(
+            "automatic OBS rank needs at least five finite nonnegative components"
+        )
+
+    stable = np.flatnonzero(np.abs(np.diff(values)) < 2.0)
+    slope_rank = next(
+        (
+            max(int(stable[start]), 1)
+            for start in range(max(stable.size - 3, 0))
+            if np.all(np.diff(stable[start : start + 4]) == 1)
+        ),
+        None,
+    )
+    cumulative = np.flatnonzero(np.cumsum(values) > 80.0)
+    below_five = np.flatnonzero(values < 5.0)
+    if slope_rank is None or not cumulative.size or not below_five.size:
+        raise FastrInputError(
+            "automatic OBS rank criteria did not identify a stable rank"
+        )
+
+    cumulative_rank = int(cumulative[0]) + 1
+    variance_rank = max(int(below_five[0]), 1)
+    selected = int(
+        np.floor(np.mean((slope_rank, cumulative_rank, variance_rank)))
+    )
+    return min(max(selected, 1), values.size)
+
+
+def _validate_obs_rank(
+    rank: object,
+    group_count: int,
+) -> int | Literal["auto"]:
+    if rank == "auto":
+        return "auto"
+    if isinstance(rank, bool) or not isinstance(rank, int):
+        raise FastrInputError(
+            "basis rank must be a positive integer or 'auto'"
+        )
+    validate_basis_rank(rank, group_count)
+    return rank
 
 
 def _residual_sections(
@@ -407,9 +492,9 @@ def _fit_residual_basis(
     fine_triggers: np.ndarray,
     epoch: _ArtifactEpoch,
     high_pass: np.ndarray,
-    rank: int,
+    rank: int | Literal["auto"],
     sections: tuple[slice, ...],
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     epochs = _extract_epochs(
         filtfilt(high_pass, 1.0, signal),
         fine_triggers,
@@ -417,15 +502,34 @@ def _fit_residual_basis(
         epoch.residual_samples_after,
     )
     fitted = np.empty_like(epochs)
-    for section in sections:
+    selected_ranks = np.empty(len(sections), dtype=np.int64)
+    for section_index, section in enumerate(sections):
         block = epochs[section]
         centered = block - block.mean(axis=1, keepdims=True)
-        basis = np.linalg.svd(centered.T, full_matrices=False)[0][:, :rank]
+        vectors, singular_values, _ = np.linalg.svd(
+            centered.T,
+            full_matrices=False,
+        )
+        if rank == "auto":
+            variance = singular_values**2
+            selected_rank = select_obs_rank(100.0 * variance / variance.sum())
+        else:
+            selected_rank = rank
+        validate_basis_rank(selected_rank, block.shape[0])
+        if selected_rank > vectors.shape[1]:
+            raise FastrInputError(
+                "basis rank exceeds the residual epoch dimension"
+            )
+        basis = vectors[:, :selected_rank]
         fitted[section] = block @ basis @ basis.T
-    return _place_epochs(
-        signal.size,
-        fine_triggers - epoch.samples_before,
-        fitted,
+        selected_ranks[section_index] = selected_rank
+    return (
+        _place_epochs(
+            signal.size,
+            fine_triggers - epoch.samples_before,
+            fitted,
+        ),
+        selected_ranks,
     )
 
 
