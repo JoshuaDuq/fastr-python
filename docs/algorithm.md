@@ -39,7 +39,7 @@ For each run, the pipeline:
 11. Takes the output window and decimates, then regresses any explicitly
    configured stationary line frequencies on the EEG channels. A zero low-pass
    is valid only without decimation.
-11. Writes the corrected data, windowed markers, before/after PSD figures, and a
+12. Writes the corrected data, windowed markers, before/after PSD figures, and a
    provenance sidecar.
 
 The first and last groups whose complete artifact epochs are unavailable are left
