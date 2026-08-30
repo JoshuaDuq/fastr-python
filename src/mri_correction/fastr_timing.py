@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from itertools import pairwise
 from numbers import Integral, Real
 from pathlib import Path
 
@@ -100,6 +101,47 @@ def make_group_trigger_samples(
     )
 
 
+def repair_volume_starts(
+    volume_starts: object,
+    *,
+    samples_per_volume: int,
+    expected_volume_count: int,
+) -> np.ndarray:
+    """Fill uniquely located interior volume markers.
+
+    Missing boundary markers cannot be inferred from a marker series, so a
+    declared count that cannot be reached through interior gaps is rejected.
+    """
+    starts = _validate_volume_starts(volume_starts)
+    period = _validate_positive_integer(samples_per_volume, "samples per volume")
+    expected = _validate_positive_integer(
+        expected_volume_count,
+        "expected volume count",
+    )
+
+    repaired = [int(starts[0])]
+    for left, right in pairwise(starts):
+        interval = int(right - left)
+        multiple = round(interval / period)
+        deviation = abs(interval - multiple * period)
+        if multiple < 1 or deviation > _CLOCK_TICK_SAMPLES:
+            raise FastrInputError(
+                "volume marker interval is not an integer multiple of the "
+                "repetition time"
+            )
+        repaired.extend(
+            int(left + step * period) for step in range(1, multiple)
+        )
+        repaired.append(int(right))
+
+    if len(repaired) != expected:
+        raise FastrInputError(
+            "repaired markers do not match the expected volume count; "
+            "missing boundary markers cannot be inferred"
+        )
+    return np.asarray(repaired, dtype=np.int64)
+
+
 def _validate_repetition_time(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise FastrInputError("repetition time must be a finite positive number")
@@ -107,6 +149,12 @@ def _validate_repetition_time(value: object) -> float:
     if not math.isfinite(repetition_time) or repetition_time <= 0.0:
         raise FastrInputError("repetition time must be a finite positive number")
     return repetition_time
+
+
+def _validate_positive_integer(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+        raise FastrInputError(f"{name} must be a positive integer")
+    return int(value)
 
 
 def _validate_slice_timing(

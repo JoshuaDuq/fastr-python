@@ -21,6 +21,7 @@ from .fastr_timing import (
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
     make_group_trigger_samples,
+    repair_volume_starts,
 )
 from .fastr_types import (
     FastrAlignment,
@@ -47,6 +48,7 @@ __all__ = [
     "make_group_trigger_samples",
     "obs_trigger_subset",
     "prepare_fastr_geometry",
+    "repair_volume_starts",
     "residual_obs",
     "slice_fastr",
     "slice_fastr_with_edges",
