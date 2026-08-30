@@ -16,6 +16,8 @@ from .config import CorrectionConfig
 from .fastr import FastrAlignment, FastrGeometry, FmriAcquisitionTiming
 from .window import OutputWindow
 
+FMRIB_REFERENCE_COMMIT = "2aa522bc5ec4215f42b3ba8efdb2b84d2a312935"
+
 
 def trim_provenance(
     window: OutputWindow,
@@ -60,6 +62,11 @@ def make_provenance(
     window: OutputWindow,
     residual_qc: dict[str, object],
     obs_epoch_count: int,
+    detected_volume_count: int,
+    selected_obs_ranks: np.ndarray,
+    anc_filter_order: int | None,
+    anc_reference_scales: np.ndarray,
+    anc_step_sizes: np.ndarray,
     psd_tmin: float,
     psd_tmax: float,
     psd_max_frequency_hz: float,
@@ -114,9 +121,28 @@ def make_provenance(
             "count": len(recording.markers),
             "processed_group_count": int(geometry.triggers.size),
             "skipped_group_indices": geometry.skipped_group_indices.tolist(),
+            "volume_marker_repair": {
+                "mode": config.timing.missing_volume_markers,
+                "detected_volume_count": detected_volume_count,
+                "repaired_volume_count": (
+                    config.timing.expected_volume_count - detected_volume_count
+                    if config.timing.missing_volume_markers == "repair"
+                    else 0
+                ),
+                "used_volume_count": (
+                    config.timing.expected_volume_count
+                    if config.timing.missing_volume_markers == "repair"
+                    else detected_volume_count
+                ),
+            },
         },
         "fastr": {
+            "reference": {
+                "repository": "sccn/fMRIb",
+                "commit": FMRIB_REFERENCE_COMMIT,
+            },
             "interpolation_factor": geometry.interpolation_factor,
+            "pre_trigger_fraction": geometry.pre_trigger_fraction,
             "samples_before_trigger": geometry.epoch.samples_before,
             "samples_after_trigger": geometry.epoch.samples_after,
             "search_radius_interpolated_samples": geometry.search_radius,
@@ -133,9 +159,19 @@ def make_provenance(
             },
             "residual_obs": {
                 "enabled": config.processing.residual_obs,
-                "rank": config.processing.residual_obs_rank,
+                "rank_mode": config.processing.residual_obs_rank,
+                "selected_ranks": selected_obs_ranks.tolist(),
+                "section_seconds": (
+                    config.processing.residual_obs_section_seconds
+                ),
                 "granularity": "volume",
                 "corrected_epoch_count": obs_epoch_count,
+            },
+            "adaptive_noise_cancellation": {
+                "enabled": config.processing.adaptive_noise_cancellation,
+                "filter_order": anc_filter_order,
+                "reference_scales": nullable_floats(anc_reference_scales),
+                "step_sizes": nullable_floats(anc_step_sizes),
             },
             "adaptive_window": {
                 "enabled": config.processing.adaptive_window,
@@ -160,6 +196,11 @@ def stringify_paths(value: object) -> object:
     if isinstance(value, tuple):
         return [stringify_paths(item) for item in value]
     return value
+
+
+def nullable_floats(values: np.ndarray) -> list[float | None]:
+    """Represent unavailable channel diagnostics as JSON null values."""
+    return [float(value) if math.isfinite(value) else None for value in values]
 
 
 def sha256(path: Path) -> str:

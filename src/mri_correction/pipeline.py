@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -28,14 +29,16 @@ from .fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     adapt_fastr_geometry,
+    adaptive_noise_cancel,
     apply_fastr_batch,
     fit_fastr_alignment,
+    fit_residual_obs,
     gate_fastr_geometry,
     load_bids_fmri_timing,
     make_group_trigger_samples,
     obs_trigger_subset,
     prepare_fastr_geometry,
-    residual_obs,
+    repair_volume_starts,
 )
 from .pipeline_types import PipelineInputError
 from .psd import prepare_psd_raw, save_psd_plot
@@ -104,6 +107,15 @@ def _run_correction(
         sample_count=int(raw.n_times),
     )
     timing = load_bids_fmri_timing(config.input.fmri_metadata)
+    detected_volume_count = int(volume_starts.size)
+    if config.timing.missing_volume_markers == "repair":
+        volume_starts = repair_volume_starts(
+            volume_starts,
+            samples_per_volume=math.floor(
+                timing.repetition_time_seconds * input_rate + 0.5
+            ),
+            expected_volume_count=config.timing.expected_volume_count,
+        )
     group_triggers = make_group_trigger_samples(
         volume_starts,
         sampling_rate=input_rate,
@@ -131,6 +143,7 @@ def _run_correction(
         search_radius_samples=config.processing.search_radius_samples,
         groups_per_volume=timing.groups_per_volume,
         allow_edges=True,
+        pre_trigger_fraction=config.processing.pre_trigger_fraction,
     )
     reference_channel = raw.get_data(
         picks=[reference_index],
@@ -189,6 +202,19 @@ def _run_correction(
     output_sample_count = (window.length - 1) // decimation + 1
     amplitude_means = np.empty(channel_count, dtype=np.float64)
     amplitude_rms = np.empty(channel_count, dtype=np.float64)
+    selected_obs_ranks = np.empty((channel_count, 0), dtype=np.int64)
+    anc_reference_scales = np.full(channel_count, np.nan, dtype=np.float64)
+    anc_step_sizes = np.full(channel_count, np.nan, dtype=np.float64)
+    anc_filter_order = (
+        math.ceil(geometry.epoch.length / geometry.interpolation_factor)
+        if config.processing.adaptive_noise_cancellation
+        else None
+    )
+    anc_sample_slice = (
+        _corrected_input_span(geometry, input_sample_count)
+        if config.processing.adaptive_noise_cancellation
+        else None
+    )
     with tempfile.TemporaryDirectory(
         dir=config.output.vhdr.parent,
         prefix=".mri-correction-",
@@ -231,14 +257,41 @@ def _run_correction(
             )
             corrected_batch = correction.data
             if config.processing.residual_obs:
-                corrected_batch = residual_obs(
+                obs_result = fit_residual_obs(
                     corrected_batch,
                     obs_triggers,
                     sampling_rate=input_rate,
                     excluded_channels=batch_non_eeg_rows,
                     rank=config.processing.residual_obs_rank,
                     interpolation_factor=config.processing.interpolation_factor,
+                    section_seconds=(
+                        config.processing.residual_obs_section_seconds
+                    ),
                 )
+                corrected_batch = obs_result.data
+                if selected_obs_ranks.shape[1] == 0:
+                    selected_obs_ranks = np.zeros(
+                        (channel_count, obs_result.selected_ranks.shape[1]),
+                        dtype=np.int64,
+                    )
+                if obs_result.selected_ranks.shape[1] != selected_obs_ranks.shape[1]:
+                    raise PipelineInputError(
+                        "OBS section count changed between channel batches"
+                    )
+                selected_obs_ranks[start:stop] = obs_result.selected_ranks
+            if config.processing.adaptive_noise_cancellation:
+                artifact_estimate = batch - corrected_batch
+                anc_result = adaptive_noise_cancel(
+                    corrected_batch,
+                    artifact_estimate,
+                    sampling_rate=input_rate,
+                    filter_order=anc_filter_order,
+                    excluded_channels=batch_non_eeg_rows,
+                    sample_slice=anc_sample_slice,
+                )
+                corrected_batch = anc_result.data
+                anc_reference_scales[start:stop] = anc_result.reference_scales
+                anc_step_sizes[start:stop] = anc_result.step_sizes
             output_batch = _lowpass_and_decimate(
                 corrected_batch,
                 sampling_rate=input_rate,
@@ -353,6 +406,11 @@ def _run_correction(
         window=window,
         residual_qc=residual_qc,
         obs_epoch_count=(0 if obs_triggers is None else int(obs_triggers.size)),
+        detected_volume_count=detected_volume_count,
+        selected_obs_ranks=selected_obs_ranks,
+        anc_filter_order=anc_filter_order,
+        anc_reference_scales=anc_reference_scales,
+        anc_step_sizes=anc_step_sizes,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         psd_max_frequency_hz=psd_max_frequency,
@@ -476,6 +534,27 @@ def _corrected_psd_window(
     if not 0.0 <= tmin < tmax:
         raise PipelineInputError("the corrected PSD interval is empty")
     return tmin, tmax
+
+
+def _corrected_input_span(
+    geometry: FastrGeometry,
+    sample_count: int,
+) -> slice:
+    """Bound ANC to the span whose fitted artifact estimate is complete."""
+    artifact_samples = math.ceil(
+        geometry.epoch.length / geometry.interpolation_factor
+    )
+    start = max(
+        0,
+        int(geometry.triggers[0]) - math.ceil(1.25 * artifact_samples),
+    )
+    stop = min(
+        sample_count,
+        int(geometry.triggers[-1])
+        + math.ceil(2.25 * artifact_samples)
+        + 1,
+    )
+    return slice(start, stop)
 
 
 def _validate_marker_output_positions(
@@ -638,6 +717,11 @@ def _make_provenance(
     window: OutputWindow,
     residual_qc: dict[str, object],
     obs_epoch_count: int,
+    detected_volume_count: int,
+    selected_obs_ranks: np.ndarray,
+    anc_filter_order: int | None,
+    anc_reference_scales: np.ndarray,
+    anc_step_sizes: np.ndarray,
     psd_tmin: float,
     psd_tmax: float,
     psd_max_frequency_hz: float,
@@ -659,6 +743,11 @@ def _make_provenance(
         window=window,
         residual_qc=residual_qc,
         obs_epoch_count=obs_epoch_count,
+        detected_volume_count=detected_volume_count,
+        selected_obs_ranks=selected_obs_ranks,
+        anc_filter_order=anc_filter_order,
+        anc_reference_scales=anc_reference_scales,
+        anc_step_sizes=anc_step_sizes,
         psd_tmin=psd_tmin,
         psd_tmax=psd_tmax,
         psd_max_frequency_hz=psd_max_frequency_hz,
