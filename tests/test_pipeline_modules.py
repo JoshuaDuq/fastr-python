@@ -71,3 +71,78 @@ def test_provenance_path_conversion_handles_nested_paths() -> None:
         "path": "input.vhdr",
         "items": ["a"],
     }
+
+
+def _tone_amplitude(signal: np.ndarray, frequency: float, rate: float) -> float:
+    times = np.arange(signal.size) / rate
+    phasor = np.exp(-2j * np.pi * frequency * times)
+    return float(2.0 * np.abs(np.vdot(phasor.conj(), signal)) / signal.size)
+
+
+def test_output_low_pass_keeps_the_passband_it_advertises() -> None:
+    """A 100 Hz cutoff must keep the band it names, flat, all the way up.
+
+    A gentle IIR at this corner costs 3 dB by 80 Hz, and a least-squares FIR
+    applied twice ripples by 2 dB across the passband. Neither leaves the
+    configured cutoff meaning what it says.
+    """
+    rate = 5_000.0
+    cutoff = 100.0
+    duration = 4.0
+    times = np.arange(int(duration * rate)) / rate
+
+    for frequency, floor in ((10.0, 0.99), (50.0, 0.99), (80.0, 0.99), (95.0, 0.98)):
+        tone = np.sin(2.0 * np.pi * frequency * times)[np.newaxis, :]
+        filtered = pipeline_io.lowpass_and_decimate(
+            tone,
+            sampling_rate=rate,
+            output_sampling_rate=rate,
+            lowpass_hz=cutoff,
+            window=OutputWindow(start=0, stop=tone.shape[1]),
+        )
+        edge = int(0.5 * rate)
+        kept = _tone_amplitude(filtered[0, edge:-edge], frequency, rate)
+        assert kept > floor, f"{frequency} Hz kept only {kept:.3f}"
+
+
+def test_output_low_pass_rejects_the_stop_band() -> None:
+    rate = 5_000.0
+    duration = 4.0
+    times = np.arange(int(duration * rate)) / rate
+
+    for frequency, ceiling in ((150.0, 0.02), (600.0, 1e-3)):
+        tone = np.sin(2.0 * np.pi * frequency * times)[np.newaxis, :]
+        filtered = pipeline_io.lowpass_and_decimate(
+            tone,
+            sampling_rate=rate,
+            output_sampling_rate=rate,
+            lowpass_hz=100.0,
+            window=OutputWindow(start=0, stop=tone.shape[1]),
+        )
+        edge = int(0.5 * rate)
+        kept = _tone_amplitude(filtered[0, edge:-edge], frequency, rate)
+        assert kept < ceiling, f"{frequency} Hz kept {kept:.5f}"
+
+
+def test_output_low_pass_does_not_taper_the_start_of_the_emitted_span() -> None:
+    """An untrimmed run emits sample zero, so the filter must not fade it in.
+
+    A 10 Hz tone sits well inside the passband, so the filtered output should
+    track the input from the very first sample. Convolving against implicit
+    zeros instead fades the first half filter length in from nothing.
+    """
+    rate = 5_000.0
+    times = np.arange(int(4.0 * rate)) / rate
+    tone = np.sin(2.0 * np.pi * 10.0 * times)[np.newaxis, :]
+
+    filtered = pipeline_io.lowpass_and_decimate(
+        tone,
+        sampling_rate=rate,
+        output_sampling_rate=rate,
+        lowpass_hz=100.0,
+        window=OutputWindow(start=0, stop=tone.shape[1]),
+    )
+
+    half = (pipeline_io.make_output_low_pass(rate, 100.0).size - 1) // 2
+    np.testing.assert_allclose(filtered[0, :half], tone[0, :half], atol=0.01)
+    np.testing.assert_allclose(filtered[0, -half:], tone[0, -half:], atol=0.01)

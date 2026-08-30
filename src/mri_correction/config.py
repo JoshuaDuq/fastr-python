@@ -53,6 +53,7 @@ class ProcessingConfig:
     channel_batch_size: int
     reference_channel: str | int
     line_noise_frequencies_hz: tuple[float, ...]
+    non_eeg_channels: tuple[str, ...] = ("ECG",)
     template_high_pass_hz: float = 1.0
     residual_threshold_uv: float = 1.0
     residual_gate: bool = False
@@ -153,6 +154,7 @@ _PROCESSING_KEYS = frozenset(
         "channel_batch_size",
         "reference_channel",
         "line_noise_frequencies_hz",
+        "non_eeg_channels",
         "template_high_pass_hz",
         "residual_threshold_uv",
         "residual_gate",
@@ -168,6 +170,7 @@ _PROCESSING_KEYS = frozenset(
 )
 _OPTIONAL_PROCESSING_KEYS = frozenset(
     {
+        "non_eeg_channels",
         "template_high_pass_hz",
         "residual_threshold_uv",
         "residual_gate",
@@ -440,7 +443,23 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         ),
         reference_channel=_reference_channel(values),
         line_noise_frequencies_hz=line_noise_frequencies_hz,
+        non_eeg_channels=_non_eeg_channels(values),
     )
+
+
+def _non_eeg_channels(values: Mapping[str, object]) -> tuple[str, ...]:
+    """Names of channels the correction must not fit a scalar or a basis to."""
+    default = ProcessingConfig.__dataclass_fields__["non_eeg_channels"].default
+    if "non_eeg_channels" not in values:
+        return default
+    names = values["non_eeg_channels"]
+    if not isinstance(names, list) or any(
+        not isinstance(name, str) or not name for name in names
+    ):
+        raise ConfigurationError(
+            "processing.non_eeg_channels must be a list of nonempty channel names"
+        )
+    return tuple(names)
 
 
 def _reference_channel(values: Mapping[str, object]) -> str | int:

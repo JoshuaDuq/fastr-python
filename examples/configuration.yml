@@ -20,6 +20,10 @@ processing:
   reference_channel: EEG 001
   # Exact frequencies are removed by sinusoidal regression. Use [] to disable.
   line_noise_frequencies_hz: [60.0]
+  # Channels that carry the gradient artifact but are not EEG. Their template is
+  # subtracted unscaled and they are kept out of the residual basis and the line
+  # regression, because a QRS complex biases anything fitted through it.
+  non_eeg_channels: [ECG]
   template_high_pass_hz: 1.0
   # Absolute floor for the QC annotation: a block below this is never flagged
   # however far it sits from the channel median. Not a threshold on its own.

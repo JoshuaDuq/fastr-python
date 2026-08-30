@@ -180,6 +180,11 @@ def _run_correction(
     )
 
     channel_count = len(raw.ch_names)
+    non_eeg_indices = frozenset(
+        index
+        for index, name in enumerate(raw.ch_names)
+        if name in config.processing.non_eeg_channels
+    )
     input_sample_count = int(raw.n_times)
     output_sample_count = (window.length - 1) // decimation + 1
     amplitude_means = np.empty(channel_count, dtype=np.float64)
@@ -205,12 +210,18 @@ def _run_correction(
                 start=0,
                 stop=raw.n_times,
             )
+            batch_non_eeg_rows = [
+                channel - start
+                for channel in range(start, stop)
+                if channel in non_eeg_indices
+            ]
             correction = apply_fastr_batch(
                 batch,
                 geometry,
                 alignment,
                 template_high_pass_hz=config.processing.template_high_pass_hz,
                 sampling_rate=input_rate,
+                unscaled_channels=batch_non_eeg_rows,
             )
             amplitude_means[start:stop] = correction.provenance.amplitudes.mean(
                 axis=1
@@ -224,11 +235,7 @@ def _run_correction(
                     corrected_batch,
                     obs_triggers,
                     sampling_rate=input_rate,
-                    excluded_channels=[
-                        channel - start
-                        for channel in range(start, stop)
-                        if raw.ch_names[channel] == "ECG"
-                    ],
+                    excluded_channels=batch_non_eeg_rows,
                     rank=config.processing.residual_obs_rank,
                     interpolation_factor=config.processing.interpolation_factor,
                 )
@@ -243,7 +250,7 @@ def _run_correction(
                 eeg_rows = [
                     channel - start
                     for channel in range(start, stop)
-                    if raw.ch_names[channel] != "ECG"
+                    if channel not in non_eeg_indices
                 ]
                 if eeg_rows:
                     output_batch[eeg_rows] = pipeline_io.remove_line_noise(
@@ -258,6 +265,7 @@ def _run_correction(
         residual_qc = _measure_residual_qc(
             corrected_output,
             channel_names=raw.ch_names,
+            non_eeg_indices=non_eeg_indices,
             output_rate=output_rate,
             timing=timing,
             threshold_uv=config.processing.residual_threshold_uv,
@@ -481,6 +489,7 @@ def _measure_residual_qc(
     corrected: np.ndarray,
     *,
     channel_names: list[str],
+    non_eeg_indices: frozenset[int],
     output_rate: float,
     timing: FmriAcquisitionTiming,
     threshold_uv: float,
@@ -526,7 +535,7 @@ def _measure_residual_qc(
         float(np.nextafter(output_rate / 2.0, 0.0)),
     )
     eeg_indices = [
-        index for index, name in enumerate(channel_names) if name != "ECG"
+        index for index in range(len(channel_names)) if index not in non_eeg_indices
     ]
     volume_spectrum = volume_harmonic_spectrum(
         np.asarray(corrected)[eeg_indices] * 1e6,

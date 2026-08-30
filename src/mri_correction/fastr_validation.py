@@ -114,27 +114,23 @@ def validate_unit_interval(value: object, *, name: str) -> float:
     return numeric_value
 
 
-def validate_excluded_channels(
-    excluded_channels: Sequence[int],
+def validate_channel_indices(
+    channels: Sequence[int],
     channel_count: int,
+    *,
+    name: str,
 ) -> frozenset[int]:
-    if isinstance(excluded_channels, str) or not isinstance(
-        excluded_channels, Sequence
-    ):
-        raise FastrInputError("excluded channels must be a sequence of indices")
-    excluded = frozenset(excluded_channels)
+    if isinstance(channels, str) or not isinstance(channels, Sequence):
+        raise FastrInputError(f"{name} must be a sequence of indices")
+    selected = frozenset(channels)
     if any(
         isinstance(channel, bool)
         or not isinstance(channel, Integral)
         or not 0 <= channel < channel_count
-        for channel in excluded
+        for channel in selected
     ):
-        raise FastrInputError("excluded channels must be valid channel indices")
-    if len(excluded) == channel_count:
-        raise FastrInputError(
-            "excluded channels must leave at least one channel to correct"
-        )
-    return excluded
+        raise FastrInputError(f"{name} must be valid channel indices")
+    return selected
 
 
 def validate_basis_rank(rank: int, group_count: int) -> None:

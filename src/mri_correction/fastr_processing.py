@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from itertools import pairwise
 
 import numpy as np
 import numpy.typing as npt
@@ -23,6 +24,7 @@ from .fastr_templates import (
     _make_template_high_pass,
     _place_epochs,
     _template_estimate_signal,
+    _unscaled_channel_noise,
 )
 from .fastr_types import (
     FastrAlignment,
@@ -34,9 +36,10 @@ from .fastr_types import (
 )
 from .fastr_validation import (
     validate_basis_rank,
-    validate_excluded_channels,
+    validate_channel_indices,
     validate_group_triggers,
     validate_interpolation_factor,
+    validate_positive_finite,
     validate_recording,
     validate_reference_channel,
     validate_sampling_rate,
@@ -93,8 +96,14 @@ def apply_fastr_batch(
     *,
     template_high_pass_hz: float | None = None,
     sampling_rate: float | None = None,
+    unscaled_channels: Sequence[int] = (),
 ) -> FastrCorrection:
     """Apply one shared alignment to a batch of recording channels.
+
+    ``unscaled_channels`` name the rows whose template is subtracted as it
+    stands instead of being scaled by a least-squares fit, which is how
+    `fmrib_fastr.m` treats non-EEG channels: a QRS complex has no counterpart in
+    the moving average, so a scalar fitted through it is biased.
 
     When ``template_high_pass_hz`` is set, the moving-average template and the
     least-squares scalar are estimated from a high-passed copy of each channel,
@@ -118,6 +127,11 @@ def apply_fastr_batch(
     if alignment.fitted_triggers.shape != alignment.shifts.shape:
         raise FastrInputError("fitted triggers do not match the alignment")
 
+    unscaled = validate_channel_indices(
+        unscaled_channels,
+        recording.shape[0],
+        name="unscaled channels",
+    )
     template_filter = _make_template_high_pass(
         template_high_pass_hz,
         sampling_rate=sampling_rate,
@@ -134,7 +148,10 @@ def apply_fastr_batch(
             geometry.interpolation_taps,
             geometry.interpolation_factor,
         )
-        noise, amplitudes[index] = _fit_channel_noise(
+        estimate_noise = (
+            _unscaled_channel_noise if index in unscaled else _fit_channel_noise
+        )
+        noise, amplitudes[index] = estimate_noise(
             interpolated,
             alignment.fitted_triggers,
             geometry.window,
@@ -250,8 +267,15 @@ def residual_obs(
     excluded_channels: Sequence[int],
     rank: int = 4,
     interpolation_factor: int = 10,
+    section_seconds: float | None = None,
 ) -> np.ndarray:
     """Subtract the optimal basis set of the residual gradient artifact.
+
+    ``section_seconds`` re-estimates the basis over consecutive stretches of the
+    recording, as `fmrib_fastr.m` does once per section, so a residual whose
+    shape drifts is not forced through one basis fitted to the whole run. Left
+    unset, one basis per channel covers everything. A trailing stretch too short
+    to estimate a basis joins the one before it.
 
     This is FASTR's third stage, never an implicit part of template subtraction.
     For each corrected channel the basis is the leading `rank` principal
@@ -264,7 +288,11 @@ def residual_obs(
     triggers = validate_group_triggers(group_triggers)
     validate_interpolation_factor(interpolation_factor)
     rate = validate_sampling_rate(sampling_rate)
-    excluded = validate_excluded_channels(excluded_channels, recording.shape[0])
+    excluded = validate_channel_indices(
+        excluded_channels,
+        recording.shape[0],
+        name="excluded channels",
+    )
 
     fine_triggers = _to_interpolated_grid(triggers, interpolation_factor)
     epoch = _measure_artifact_epoch(fine_triggers, cover_full_gap=False)
@@ -275,6 +303,14 @@ def residual_obs(
         sample_count=recording.shape[1] * interpolation_factor,
     )
     validate_basis_rank(rank, triggers.size)
+
+    sections = _residual_sections(
+        fine_triggers,
+        section_seconds=section_seconds,
+        sampling_rate=rate,
+        interpolation_factor=interpolation_factor,
+        rank=rank,
+    )
 
     taps = _make_interpolation_filter(interpolation_factor)
     high_pass = _make_residual_high_pass(rate, interpolation_factor)
@@ -288,9 +324,45 @@ def residual_obs(
             epoch,
             high_pass,
             rank,
+            sections,
         )
         corrected[index] -= fitted[::interpolation_factor]
     return corrected
+
+
+def _residual_sections(
+    fine_triggers: np.ndarray,
+    *,
+    section_seconds: float | None,
+    sampling_rate: float,
+    interpolation_factor: int,
+    rank: int,
+) -> tuple[slice, ...]:
+    """Split the epochs into the consecutive runs that each get their own basis.
+
+    The runs are balanced rather than cut at a fixed length, so no run is left
+    holding a handful of epochs: a basis fitted to barely more epochs than its
+    rank spans nearly everything in that stretch and takes the signal with it.
+    """
+    if section_seconds is None:
+        return (slice(0, fine_triggers.size),)
+    seconds = validate_positive_finite(
+        section_seconds,
+        name="residual basis section length",
+    )
+    epoch_seconds = float(np.median(np.diff(fine_triggers))) / (
+        sampling_rate * interpolation_factor
+    )
+    count = max(_round_half_up(fine_triggers.size * epoch_seconds / seconds), 1)
+    if fine_triggers.size // count <= rank:
+        raise FastrInputError(
+            "the residual basis section holds too few epochs for the requested "
+            "rank; lengthen the section or lower the rank"
+        )
+    edges = [0, *np.cumsum([part.size for part in np.array_split(
+        np.arange(fine_triggers.size), count
+    )])]
+    return tuple(slice(int(start), int(stop)) for start, stop in pairwise(edges))
 
 
 def _map_neighbor_indices(geometry: FastrGeometry) -> np.ndarray:
@@ -332,6 +404,7 @@ def _fit_residual_basis(
     epoch: _ArtifactEpoch,
     high_pass: np.ndarray,
     rank: int,
+    sections: tuple[slice, ...],
 ) -> np.ndarray:
     epochs = _extract_epochs(
         filtfilt(high_pass, 1.0, signal),
@@ -339,12 +412,16 @@ def _fit_residual_basis(
         epoch.samples_before,
         epoch.residual_samples_after,
     )
-    centered = epochs - epochs.mean(axis=1, keepdims=True)
-    basis = np.linalg.svd(centered.T, full_matrices=False)[0][:, :rank]
+    fitted = np.empty_like(epochs)
+    for section in sections:
+        block = epochs[section]
+        centered = block - block.mean(axis=1, keepdims=True)
+        basis = np.linalg.svd(centered.T, full_matrices=False)[0][:, :rank]
+        fitted[section] = block @ basis @ basis.T
     return _place_epochs(
         signal.size,
         fine_triggers - epoch.samples_before,
-        epochs @ basis @ basis.T,
+        fitted,
     )
 
 

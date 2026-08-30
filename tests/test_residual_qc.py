@@ -173,6 +173,7 @@ def test_pipeline_volume_harmonic_spectrum_excludes_ecg(
     pipeline_module._measure_residual_qc(
         np.zeros((3, 200)),
         channel_names=["EEG 001", "EEG 002", "ECG"],
+        non_eeg_indices=frozenset({2}),
         output_rate=500.0,
         timing=timing,
         threshold_uv=1.0,
@@ -230,6 +231,7 @@ def test_pipeline_residual_qc_forwards_configured_measurement_settings(
     report = pipeline_module._measure_residual_qc(
         np.zeros((2, 200)),
         channel_names=["EEG 001", "EEG 002"],
+        non_eeg_indices=frozenset(),
         output_rate=500.0,
         timing=timing,
         threshold_uv=1.0,
@@ -395,6 +397,7 @@ def test_blocks_are_rounded_to_whole_volumes(
     pipeline_module._measure_residual_qc(
         np.zeros((2, 3000)),
         channel_names=["EEG 001", "EEG 002"],
+        non_eeg_indices=frozenset(),
         output_rate=1000.0,
         timing=_timing(0.9),
         threshold_uv=1.0,
@@ -421,6 +424,7 @@ def test_sidecar_reports_the_flag_decision_and_its_settings(
     report = pipeline_module._measure_residual_qc(
         np.zeros((8, 3000)),
         channel_names=[f"EEG {index:03d}" for index in range(8)],
+        non_eeg_indices=frozenset(),
         output_rate=1000.0,
         timing=_timing(0.9),
         threshold_uv=1.0,

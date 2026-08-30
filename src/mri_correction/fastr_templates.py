@@ -196,6 +196,7 @@ def _fit_channel_noise(
     window: _TemplateWindow,
     epoch: _ArtifactEpoch,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Scale every template by the least-squares fit to its own epoch."""
     templates = _make_templates(signal, fitted_triggers, window, epoch)
     epochs = _extract_epochs(
         signal,
@@ -210,10 +211,49 @@ def _fit_channel_noise(
         out=np.ones(fitted_triggers.size),
         where=energies > 0.0,
     )
-
-    noise = _place_epochs(
+    noise = _place_scaled_templates(
         signal.size,
+        fitted_triggers,
+        epoch,
+        templates,
+        amplitudes,
+    )
+    return noise, amplitudes
+
+
+def _unscaled_channel_noise(
+    signal: np.ndarray,
+    fitted_triggers: np.ndarray,
+    window: _TemplateWindow,
+    epoch: _ArtifactEpoch,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Subtract every template as it stands, the FASTR non-EEG channel rule.
+
+    A large non-artifact transient such as a QRS complex has no counterpart in
+    the moving average, so a scalar fitted through it is biased and spreads that
+    bias over the whole epoch. `fmrib_fastr.m` forces the scalar to one here.
+    """
+    templates = _make_templates(signal, fitted_triggers, window, epoch)
+    amplitudes = np.ones(fitted_triggers.size)
+    noise = _place_scaled_templates(
+        signal.size,
+        fitted_triggers,
+        epoch,
+        templates,
+        amplitudes,
+    )
+    return noise, amplitudes
+
+
+def _place_scaled_templates(
+    sample_count: int,
+    fitted_triggers: np.ndarray,
+    epoch: _ArtifactEpoch,
+    templates: np.ndarray,
+    amplitudes: np.ndarray,
+) -> np.ndarray:
+    return _place_epochs(
+        sample_count,
         fitted_triggers - epoch.samples_before,
         amplitudes[:, np.newaxis] * templates,
     )
-    return noise, amplitudes

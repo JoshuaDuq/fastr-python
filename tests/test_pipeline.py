@@ -7,9 +7,10 @@ import numpy as np
 import pytest
 import yaml
 from pybv import write_brainvision
-from scipy.signal import butter, filtfilt
+from scipy.signal import oaconvolve
 
 import mri_correction.pipeline as pipeline_module
+from mri_correction import pipeline_io
 from mri_correction.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
@@ -425,11 +426,24 @@ def test_psd_plot_forwards_a_configured_fft_length(
     assert seen["n_fft"] == 128
 
 
+def _reference_low_pass(data: np.ndarray, taps: np.ndarray) -> np.ndarray:
+    """The production low-pass, spelled out, so slicing order is what is tested."""
+    pad = (taps.size - 1) // 2
+    reflected = np.pad(
+        data,
+        ((0, 0), (pad, pad)),
+        mode="reflect",
+        reflect_type="odd",
+    )
+    filtered = oaconvolve(reflected, taps[np.newaxis, :], mode="same", axes=1)
+    return filtered[:, pad:-pad]
+
+
 def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
     rng = np.random.default_rng(0)
     data = rng.standard_normal((2, 1000))
-    coefficients = butter(2, 100.0, fs=5000.0)
-    filtered = filtfilt(*coefficients, data, axis=1)
+    taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
+    filtered = _reference_low_pass(data, taps)
 
     actual = pipeline_module._lowpass_and_decimate(
         data,
@@ -448,8 +462,8 @@ def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
 def test_lowpass_and_decimate_full_window_matches_the_legacy_stride() -> None:
     rng = np.random.default_rng(1)
     data = rng.standard_normal((3, 500))
-    coefficients = butter(2, 100.0, fs=5000.0)
-    expected = filtfilt(*coefficients, data, axis=1)[:, ::5]
+    taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
+    expected = _reference_low_pass(data, taps)[:, ::5]
 
     actual = pipeline_module._lowpass_and_decimate(
         data,

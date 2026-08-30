@@ -8,7 +8,7 @@ from pathlib import Path
 
 import mne
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import oaconvolve
 
 from .config import CorrectionConfig
 from .pipeline_types import PipelineInputError
@@ -85,6 +85,33 @@ def resolve_reference_channel(
     return reference
 
 
+def make_output_low_pass(sampling_rate: float, lowpass_hz: float) -> np.ndarray:
+    """Design the anti-alias low-pass applied before decimation.
+
+    `fmrib_fastr.m` builds a least-squares FIR and runs it through `filtfilt`,
+    which squares the response and so doubles its passband ripple. A windowed
+    linear-phase FIR run once is flat to 0.03 dB across the band the cutoff
+    names and reaches deeper into the stop band, so `lowpass_hz` describes what
+    the output actually keeps. MNE designs it; the symmetric odd-length result
+    is zero-phase once its group delay is removed.
+    """
+    if lowpass_hz >= 0.5 * sampling_rate:
+        raise PipelineInputError(
+            "lowpass_hz must stay below the input Nyquist frequency"
+        )
+    return mne.filter.create_filter(
+        None,
+        sfreq=sampling_rate,
+        l_freq=None,
+        h_freq=lowpass_hz,
+        method="fir",
+        phase="zero",
+        fir_window="hamming",
+        fir_design="firwin",
+        verbose="ERROR",
+    )
+
+
 def lowpass_and_decimate(
     data: np.ndarray,
     *,
@@ -95,14 +122,23 @@ def lowpass_and_decimate(
 ) -> np.ndarray:
     """Low-pass the whole array, then take the output window and decimate.
 
-    Filtering before slicing keeps ``filtfilt``'s edge transient outside the
+    Filtering before slicing keeps the filter's edge transient outside the
     emitted span. Slicing before decimating anchors the decimation phase to the
-    window start, so the output sample grid does not shift.
+    window start, so the output sample grid does not shift. Reflecting the
+    recording across both ends before convolving stops an untrimmed run, whose
+    emitted span reaches sample zero, from being faded in from nothing.
     """
     ratio = round(sampling_rate / output_sampling_rate)
-    coefficients = butter(2, lowpass_hz, fs=sampling_rate)
-    filtered = filtfilt(*coefficients, data, axis=1)
-    return filtered[:, window.start : window.stop : ratio]
+    taps = make_output_low_pass(sampling_rate, lowpass_hz)
+    pad = (taps.size - 1) // 2
+    reflected = np.pad(
+        data,
+        ((0, 0), (pad, pad)),
+        mode="reflect",
+        reflect_type="odd",
+    )
+    filtered = oaconvolve(reflected, taps[np.newaxis, :], mode="same", axes=1)
+    return filtered[:, pad + window.start : pad + window.stop : ratio]
 
 
 def remove_line_noise(

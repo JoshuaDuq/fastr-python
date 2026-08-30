@@ -314,3 +314,73 @@ def test_template_high_pass_requires_a_sampling_rate() -> None:
             alignment,
             template_high_pass_hz=1.0,
         )
+
+
+def make_cardiac_recording() -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """One artifact channel carrying a QRS-like transient inside one epoch.
+
+    The transient is what `fmrib_fastr.m` protects by forcing the scalar to one
+    on non-EEG channels: it has no counterpart in the moving-average template,
+    so a least-squares scalar fitted through it is biased.
+    """
+    interval = 250
+    group_count = 60
+    sample_count = interval * (group_count + 2)
+    within = np.arange(60)
+    shape = np.sin(2.0 * np.pi * within / 60.0) * np.exp(-within / 18.0)
+
+    triggers = (np.arange(group_count) + 1) * interval
+    artifact = np.zeros(sample_count, dtype=np.float64)
+    for trigger in triggers:
+        artifact[trigger : trigger + shape.size] += 400.0 * shape
+
+    # the beat overlaps the artifact, which is what biases the scalar
+    cardiac = np.zeros(sample_count, dtype=np.float64)
+    beat = np.arange(24)
+    cardiac[triggers[30] + 12 : triggers[30] + 12 + beat.size] = 900.0 * np.exp(
+        -((beat - 12.0) ** 2) / 8.0
+    )
+    return artifact, cardiac, triggers, sample_count
+
+
+def test_unscaled_channels_subtract_the_template_as_it_stands() -> None:
+    artifact, cardiac, triggers, sample_count = make_cardiac_recording()
+    geometry = prepare_fastr_geometry(
+        triggers,
+        sample_count=sample_count,
+        interpolation_factor=10,
+        neighbor_count=20,
+        search_radius_samples=3,
+    )
+    data = np.vstack([artifact + cardiac, artifact + cardiac])
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    correction = apply_fastr_batch(data, geometry, alignment, unscaled_channels=[1])
+
+    np.testing.assert_array_equal(
+        correction.provenance.amplitudes[1],
+        np.ones(triggers.size),
+    )
+    assert correction.provenance.amplitudes[0].std() > 0.0
+
+
+def test_leaving_a_channel_unscaled_keeps_a_transient_out_of_the_scalar() -> None:
+    artifact, cardiac, triggers, sample_count = make_cardiac_recording()
+    geometry = prepare_fastr_geometry(
+        triggers,
+        sample_count=sample_count,
+        interpolation_factor=10,
+        neighbor_count=20,
+        search_radius_samples=3,
+    )
+    data = np.vstack([artifact + cardiac])
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    fitted = apply_fastr_batch(data, geometry, alignment)
+    unscaled = apply_fastr_batch(data, geometry, alignment, unscaled_channels=[0])
+
+    beat_epoch = slice(triggers[30], triggers[31])
+    truth = cardiac[beat_epoch]
+    assert np.std(unscaled.data[0, beat_epoch] - truth) < np.std(
+        fitted.data[0, beat_epoch] - truth
+    )

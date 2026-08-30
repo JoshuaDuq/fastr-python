@@ -27,11 +27,13 @@ For each run, the pipeline:
    those volumes from *clean* neighbours' templates. Outlier volumes keep their
    local window. The gate is off by default, and its robust thresholds, maximum
    exclusion fraction, mains frequency, and mains exclusion width are configurable.
-   It then fits and subtracts a scaled template for every channel batch. The
-   estimate is subtracted from the unfiltered channel, so slow content survives
-   correction.
-8. Applies the configured zero-phase low-pass filter, takes the output window and
-   decimates, then regresses any explicitly configured stationary line frequencies.
+   It then fits and subtracts a scaled template for every channel batch, except
+   on the channels named by `processing.non_eeg_channels`, where the template is
+   subtracted unscaled. The estimate is subtracted from the unfiltered channel,
+   so slow content survives correction.
+8. Applies the zero-phase low-pass filter, takes the output window and
+   decimates, then regresses any explicitly configured stationary line frequencies
+   on the EEG channels.
 9. Writes the corrected data, windowed markers, before/after PSD figures, and a
    provenance sidecar.
 
@@ -78,17 +80,68 @@ residual line artifact fell from 1.1--20.9 uV to 0.00--0.43 uV, against Analyzer
 every motion block. On drift-free synthetic data the high-passed template costs
 about 7 % more neighbour noise. Set it to 0.0 to restore the unfiltered estimate.
 
+## Non-EEG channels
+
+`fmrib_fastr.m` forces the least-squares scalar to one on the channels it is told
+to exclude, and its changelog names the reason: an ECG channel's QRS complex has
+no counterpart in the moving-average template, so a scalar fitted through it is
+biased and spreads that bias over the whole epoch.
+
+`processing.non_eeg_channels` reproduces that rule and defaults to `[ECG]`. The
+same names are kept out of the residual basis set, out of the line-noise
+regression, and out of the residual-QC channel ensemble. Across the 144-run
+cohort the ECG channel's per-epoch scalar varied 2.56 times as much as the median
+EEG channel and was the least stable channel of all in 58 runs, so this is the
+channel the rule exists for.
+
+## The output low-pass
+
+`fmrib_fastr.m` designs the output filter with `firls` over a 15 % transition band
+and applies it with `filtfilt`. Running a linear-phase FIR twice squares its
+response, which doubles the passband ripple in decibels; at a 100 Hz cutoff and
+5 kHz input that design ripples by 2.1 dB between 1 and 85 Hz.
+
+This pipeline designs the filter with MNE's `create_filter` — a Hamming-windowed
+linear-phase FIR — and applies it once, compensating the group delay with a
+`same`-mode convolution. The passband is then flat to 0.03 dB up to the configured
+cutoff, and the worst response anywhere above the output Nyquist frequency is
+−79 dB, so `lowpass_hz` describes what the output actually keeps. Filtering still
+happens before the output window is sliced, so the edge transient stays outside
+the emitted span.
+
 ## Stages this implementation does not perform
 
 FASTR as published has four stages. This pipeline performs the first three: trigger
 alignment, moving-average template subtraction, which the paper reports removes
 more than 98 % of the artifact, and optional residual removal by optimal basis set.
-Adaptive noise cancellation, the fourth stage, is not implemented.
+Adaptive noise cancellation, the fourth stage, is not implemented, and the
+measurement below is the reason rather than the effort.
+
+The published canceller was ported faithfully from `fmrib_fastr.m` and
+`fastranc.c` and measured on `sub-0001` run 1 (63 EEG channels, 443 uV artifact
+RMS). It cut the volume-harmonic residual by 13 to 15 dB — 41.078 Hz fell from
+-4.3 dB to -18.0 dB — while injected tones near those harmonics did not survive:
+61.15 Hz kept 9.2 % of its amplitude, 82.15 Hz kept 13.4 %, 41.156 Hz kept 30.6 %.
+An off-comb 7 Hz tone was untouched at 105 %. The slice-style 15 Hz high-pass and
+the volume-style 2 Hz high-pass behaved the same way. The LMS reference is the
+artifact estimate itself, whose spectrum is a dense comb, so the filter adapts to
+cancel any narrowband EEG sitting near a tooth. That is the 1/TR limitation below
+with an adaptive filter attached, and no residual-line improvement justifies it.
 
 `processing.residual_obs` enables the optimal basis set and defaults to off, so
 the stage never changes an existing configuration silently.
 `processing.residual_obs_rank` sets the number of principal components and
-defaults to 4. The stage runs over whole volumes rather than acquisition groups.
+defaults to 4. `residual_obs` also takes a `section_seconds` argument, which
+re-estimates the basis over consecutive stretches the way `fmrib_fastr.m` does
+once per 60 s section; it is deliberately not exposed in the YAML, because
+shortening the sections costs signal monotonically. On a synthetic run of 84
+volume epochs, broadband 75--200 Hz content retained 0.73 under one basis for the
+whole recording, 0.62 with four-second sections, 0.55 with two and 0.36 with one:
+each extra section spends another `rank` degrees of freedom. Sections are split
+into balanced runs rather than cut at a fixed length, because a run holding
+barely more epochs than the rank spans nearly everything in that stretch — an
+earlier fixed-length split left a five-epoch remainder that destroyed 95 % of the
+same probe. The stage runs over whole volumes rather than acquisition groups.
 What it removes is the volume-to-volume variability the template stage leaves
 behind: on `sub-0001` run 1 the stationary volume-locked mean carries 0.03 % of
 the residual comb's tooth power between 10 and 110 Hz, so averaging cannot reach
@@ -129,11 +182,12 @@ affiliation or endorsement claim.
 The example YAML is the single user-facing configuration surface. Protocol and
 analysis choices include the interpolation factor, template neighbour count,
 search radius, template high-pass, output filter/rate, exact line-noise frequencies,
-residual threshold, optional gate/adaptive settings, trim mode, residual-QC block
-and mains settings, and PSD limits. Line regression deliberately removes all signal
+non-EEG channel names, residual threshold, optional gate/adaptive settings, trim
+mode, residual-QC block and mains settings, and PSD limits. Line regression deliberately removes all signal
 at each configured frequency, so the YAML requires an explicit list; `[]` disables
 it. Fixed implementation details include the interpolation kernel shape, the
-residual OBS 70 Hz high-pass design, and the protected boundary volumes. The
+residual OBS 70 Hz high-pass design, the output low-pass window design, and the
+protected boundary volumes. The
 provenance sidecar stores the resolved configuration, exact-bin and local-sideband
 volume-harmonic spectra, effective PSD limit, FFT length, and residual-QC settings.
 

@@ -396,7 +396,6 @@ def test_residual_obs_leaves_excluded_channels_untouched() -> None:
         ({"rank": 0}, "rank"),
         ({"rank": GROUP_COUNT + 1}, "rank"),
         ({"excluded_channels": (2,)}, "excluded channels"),
-        ({"excluded_channels": (0, 1)}, "excluded channels"),
     ],
 )
 def test_residual_obs_rejects_invalid_parameters(

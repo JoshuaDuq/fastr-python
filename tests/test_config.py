@@ -637,3 +637,33 @@ def test_residual_obs_rank_must_be_a_positive_integer(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="residual_obs_rank"):
         load_config(config_path)
+
+
+def test_non_eeg_channels_default_to_the_ecg_channel(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.non_eeg_channels == ("ECG",)
+
+
+def test_non_eeg_channels_can_be_listed(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["non_eeg_channels"] = ["ECG", "EOG"]
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.non_eeg_channels == ("ECG", "EOG")
+
+
+def test_non_eeg_channels_reject_a_non_string_entry(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["non_eeg_channels"] = ["ECG", 3]
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="non_eeg_channels"):
+        load_config(config_path)
