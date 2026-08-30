@@ -7,7 +7,7 @@ import yaml
 from test_pipeline import make_fixture
 
 import eegfmri_fastr.pipeline as pipeline_module
-from eegfmri_fastr.config import load_config
+from eegfmri_fastr.config import ConfigurationError, load_config
 from eegfmri_fastr.fastr import AncCorrection, ResidualObsCorrection
 from eegfmri_fastr.pipeline import run_correction
 
@@ -170,3 +170,61 @@ def test_pipeline_supports_no_low_pass_without_rate_conversion(
     assert summary.output_sample_count == summary.input_sample_count
     provenance = read_provenance(summary.provenance_json)
     assert provenance["output"]["psd_settings"]["fmax_hz"] == 100.0
+
+
+def test_anc_cancels_against_a_low_passed_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`fmrib_fastr.m` low-passes cleanEEG and Noise before cancelling.
+
+    Cancelling first leaves the LMS reference carrying artifact out to the input
+    Nyquist, which shrinks the 0.05/(N*var(refs)) step size and spends the
+    filter's taps on content the low-pass then discards.
+    """
+    config_path = make_fixture(tmp_path)
+    update_config(config_path, adaptive_noise_cancellation=True)
+    seen: list[np.ndarray] = []
+
+    def capture(
+        data: np.ndarray,
+        artifact: np.ndarray,
+        *args: object,
+        **kwargs: object,
+    ) -> AncCorrection:
+        seen.append(np.array(artifact, copy=True))
+        channel_count = data.shape[0]
+        return AncCorrection(
+            data=data,
+            reference_scales=np.zeros(channel_count),
+            step_sizes=np.zeros(channel_count),
+            filter_order=kwargs["filter_order"],
+        )
+
+    monkeypatch.setattr(pipeline_module, "adaptive_noise_cancel", capture)
+    config = load_config(config_path)
+    run_correction(config)
+
+    assert seen
+    rate = 1000.0
+    cutoff = config.processing.lowpass_hz
+    for reference in seen:
+        spectrum = np.abs(np.fft.rfft(reference, axis=1)) ** 2
+        freqs = np.fft.rfftfreq(reference.shape[1], 1.0 / rate)
+        stop = freqs > cutoff * 1.5
+        keep = (freqs > 0.0) & (freqs <= cutoff)
+        assert spectrum[:, stop].sum() < 1e-4 * spectrum[:, keep].sum()
+
+
+def test_anc_requires_an_output_low_pass(tmp_path: Path) -> None:
+    """MATLAB forces a 70 Hz cutoff here; overriding a stated one is worse."""
+    config_path = make_fixture(tmp_path)
+    update_config(
+        config_path,
+        adaptive_noise_cancellation=True,
+        lowpass_hz=0.0,
+        output_sampling_rate_hz=1000.0,
+    )
+
+    with pytest.raises(ConfigurationError, match="adaptive_noise_cancellation"):
+        load_config(config_path)

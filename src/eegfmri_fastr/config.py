@@ -610,11 +610,22 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         inclusive=True,
         maximum=1.0,
     )
+    lowpass_hz = _finite_number(values, "lowpass_hz", minimum=0.0, inclusive=True)
     adaptive_noise_cancellation = (
         _boolean_value(values, "adaptive_noise_cancellation")
         if "adaptive_noise_cancellation" in values
         else False
     )
+    if adaptive_noise_cancellation and lowpass_hz == 0.0:
+        # fmrib_fastr.m forces a 70 Hz cutoff in this case. Silently replacing a
+        # cutoff the configuration states is worse than refusing the pair: the
+        # canceller's reference has to be band-limited to mean anything.
+        raise ConfigurationError(
+            "processing.adaptive_noise_cancellation requires a nonzero "
+            "processing.lowpass_hz, because the canceller's reference must be "
+            "band-limited"
+        )
+
     adaptive_window = (
         _boolean_value(values, "adaptive_window")
         if "adaptive_window" in values
@@ -687,12 +698,7 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
             "search_radius_samples",
             minimum=0,
         ),
-        lowpass_hz=_finite_number(
-            values,
-            "lowpass_hz",
-            minimum=0.0,
-            inclusive=True,
-        ),
+        lowpass_hz=lowpass_hz,
         output_sampling_rate_hz=output_sampling_rate_hz,
         channel_batch_size=_integer_value(
             values,

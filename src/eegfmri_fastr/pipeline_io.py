@@ -125,6 +125,52 @@ def make_output_low_pass(sampling_rate: float, lowpass_hz: float) -> np.ndarray:
     )
 
 
+def apply_output_low_pass(
+    data: np.ndarray,
+    *,
+    sampling_rate: float,
+    lowpass_hz: float,
+) -> np.ndarray:
+    """Low-pass the whole array in place of the recording, without decimating.
+
+    Reflecting the recording across both ends before convolving stops an
+    untrimmed run, whose emitted span reaches sample zero, from being faded in
+    from nothing.
+    """
+    if lowpass_hz == 0.0:
+        return np.array(data, copy=True)
+    taps = make_output_low_pass(sampling_rate, lowpass_hz)
+    pad = (taps.size - 1) // 2
+    reflected = np.pad(
+        data,
+        ((0, 0), (pad, pad)),
+        mode="reflect",
+        reflect_type="odd",
+    )
+    filtered = oaconvolve(reflected, taps[np.newaxis, :], mode="same", axes=1)
+    return filtered[:, pad:-pad]
+
+
+def emit_output_window(
+    data: np.ndarray,
+    *,
+    sampling_rate: float,
+    output_sampling_rate: float,
+    lowpass_hz: float,
+    window: OutputWindow,
+) -> np.ndarray:
+    """Take the output window from already-filtered data and decimate it.
+
+    Slicing before decimating anchors the decimation phase to the window start,
+    so the output sample grid does not shift.
+    """
+    _, ratio = validate_rates(sampling_rate, output_sampling_rate, lowpass_hz)
+    return np.array(
+        data[:, window.start : window.stop : ratio],
+        copy=True,
+    )
+
+
 def lowpass_and_decimate(
     data: np.ndarray,
     *,
@@ -136,28 +182,19 @@ def lowpass_and_decimate(
     """Low-pass the whole array, then take the output window and decimate.
 
     Filtering before slicing keeps the filter's edge transient outside the
-    emitted span. Slicing before decimating anchors the decimation phase to the
-    window start, so the output sample grid does not shift. Reflecting the
-    recording across both ends before convolving stops an untrimmed run, whose
-    emitted span reaches sample zero, from being faded in from nothing.
+    emitted span.
     """
-    _, ratio = validate_rates(
-        sampling_rate,
-        output_sampling_rate,
-        lowpass_hz,
+    return emit_output_window(
+        apply_output_low_pass(
+            data,
+            sampling_rate=sampling_rate,
+            lowpass_hz=lowpass_hz,
+        ),
+        sampling_rate=sampling_rate,
+        output_sampling_rate=output_sampling_rate,
+        lowpass_hz=lowpass_hz,
+        window=window,
     )
-    if lowpass_hz == 0.0:
-        return np.array(data[:, window.start : window.stop], copy=True)
-    taps = make_output_low_pass(sampling_rate, lowpass_hz)
-    pad = (taps.size - 1) // 2
-    reflected = np.pad(
-        data,
-        ((0, 0), (pad, pad)),
-        mode="reflect",
-        reflect_type="odd",
-    )
-    filtered = oaconvolve(reflected, taps[np.newaxis, :], mode="same", axes=1)
-    return filtered[:, pad + window.start : pad + window.stop : ratio]
 
 
 def remove_line_noise(

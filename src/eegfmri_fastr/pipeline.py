@@ -286,21 +286,36 @@ def _run_correction(
                         "OBS section count changed between channel batches"
                     )
                 selected_obs_ranks[start:stop] = obs_result.selected_ranks
+            # `fmrib_fastr.m` low-passes both the corrected data and the
+            # artifact estimate before cancelling, so the LMS reference is
+            # band-limited to the configured cutoff. Cancelling first would
+            # leave the reference carrying artifact out to the input Nyquist,
+            # shrinking the 0.05/(N*var(refs)) step size and spending the
+            # filter's taps on content the low-pass then discards.
+            filtered_batch = pipeline_io.apply_output_low_pass(
+                corrected_batch,
+                sampling_rate=input_rate,
+                lowpass_hz=config.processing.lowpass_hz,
+            )
             if config.processing.adaptive_noise_cancellation:
-                artifact_estimate = batch - corrected_batch
+                artifact_estimate = pipeline_io.apply_output_low_pass(
+                    batch - corrected_batch,
+                    sampling_rate=input_rate,
+                    lowpass_hz=config.processing.lowpass_hz,
+                )
                 anc_result = adaptive_noise_cancel(
-                    corrected_batch,
+                    filtered_batch,
                     artifact_estimate,
                     sampling_rate=input_rate,
                     filter_order=anc_filter_order,
                     excluded_channels=batch_non_eeg_rows,
                     sample_slice=anc_sample_slice,
                 )
-                corrected_batch = anc_result.data
+                filtered_batch = anc_result.data
                 anc_reference_scales[start:stop] = anc_result.reference_scales
                 anc_step_sizes[start:stop] = anc_result.step_sizes
-            output_batch = _lowpass_and_decimate(
-                corrected_batch,
+            output_batch = pipeline_io.emit_output_window(
+                filtered_batch,
                 sampling_rate=input_rate,
                 output_sampling_rate=output_rate,
                 lowpass_hz=config.processing.lowpass_hz,

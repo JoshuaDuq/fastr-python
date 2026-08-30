@@ -32,12 +32,13 @@ For each run, the pipeline:
    so slow content survives correction.
 8. Optionally fits a fixed or automatically selected residual optimal basis, in
    one or more sections, over whole-volume epochs.
-9. Optionally applies FMRIB's scaled-reference normalized LMS adaptive noise
-   cancellation to EEG channels.
-10. Applies the zero-phase low-pass filter when requested, takes the output window
-   and decimates, then regresses any explicitly configured stationary line
-   frequencies on the EEG channels. A zero low-pass is valid only without
-   decimation.
+9. Applies the zero-phase low-pass filter when requested, to the corrected data
+   and, when the canceller runs, to the artifact estimate as well.
+10. Optionally applies FMRIB's scaled-reference normalized LMS adaptive noise
+   cancellation to EEG channels, against that low-passed reference.
+11. Takes the output window and decimates, then regresses any explicitly
+   configured stationary line frequencies on the EEG channels. A zero low-pass
+   is valid only without decimation.
 11. Writes the corrected data, windowed markers, before/after PSD figures, and a
    provenance sidecar.
 
@@ -134,7 +135,33 @@ the volume-style 2 Hz high-pass behaved the same way. The LMS reference is the
 artifact estimate itself, whose spectrum is a dense comb, so the filter adapts to
 cancel any narrowband EEG sitting near a tooth. That is the 1/TR limitation below
 with an adaptive filter attached, and no residual-line improvement justifies it.
-`processing.adaptive_noise_cancellation` therefore defaults to false.
+Cancellation runs after the output low-pass, on a low-passed reference, as
+`fmrib_fastr.m` does. Ordering matters more than it appears. Measured on this
+cohort with the two orderings differing in nothing else, cancelling before the
+low-pass leaves the reference carrying artifact out to the input Nyquist, which
+shrinks the `0.05/(N*var(refs))` step size until the filter barely adapts: the
+in-passband slice-harmonic residual fell only 20 % on `sub-0001` run 1 and 2 % on
+`sub-0000` run 6. With the reference band-limited the filter adapts as intended
+and those become 63 % and 36 %.
+
+That extra suppression is not a better correction. The same runs show what it
+costs. On-comb probes retained 2.0 to 6.6 % of their amplitude, against 10.6 to
+19.5 % under the weaker ordering. The damage is not confined to the comb either:
+off-comb probes at 33.7 Hz and 70.3 Hz retained 83.2 % and 80.5 %, where the
+mis-ordered canceller left them at about 103 %. Band-limiting the reference
+concentrates the filter's taps inside the EEG band, so it fits and subtracts EEG.
+Only a 7 Hz probe was untouched at 104 %.
+
+The residual improvement and the signal loss are one mechanism seen from two
+sides: the canceller removes narrowband content near the comb without regard to
+its origin, so a lower residual line is not evidence that it removed artifact.
+`processing.adaptive_noise_cancellation` therefore defaults to false, and a
+residual measurement alone must not be used to justify enabling it.
+
+Because the reference has to be band-limited to mean anything, enabling the
+canceller with `processing.lowpass_hz: 0.0` is rejected. `fmrib_fastr.m` silently
+forces a 70 Hz cutoff in that case; overriding a cutoff the configuration states
+is worse than refusing the pair.
 Zero-variance references, non-finite states, and divergence raise an error; the
 pipeline does not silently skip a failed EEG channel. Excluded and flat channels
 bypass the stage.
