@@ -14,9 +14,10 @@ For each run, the pipeline:
    description.
 3. Loads `RepetitionTime`, `SliceTiming`, and
    `MultibandAccelerationFactor` from the BIDS fMRI JSON.
-4. Validates that volume markers are contiguous at the declared TR and expands each
-   volume start into fractional acquisition-group triggers using the unique slice
-   timing offsets.
+4. Validates that volume markers are contiguous at the declared TR. When explicit
+   repair is enabled, it inserts only uniquely located interior markers and checks
+   the resulting count. It then expands each volume start into fractional
+   acquisition-group triggers using the unique slice timing offsets.
 5. Interpolates the data onto a finer temporal grid for sub-sample alignment.
 6. For each acquisition-time slot, constructs a target-excluding template from the
    configured number of neighboring volumes, estimated from a high-passed copy of
@@ -31,10 +32,15 @@ For each run, the pipeline:
    on the channels named by `processing.non_eeg_channels`, where the template is
    subtracted unscaled. The estimate is subtracted from the unfiltered channel,
    so slow content survives correction.
-8. Applies the zero-phase low-pass filter, takes the output window and
-   decimates, then regresses any explicitly configured stationary line frequencies
-   on the EEG channels.
-9. Writes the corrected data, windowed markers, before/after PSD figures, and a
+8. Optionally fits a fixed or automatically selected residual optimal basis, in
+   one or more sections, over whole-volume epochs.
+9. Optionally applies FMRIB's scaled-reference normalized LMS adaptive noise
+   cancellation to EEG channels.
+10. Applies the zero-phase low-pass filter when requested, takes the output window
+   and decimates, then regresses any explicitly configured stationary line
+   frequencies on the EEG channels. A zero low-pass is valid only without
+   decimation.
+11. Writes the corrected data, windowed markers, before/after PSD figures, and a
    provenance sidecar.
 
 The first and last groups whose complete artifact epochs are unavailable are left
@@ -108,17 +114,20 @@ cutoff, and the worst response anywhere above the output Nyquist frequency is
 −79 dB, so `lowpass_hz` describes what the output actually keeps. Filtering still
 happens before the output window is sliced, so the edge transient stays outside
 the emitted span.
+Set `processing.lowpass_hz` to `0.0` to leave the output unfiltered. This is
+accepted only when `output_sampling_rate_hz` equals the input sampling rate;
+decimation without an anti-alias filter is rejected.
 
-## Stages this implementation does not perform
+## Residual OBS and adaptive noise cancellation
 
-FASTR as published has four stages. This pipeline performs the first three: trigger
-alignment, moving-average template subtraction, which the paper reports removes
-more than 98 % of the artifact, and optional residual removal by optimal basis set.
-Adaptive noise cancellation, the fourth stage, is not implemented, and the
-measurement below is the reason rather than the effort.
+FASTR as published has four stages. Trigger alignment and moving-average template
+subtraction always run. Residual optimal-basis subtraction and adaptive noise
+cancellation are separate opt-in stages, so enabling one never changes an existing
+configuration silently.
 
-The published canceller was ported faithfully from `fmrib_fastr.m` and
-`fastranc.c` and measured on `sub-0001` run 1 (63 EEG channels, 443 uV artifact
+The published canceller is ported from `fmrib_fastr.m` and `fastranc.c`. Its sample
+update matches a MATLAB-generated fixture at `1e-13` tolerance. It was previously
+measured on `sub-0001` run 1 (63 EEG channels, 443 uV artifact
 RMS). It cut the volume-harmonic residual by 13 to 15 dB — 41.078 Hz fell from
 -4.3 dB to -18.0 dB — while injected tones near those harmonics did not survive:
 61.15 Hz kept 9.2 % of its amplitude, 82.15 Hz kept 13.4 %, 41.156 Hz kept 30.6 %.
@@ -127,15 +136,19 @@ the volume-style 2 Hz high-pass behaved the same way. The LMS reference is the
 artifact estimate itself, whose spectrum is a dense comb, so the filter adapts to
 cancel any narrowband EEG sitting near a tooth. That is the 1/TR limitation below
 with an adaptive filter attached, and no residual-line improvement justifies it.
+`processing.adaptive_noise_cancellation` therefore defaults to false.
+Zero-variance references, non-finite states, and divergence raise an error; the
+pipeline does not silently skip a failed EEG channel. Excluded and flat channels
+bypass the stage.
 
 `processing.residual_obs` enables the optimal basis set and defaults to off, so
 the stage never changes an existing configuration silently.
-`processing.residual_obs_rank` sets the number of principal components and
-defaults to 4. `residual_obs` also takes a `section_seconds` argument, which
+`processing.residual_obs_rank` sets a positive fixed rank or `auto` and defaults
+to 4. `processing.residual_obs_section_seconds` controls section duration; null
+uses one basis for the run. The residual API also takes `section_seconds`, which
 re-estimates the basis over consecutive stretches the way `fmrib_fastr.m` does
-once per 60 s section; it is deliberately not exposed in the YAML, because
-shortening the sections costs signal monotonically. On a synthetic run of 84
-volume epochs, broadband 75--200 Hz content retained 0.73 under one basis for the
+once per 60 s section. Shortening the sections costs signal monotonically. On a
+synthetic run of 84 volume epochs, broadband 75--200 Hz content retained 0.73 under one basis for the
 whole recording, 0.62 with four-second sections, 0.55 with two and 0.36 with one:
 each extra section spends another `rank` degrees of freedom. Sections are split
 into balanced runs rather than cut at a fixed length, because a run holding
@@ -155,10 +168,11 @@ what ran. PSD figures use the same interval containing
 only complete corrected epochs, so uncorrected boundary data cannot dominate the
 diagnostic. They use the configured PSD frequency limit, capped at the output
 Nyquist, and use standard MNE spatial channel colors when channel positions can be
-identified. A marker gap or more than one native
-sample of timing inconsistency is a hard error; the pipeline does not interpolate
-missing acquisition events. A single sample (0.2 ms at 5 kHz) is treated as clock
-quantization inside the alignment search.
+identified. A marker gap or more than one native sample of timing inconsistency is
+a hard error by default. Explicit repair requires `expected_volume_count` and
+fills only integer-multiple interior gaps; missing boundary markers remain an
+error. A single sample (0.2 ms at 5 kHz) is treated as clock quantization inside
+the alignment search.
 
 ## Why acquisition slots matter
 
@@ -181,15 +195,18 @@ affiliation or endorsement claim.
 
 The example YAML is the single user-facing configuration surface. Protocol and
 analysis choices include the interpolation factor, template neighbour count,
-search radius, template high-pass, output filter/rate, exact line-noise frequencies,
-non-EEG channel names, residual threshold, optional gate/adaptive settings, trim
-mode, residual-QC block and mains settings, and PSD limits. Line regression deliberately removes all signal
+search radius, relative trigger position, marker-repair policy, template high-pass,
+output filter/rate, exact line-noise frequencies, non-EEG channel names, residual
+OBS rank and section duration, ANC, residual threshold, optional gate/adaptive
+settings, trim mode, residual-QC block and mains settings, and PSD limits. Line regression deliberately removes all signal
 at each configured frequency, so the YAML requires an explicit list; `[]` disables
 it. Fixed implementation details include the interpolation kernel shape, the
 residual OBS 70 Hz high-pass design, the output low-pass window design, and the
 protected boundary volumes. The
-provenance sidecar stores the resolved configuration, exact-bin and local-sideband
-volume-harmonic spectra, effective PSD limit, FFT length, and residual-QC settings.
+provenance sidecar stores the FMRIB reference commit, resolved configuration,
+marker repair counts, selected OBS ranks, ANC diagnostics, exact-bin and
+local-sideband volume-harmonic spectra, effective PSD limit, FFT length, and
+residual-QC settings.
 
 ## The 1/TR limitation
 

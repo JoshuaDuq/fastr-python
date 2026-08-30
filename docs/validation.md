@@ -10,7 +10,7 @@ Run the complete automated suite and static checks from the repository root:
 
 ```text
 uv run pytest
-uv run ruff check src tests
+uv run ruff check src tests validation
 git diff --check
 ```
 
@@ -18,9 +18,11 @@ The tests cover:
 
 - strict YAML structure and scalar validation;
 - exact BrainVision marker selection and lossless marker round trips;
-- BIDS timing, TR-sample, marker-gap, and boundary validation;
+- BIDS timing, TR-sample, marker-gap, boundary, and explicit repair validation;
 - shared FASTR alignment and channel-batch invariance;
+- fixed and automatic sectioned OBS, FMRIB LMS ANC, and stage ordering;
 - output-rate, filter, and output-collision checks;
+- safe disabled-low-pass behavior without decimation;
 - reopening the generated BrainVision recording with MNE; and
 - generation of before/after MNE PSD figures.
 
@@ -60,7 +62,9 @@ preservation.
 An independent implementation may be used as a benchmark oracle, but it should not
 become a runtime dependency or a hidden default. Compare identical input channels,
 sample ranges, marker definitions, filters, output rates, and quality metrics. Keep
-the benchmark harness and private recordings outside the tracked public package.
+private recordings and generated outputs outside the tracked public package. The
+reusable oracle runners and aggregate evidence are documented in
+[`fmrib-parity-validation.md`](fmrib-parity-validation.md).
 For the cardiac/BCG comparison, use the FASTR gradient-corrected recording derived from
 the raw unmarked stage as the own-method input. Do not use an Analyzer pulse-marked or
 BrainVision Analyzer-corrected file as that input. Supply Analyzer's pre-BCG input and

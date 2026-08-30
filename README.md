@@ -42,6 +42,9 @@ configuration rejects ambiguous markers, invalid timing, unsuitable filters, and
 existing output files. The run produces BrainVision files, before/after PSD figures,
 and a JSON provenance sidecar. `line_noise_frequencies_hz` is required: use
 `[60.0]` for explicit 60 Hz sinusoidal regression or `[]` to retain every line.
+Missing volume markers can be repaired only when the YAML explicitly selects
+`repair` and supplies the expected volume count; only uniquely located interior
+markers are accepted.
 
 ## Compare uncorrected vs FASTR folders
 
@@ -81,8 +84,13 @@ following the published method and using the
 [FMRIB fMRIb FASTR implementation](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
 as a reference. It is a separate Python implementation, not a drop-in port of the
 FMRIB plug-in. See [`docs/algorithm.md`](docs/algorithm.md) for the processing model,
-limitations, and validation details. Residual OBS is available separately and
-adaptive noise cancellation is not implemented in the pipeline.
+limitations, and configuration details. The pipeline exposes fixed, automatic, or
+disabled residual OBS; sectioned basis fitting; FMRIB-style adaptive noise
+cancellation; relative trigger positioning; explicit marker repair; and an optional
+output low-pass. ANC is opt-in because it can remove genuine narrowband activity
+near scanner harmonics. See
+[`docs/fmrib-parity-validation.md`](docs/fmrib-parity-validation.md) for the complete
+MATLAB source audit and real-recording comparison.
 
 ## Development
 
@@ -90,7 +98,7 @@ Run the test and lint checks:
 
 ```text
 uv run pytest
-uv run ruff check src tests
+uv run ruff check src tests validation
 git diff --check
 ```
 

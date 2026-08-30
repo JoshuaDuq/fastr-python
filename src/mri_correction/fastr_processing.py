@@ -288,7 +288,7 @@ def residual_obs(
     components of that channel's own high-pass residual epochs. Excluded
     channels are returned untouched, allowing callers to preserve channels that
     are not appropriate for residual artifact subtraction. Adaptive noise
-    cancellation, the published fourth stage, is not implemented here.
+    cancellation is a separate fourth-stage operation in ``fastr_anc``.
     """
     result = fit_residual_obs(
         residual,

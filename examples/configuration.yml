@@ -8,12 +8,19 @@ output:
 timing:
   marker_type: Volume
   marker_description: volume-start
+  # Use repair only with an expected_volume_count. Only uniquely located
+  # interior gaps are filled; missing boundary markers remain an error.
+  missing_volume_markers: error
+  # expected_volume_count: 580
 
 processing:
   method: acquisition_group_fastr
   interpolation_factor: 10
   neighbor_count: 60
   search_radius_samples: 3
+  # Relative trigger location within an artifact: 0=start, 1=end.
+  pre_trigger_fraction: 0.03
+  # Set to 0.0 only when output_sampling_rate_hz equals the input rate.
   lowpass_hz: 100.0
   output_sampling_rate_hz: 1000.0
   channel_batch_size: 8
@@ -33,7 +40,12 @@ processing:
   # copy of the residual and applied over whole volumes, because what it removes
   # is the volume-to-volume variability the template stage leaves behind.
   residual_obs: false
+  # A positive integer or auto. Automatic selection uses the FMRIB knee rules.
   residual_obs_rank: 4
+  # Null fits one basis over the run; a positive value refits by section.
+  residual_obs_section_seconds: null
+  # FASTR stage 4. Opt in only after checking narrowband signal transfer.
+  adaptive_noise_cancellation: false
   residual_gate_mad_multiplier: 8.0
   residual_gate_ratio: 8.0
   residual_gate_max_fraction: 0.02
