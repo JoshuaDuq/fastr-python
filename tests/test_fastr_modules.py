@@ -1,20 +1,20 @@
-from mri_correction import fastr
-from mri_correction.fastr_geometry import (
+from eegfmri_fastr import fastr
+from eegfmri_fastr.fastr_geometry import (
     adapt_fastr_geometry,
     gate_fastr_geometry,
     prepare_fastr_geometry,
 )
-from mri_correction.fastr_processing import (
+from eegfmri_fastr.fastr_processing import (
     apply_fastr_batch,
     fit_fastr_alignment,
     residual_obs,
 )
-from mri_correction.fastr_timing import (
+from eegfmri_fastr.fastr_timing import (
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
     make_group_trigger_samples,
 )
-from mri_correction.fastr_types import (
+from eegfmri_fastr.fastr_types import (
     FastrAlignment,
     FastrCorrection,
     FastrGeometry,
@@ -45,6 +45,7 @@ def test_fastr_facade_reexports_stable_value_types() -> None:
 
 def test_fastr_facade_declares_only_public_names() -> None:
     assert fastr.__all__ == [
+        "AcquisitionGeometry",
         "AncCorrection",
         "FastrAlignment",
         "FastrCorrection",
@@ -71,4 +72,6 @@ def test_fastr_facade_declares_only_public_names() -> None:
         "select_obs_rank",
         "slice_fastr",
         "slice_fastr_with_edges",
+        "slice_marker_geometry",
+        "volume_marker_geometry",
     ]

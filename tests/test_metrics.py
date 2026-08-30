@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.metrics import (
+from eegfmri_fastr.metrics import (
     MetricInputError,
     band_rms_ratio,
     cardiac_locked_rms,

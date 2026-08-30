@@ -1,4 +1,12 @@
-"""Separate artifact-suppression and signal-transfer measurements."""
+"""Separate artifact-suppression and signal-transfer measurements.
+
+Validation instrumentation: nothing in the correction pipeline imports this
+module. It exists to measure a correction after the fact, and may be changed or
+removed without affecting a run.
+
+The cardiac measures here support comparing a gradient correction against a
+BCG pipeline; the correction itself is in BCG-Correction, not this package.
+"""
 
 import math
 from collections.abc import Sequence

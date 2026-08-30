@@ -1,5 +1,9 @@
 input:
   raw_vhdr: /path/to/raw.vhdr
+  # Acquisition timing comes from exactly one place: this BIDS sidecar, the
+  # `acquisition` section below, or the markers themselves when they are one
+  # per acquisition group. Declaring two is an error rather than a precedence
+  # rule, because the second could only contradict the first.
   fmri_metadata: /path/to/bold.json
 
 output:
@@ -8,10 +12,29 @@ output:
 timing:
   marker_type: Volume
   marker_description: volume-start
+  # `volume`: one marker begins a volume, and where each acquisition group fires
+  #   inside it comes from the declared slice timing.
+  # `slice`: every acquisition group is marked, so its position is read from the
+  #   recording. Declare `groups_per_volume`, and no acquisition timing: the
+  #   repetition time and the offsets are measured. See the block at the end of
+  #   this file for that form.
+  marker_kind: volume
   # Use repair only with an expected_volume_count. Only uniquely located
   # interior gaps are filled; missing boundary markers remain an error.
   missing_volume_markers: error
   # expected_volume_count: 580
+
+# Slice timing declared here instead of in a BIDS sidecar, for a recording whose
+# sidecar omits SliceTiming or MultibandAccelerationFactor. The three fields are
+# the BIDS ones and go through the same validation, so this is not a weaker
+# declaration -- only a differently placed one. Remove input.fmri_metadata when
+# using it.
+#
+# acquisition:
+#   repetition_time_seconds: 0.9
+#   slice_timing_seconds: [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4,
+#                          0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4]
+#   multiband_acceleration_factor: 2
 
 processing:
   method: acquisition_group_fastr
@@ -59,6 +82,7 @@ quality_control:
   # Rounded down to a whole number of volumes so no block boundary falls
   # mid-acquisition.
   block_seconds: 30.0
+  # 60.0 in North America, 50.0 in most of the rest of the world.
   mains_frequency_hz: 60.0
   mains_exclusion_hz: 1.0
   # A block is annotated only when its residual exceeds the channel's own
@@ -67,6 +91,8 @@ quality_control:
   # noisy run is not flagged end to end for being noisy.
   residual_mad_multiplier: 6.0
   residual_minimum_channels: 4
+  # Highest volume harmonic reported, capped at the output Nyquist frequency.
+  volume_spectrum_max_hz: 110.0
 
 # Optional diagnostic settings. Set psd_n_fft to null to use the MNE default.
 diagnostics:
@@ -75,3 +101,23 @@ diagnostics:
 
 trim:
   mode: first_to_last_volume
+
+# --- correcting from acquisition-group markers -------------------------------
+#
+# A recording that marks every excitation rather than every volume needs no
+# declared slice timing at all: the group positions are recorded. Replace the
+# `timing` section above with this, and remove both input.fmri_metadata and the
+# acquisition section.
+#
+# timing:
+#   marker_type: Slice
+#   marker_description: slice-start
+#   marker_kind: slice
+#   # How many marked groups make one volume. Nothing in the marker series says
+#   # where a volume begins, so this is the one number that must be declared.
+#   groups_per_volume: 18
+#   # Optional, and worth setting: a wrong groups_per_volume that still divides
+#   # the marker count is self-consistent, and only a declared repetition time
+#   # catches it. The usual mistake is counting slices where the scanner marks
+#   # excitations, which measures a whole multiple of the repetition time.
+#   expected_repetition_time_seconds: 0.9

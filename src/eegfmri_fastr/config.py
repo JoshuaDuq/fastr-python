@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from .fastr_timing import FmriAcquisitionTiming
+from .fastr_types import FastrInputError
 from .residual_qc import residual_qc_defaults
 
 
@@ -19,10 +21,14 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class InputConfig:
-    """Input files required for one correction run."""
+    """Input files required for one correction run.
+
+    ``fmri_metadata`` is absent when the acquisition timing is declared inline
+    or measured from acquisition-group markers.
+    """
 
     raw_vhdr: Path
-    fmri_metadata: Path
+    fmri_metadata: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,10 +40,21 @@ class OutputConfig:
 
 @dataclass(frozen=True, slots=True)
 class TimingConfig:
-    """Marker definition used to identify volume starts."""
+    """Which markers locate the acquisition, and what they each stand for.
+
+    ``marker_kind`` is ``volume`` when one marker begins a volume and the group
+    positions inside it come from declared slice timing, or ``slice`` when every
+    acquisition group is marked and its position is read from the recording.
+    ``groups_per_volume`` belongs to the second case only, because a marked
+    excitation does not say which volume it starts, and
+    ``expected_repetition_time_seconds`` is the optional check on that count.
+    """
 
     marker_type: str
     marker_description: str
+    marker_kind: str = "volume"
+    groups_per_volume: int | None = None
+    expected_repetition_time_seconds: float | None = None
     missing_volume_markers: str = "error"
     expected_volume_count: int | None = None
 
@@ -96,6 +113,8 @@ class QualityControlConfig:
     # how many channels at once, before it is annotated. See residual_qc.
     residual_mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER
     residual_minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS
+    # Highest volume harmonic reported, capped at the output Nyquist frequency.
+    volume_spectrum_max_hz: float = 110.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,13 +127,19 @@ class DiagnosticsConfig:
 
 @dataclass(frozen=True, slots=True)
 class CorrectionConfig:
-    """Complete immutable configuration for a correction run."""
+    """Complete immutable configuration for a correction run.
+
+    ``acquisition`` holds slice timing declared inline instead of read from a
+    BIDS sidecar. It is absent when ``input.fmri_metadata`` supplies the same
+    timing, and when acquisition-group markers make it unnecessary.
+    """
 
     input: InputConfig
     output: OutputConfig
     timing: TimingConfig
     processing: ProcessingConfig
     trim: TrimConfig
+    acquisition: FmriAcquisitionTiming | None = None
     quality_control: QualityControlConfig = field(
         default_factory=QualityControlConfig,
     )
@@ -127,6 +152,7 @@ _TOP_LEVEL_KEYS = frozenset(
         "output",
         "timing",
         "processing",
+        "acquisition",
         "trim",
         "quality_control",
         "diagnostics",
@@ -136,17 +162,35 @@ _REQUIRED_TOP_LEVEL_KEYS = frozenset({"input", "output", "timing", "processing"}
 _TRIM_MODES = frozenset({"none", "first_to_last_volume"})
 _TRIM_KEYS = frozenset({"mode"})
 _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
+_OPTIONAL_INPUT_KEYS = frozenset({"fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
+_ACQUISITION_KEYS = frozenset(
+    {
+        "repetition_time_seconds",
+        "slice_timing_seconds",
+        "multiband_acceleration_factor",
+    }
+)
+MARKER_KINDS = frozenset({"volume", "slice"})
 _TIMING_KEYS = frozenset(
     {
         "marker_type",
         "marker_description",
+        "marker_kind",
+        "groups_per_volume",
+        "expected_repetition_time_seconds",
         "missing_volume_markers",
         "expected_volume_count",
     }
 )
 _OPTIONAL_TIMING_KEYS = frozenset(
-    {"missing_volume_markers", "expected_volume_count"}
+    {
+        "marker_kind",
+        "groups_per_volume",
+        "expected_repetition_time_seconds",
+        "missing_volume_markers",
+        "expected_volume_count",
+    }
 )
 _MISSING_VOLUME_MARKER_POLICIES = frozenset({"error", "repair"})
 _QUALITY_CONTROL_KEYS = frozenset(
@@ -156,6 +200,7 @@ _QUALITY_CONTROL_KEYS = frozenset(
         "mains_exclusion_hz",
         "residual_mad_multiplier",
         "residual_minimum_channels",
+        "volume_spectrum_max_hz",
     }
 )
 _DIAGNOSTICS_KEYS = frozenset({"psd_max_frequency_hz", "psd_n_fft"})
@@ -232,7 +277,12 @@ def load_config(path: str | Path) -> CorrectionConfig:
         if section not in root:
             raise ConfigurationError(f"missing required field: {section}")
 
-    input_values = _section(root, "input", _INPUT_KEYS)
+    input_values = _section(
+        root,
+        "input",
+        _INPUT_KEYS,
+        optional_keys=_OPTIONAL_INPUT_KEYS,
+    )
     output_values = _section(root, "output", _OUTPUT_KEYS)
     timing_values = _section(
         root,
@@ -248,27 +298,136 @@ def load_config(path: str | Path) -> CorrectionConfig:
     )
 
     base_directory = config_path.parent
+    timing = _timing_config(timing_values)
+    fmri_metadata = (
+        _path_value(input_values, "fmri_metadata", base_directory)
+        if "fmri_metadata" in input_values
+        else None
+    )
+    acquisition = _acquisition_config(root)
+    _validate_timing_sources(
+        timing,
+        fmri_metadata=fmri_metadata,
+        acquisition=acquisition,
+    )
     return CorrectionConfig(
         input=InputConfig(
             raw_vhdr=_path_value(input_values, "raw_vhdr", base_directory),
-            fmri_metadata=_path_value(
-                input_values,
-                "fmri_metadata",
-                base_directory,
-            ),
+            fmri_metadata=fmri_metadata,
         ),
         output=OutputConfig(
             vhdr=_path_value(output_values, "vhdr", base_directory),
         ),
-        timing=_timing_config(timing_values),
+        timing=timing,
         processing=_processing_config(processing_values),
         trim=_trim_config(root),
+        acquisition=acquisition,
         quality_control=_quality_control_config(root),
         diagnostics=_diagnostics_config(root),
     )
 
 
+def _acquisition_config(
+    root: Mapping[str, object],
+) -> FmriAcquisitionTiming | None:
+    """Read slice timing declared inline instead of in a BIDS sidecar.
+
+    The three fields are the BIDS ones, transcribed, so a recording whose
+    sidecar omits ``SliceTiming`` or ``MultibandAccelerationFactor`` can be
+    corrected without hand-editing a JSON file. They go through the same
+    validation as the sidecar, so an inline declaration is not a weaker one.
+    """
+    if "acquisition" not in root:
+        return None
+    values = _require_mapping(root["acquisition"], "acquisition")
+    _reject_unknown_keys(values, _ACQUISITION_KEYS, "acquisition")
+    for name in sorted(_ACQUISITION_KEYS):
+        if name not in values:
+            raise ConfigurationError(f"missing required field: acquisition.{name}")
+    slice_timing = values["slice_timing_seconds"]
+    if not isinstance(slice_timing, list) or not slice_timing:
+        raise ConfigurationError(
+            "acquisition.slice_timing_seconds must be a nonempty list of "
+            "offsets in seconds, one per slice"
+        )
+    try:
+        return FmriAcquisitionTiming(
+            repetition_time_seconds=values["repetition_time_seconds"],
+            slice_timing_seconds=tuple(slice_timing),
+            multiband_acceleration_factor=values["multiband_acceleration_factor"],
+        )
+    except FastrInputError as error:
+        raise ConfigurationError(f"invalid acquisition section: {error}") from error
+
+
+def _validate_timing_sources(
+    timing: TimingConfig,
+    *,
+    fmri_metadata: Path | None,
+    acquisition: FmriAcquisitionTiming | None,
+) -> None:
+    """Require exactly one source of truth for where acquisition groups fire.
+
+    Volume markers locate only volumes, so the offsets inside them have to be
+    declared. Acquisition-group markers record those offsets already, and a
+    second declaration could only contradict what the recording says.
+    """
+    if fmri_metadata is not None and acquisition is not None:
+        raise ConfigurationError(
+            "declare the acquisition timing once: set either "
+            "input.fmri_metadata or the acquisition section, not both"
+        )
+    declared = fmri_metadata is not None or acquisition is not None
+    if timing.marker_kind == "volume" and not declared:
+        raise ConfigurationError(
+            "volume markers need declared slice timing: set "
+            "input.fmri_metadata to a BIDS sidecar, or fill in the acquisition "
+            "section"
+        )
+    if timing.marker_kind == "slice" and declared:
+        raise ConfigurationError(
+            "acquisition-group markers record their own timing: remove "
+            "input.fmri_metadata and the acquisition section, or set "
+            "timing.marker_kind to 'volume'"
+        )
+
+
 def _timing_config(values: Mapping[str, object]) -> TimingConfig:
+    marker_kind = (
+        _string_value(values, "marker_kind")
+        if "marker_kind" in values
+        else "volume"
+    )
+    if marker_kind not in MARKER_KINDS:
+        raise ConfigurationError(
+            f"timing.marker_kind must be one of {sorted(MARKER_KINDS)}"
+        )
+
+    groups_per_volume = _optional_integer_or_none(values, "groups_per_volume")
+    if marker_kind == "slice" and groups_per_volume is None:
+        raise ConfigurationError(
+            "timing.groups_per_volume is required when timing.marker_kind is "
+            "'slice': the markers say when each acquisition group fired, not "
+            "how many of them make a volume"
+        )
+    if marker_kind == "volume" and groups_per_volume is not None:
+        raise ConfigurationError(
+            "timing.groups_per_volume is only valid when timing.marker_kind is "
+            "'slice'; with volume markers it comes from the declared slice "
+            "timing"
+        )
+
+    expected_repetition_time = _optional_positive_number_or_none(
+        values,
+        "expected_repetition_time_seconds",
+    )
+    if marker_kind == "volume" and expected_repetition_time is not None:
+        raise ConfigurationError(
+            "timing.expected_repetition_time_seconds is only valid when "
+            "timing.marker_kind is 'slice'; with volume markers the repetition "
+            "time is declared, not measured"
+        )
+
     policy = (
         _string_value(values, "missing_volume_markers")
         if "missing_volume_markers" in values
@@ -278,6 +437,13 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
         raise ConfigurationError(
             "timing.missing_volume_markers must be one of "
             f"{sorted(_MISSING_VOLUME_MARKER_POLICIES)}"
+        )
+    if marker_kind == "slice" and policy != "error":
+        raise ConfigurationError(
+            "timing.missing_volume_markers must be 'error' when "
+            "timing.marker_kind is 'slice': a missing acquisition-group marker "
+            "shifts every later volume boundary and cannot be located from the "
+            "marker series"
         )
 
     expected_count = _optional_integer_or_none(
@@ -298,6 +464,9 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
     return TimingConfig(
         marker_type=_string_value(values, "marker_type"),
         marker_description=_string_value(values, "marker_description"),
+        marker_kind=marker_kind,
+        groups_per_volume=groups_per_volume,
+        expected_repetition_time_seconds=expected_repetition_time,
         missing_volume_markers=policy,
         expected_volume_count=expected_count,
     )
@@ -349,6 +518,14 @@ def _quality_control_config(
             default=1.0,
             minimum=0.0,
             inclusive=True,
+        ),
+        volume_spectrum_max_hz=_optional_finite_number(
+            values,
+            "volume_spectrum_max_hz",
+            default=QualityControlConfig.__dataclass_fields__[
+                "volume_spectrum_max_hz"
+            ].default,
+            minimum=0.0,
         ),
     )
 

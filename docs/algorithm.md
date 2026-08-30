@@ -10,14 +10,12 @@ validation so that acquisition geometry is never guessed from the EEG waveform.
 For each run, the pipeline:
 
 1. Reads the BrainVision header and losslessly parses its marker file.
-2. Selects volume-start markers using the exact configured marker type and
-   description.
-3. Loads `RepetitionTime`, `SliceTiming`, and
-   `MultibandAccelerationFactor` from the BIDS fMRI JSON.
-4. Validates that volume markers are contiguous at the declared TR. When explicit
-   repair is enabled, it inserts only uniquely located interior markers and checks
-   the resulting count. It then expands each volume start into fractional
-   acquisition-group triggers using the unique slice timing offsets.
+2. Selects markers using the exact configured marker type and description.
+3. Resolves the acquisition geometry, by whichever of the two routes the
+   configuration declares (see *Where acquisition groups come from* below).
+4. Validates that volume boundaries are contiguous at one repetition time. When
+   explicit repair is enabled on volume markers, it inserts only uniquely located
+   interior markers and checks the resulting count.
 5. Interpolates the data onto a finer temporal grid for sub-sample alignment.
 6. For each acquisition-time slot, constructs a target-excluding template from the
    configured number of neighboring volumes, estimated from a high-passed copy of
@@ -174,6 +172,44 @@ fills only integer-multiple interior gaps; missing boundary markers remain an
 error. A single sample (0.2 ms at 5 kHz) is treated as clock quantization inside
 the alignment search.
 
+## Where acquisition groups come from
+
+Correction needs one trigger per acquisition group, and the number of groups in a
+volume. A recording supplies these one of two ways, declared by
+`timing.marker_kind`, and exactly one source of truth is accepted in each case.
+
+**Volume markers** (`marker_kind: volume`) locate only the volume. Where each
+group fires inside it is derived from declared slice timing: `RepetitionTime`,
+`SliceTiming`, and `MultibandAccelerationFactor`, read either from a BIDS sidecar
+at `input.fmri_metadata` or from an `acquisition:` section in the YAML. The two
+carry identical fields through identical validation, so an inline declaration is
+not a weaker one -- it exists because real sidecars often omit `SliceTiming` or
+`MultibandAccelerationFactor`, and hand-editing a JSON file to satisfy a tool is
+worse provenance than declaring the timing where the run is configured.
+
+**Acquisition-group markers** (`marker_kind: slice`) record the group positions
+directly, as a slice-triggered recording does. Nothing in a marker series says
+where a volume begins, so `timing.groups_per_volume` is declared; the repetition
+time and the within-volume offsets are then measured from the markers. Declared
+slice timing is rejected in this mode, since it could only contradict what the
+recording says. Three properties are checked, each catching a distinct failure:
+the marker count must divide into whole volumes; the derived volume starts must
+be one repetition time apart, because one missing or extra group marker moves
+every later boundary; and each slot's offset must repeat across volumes, because
+slot matching averages one acquisition time and drifting offsets would mix
+different slots.
+
+A `groups_per_volume` that is wrong but still divides the marker count is
+self-consistent: counting two volumes' worth of groups measures twice the
+repetition time and offsets that repeat just as well. The markers cannot refute
+that reading, which is why the count must be declared rather than inferred, and
+why `timing.expected_repetition_time_seconds` exists to check it. The likeliest
+mistake it catches is counting slices where the scanner marks excitations.
+
+Neither route infers acquisition geometry from the EEG waveform. The sidecar
+records which route ran, the timing declared to it, and the geometry resolved
+from it, so a measured offset can be told from a derived one after the fact.
+
 ## Why acquisition slots matter
 
 In multiband acquisitions, adjacent groups can represent different acquisition-time
@@ -194,11 +230,13 @@ affiliation or endorsement claim.
 ## Configuration and provenance
 
 The example YAML is the single user-facing configuration surface. Protocol and
-analysis choices include the interpolation factor, template neighbour count,
+analysis choices include the marker convention and its timing source, the
+interpolation factor, template neighbour count,
 search radius, relative trigger position, marker-repair policy, template high-pass,
 output filter/rate, exact line-noise frequencies, non-EEG channel names, residual
 OBS rank and section duration, ANC, residual threshold, optional gate/adaptive
-settings, trim mode, residual-QC block and mains settings, and PSD limits. Line regression deliberately removes all signal
+settings, trim mode, residual-QC block, mains, and volume-spectrum settings, and
+PSD limits. Line regression deliberately removes all signal
 at each configured frequency, so the YAML requires an explicit list; `[]` disables
 it. Fixed implementation details include the interpolation kernel shape, the
 residual OBS 70 Hz high-pass design, the output low-pass window design, and the
@@ -221,6 +259,18 @@ setting. On this cohort, 60 neighbouring volumes cut leave-one-out transfer
 inflation from 4.4% (N=20) to 1.1% without increasing residual slice-harmonic
 amplitude. That value must be revalidated when the scanner sequence, electrode
 montage, marker timing, or recording protocol changes.
+
+## Trying the pipeline without a recording
+
+`eegfmri-fastr demo --output-dir DIR` writes a BrainVision recording carrying a
+simulated multiband gradient artifact, marked both per volume and per
+acquisition group, alongside a BIDS sidecar and a commented configuration. It
+exists so that an installation can be exercised end to end, and so that the two
+marker conventions can be compared on one recording. Its 10.5 Hz probe tone sits
+off the volume-harmonic comb of its 0.9 s repetition time; a 10.0 Hz tone would
+land on the ninth harmonic and be removed with the artifact, which is the 1/TR
+limitation below rather than a defect. Simulated numbers are evidence about the
+implementation, never about an acquisition.
 
 ## Inputs and units
 

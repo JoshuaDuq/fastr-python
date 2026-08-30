@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from mri_correction.config import (
+from eegfmri_fastr.config import (
     ConfigurationError,
     CorrectionConfig,
     load_config,
@@ -56,8 +56,25 @@ def test_fmrib_parity_settings_have_strict_defaults(tmp_path: Path) -> None:
 
     assert config.timing.missing_volume_markers == "error"
     assert config.timing.expected_volume_count is None
+    assert config.timing.marker_kind == "volume"
+    assert config.timing.groups_per_volume is None
+    assert config.timing.expected_repetition_time_seconds is None
+    assert config.acquisition is None
     assert config.processing.pre_trigger_fraction == 0.03
     assert config.processing.residual_obs_section_seconds is None
+    assert config.quality_control.volume_spectrum_max_hz == 110.0
+
+
+def test_the_volume_spectrum_limit_is_configurable(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        valid_document() + "quality_control:\n  volume_spectrum_max_hz: 45.0\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.quality_control.volume_spectrum_max_hz == 45.0
     assert config.processing.adaptive_noise_cancellation is False
 
 

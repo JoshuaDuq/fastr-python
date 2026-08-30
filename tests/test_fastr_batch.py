@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.fastr import (
+from eegfmri_fastr.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     acquisition_group_fastr_with_edges,

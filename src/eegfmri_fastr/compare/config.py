@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -24,17 +24,45 @@ class PlotSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class NamingConfig:
+    """How file and folder names identify a recording, a subject, and a run.
+
+    Every export convention names its stages differently, so the suffixes that
+    identify them are declared rather than assumed. The defaults recognise only
+    a ``_fastr`` corrected suffix and BIDS ``sub-`` directories; an uncorrected
+    suffix has to be named before anything will pair.
+    """
+
+    corrected_suffixes: tuple[str, ...] = ("_fastr",)
+    uncorrected_suffixes: tuple[str, ...] = ()
+    subject_directory_prefix: str = "sub-"
+    first_run_prefixes: tuple[str, ...] = ()
+    run_index_token: str = "run"
+
+
+@dataclass(frozen=True, slots=True)
 class CompareConfig:
     paths: ComparePaths
     plot: PlotSettings
     include: tuple[str, ...]
     exclude: tuple[str, ...]
+    naming: NamingConfig = field(default_factory=NamingConfig)
 
 
-_TOP = frozenset({"paths", "plot", "subjects"})
+_TOP = frozenset({"paths", "plot", "subjects", "naming"})
+_REQUIRED_TOP = frozenset({"paths", "plot", "subjects"})
 _PATH_KEYS = frozenset({"uncorrected_root", "fastr_root", "output_root"})
 _PLOT_KEYS = frozenset({"psd_max_hz"})
 _SUBJECT_KEYS = frozenset({"include", "exclude"})
+_NAMING_KEYS = frozenset(
+    {
+        "corrected_suffixes",
+        "uncorrected_suffixes",
+        "subject_directory_prefix",
+        "first_run_prefixes",
+        "run_index_token",
+    }
+)
 
 
 def load_compare_config(path: str | Path) -> CompareConfig:
@@ -56,7 +84,7 @@ def load_compare_config(path: str | Path) -> CompareConfig:
         raise ConfigurationError(
             f"unknown field(s) in configuration: {', '.join(unknown)}"
         )
-    for key in sorted(_TOP):
+    for key in sorted(_REQUIRED_TOP):
         if key not in document:
             raise ConfigurationError(f"missing required field: {key}")
 
@@ -78,6 +106,47 @@ def load_compare_config(path: str | Path) -> CompareConfig:
         ),
         include=_string_list(subjects, "include"),
         exclude=_string_list(subjects, "exclude"),
+        naming=_naming_config(document),
+    )
+
+
+def _naming_config(document: Mapping[str, object]) -> NamingConfig:
+    """Read the optional naming section, defaulting each absent field."""
+    if "naming" not in document:
+        return NamingConfig()
+    values = _mapping(document["naming"], "naming")
+    unknown = sorted(str(key) for key in values if key not in _NAMING_KEYS)
+    if unknown:
+        raise ConfigurationError(
+            f"unknown field(s) in naming: {', '.join(unknown)}"
+        )
+    defaults = NamingConfig()
+    return NamingConfig(
+        corrected_suffixes=_optional_string_list(
+            values,
+            "corrected_suffixes",
+            defaults.corrected_suffixes,
+        ),
+        uncorrected_suffixes=_optional_string_list(
+            values,
+            "uncorrected_suffixes",
+            defaults.uncorrected_suffixes,
+        ),
+        subject_directory_prefix=_optional_string(
+            values,
+            "subject_directory_prefix",
+            defaults.subject_directory_prefix,
+        ),
+        first_run_prefixes=_optional_string_list(
+            values,
+            "first_run_prefixes",
+            defaults.first_run_prefixes,
+        ),
+        run_index_token=_optional_string(
+            values,
+            "run_index_token",
+            defaults.run_index_token,
+        ),
     )
 
 
@@ -121,3 +190,31 @@ def _string_list(values: Mapping[str, object], name: str) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         raise ConfigurationError(f"{name} must be a list of strings")
     return tuple(str(item) for item in value)
+
+
+def _optional_string(
+    values: Mapping[str, object],
+    name: str,
+    default: str,
+) -> str:
+    if name not in values:
+        return default
+    value = values[name]
+    if not isinstance(value, str):
+        raise ConfigurationError(f"naming.{name} must be a string")
+    return value
+
+
+def _optional_string_list(
+    values: Mapping[str, object],
+    name: str,
+    default: tuple[str, ...],
+) -> tuple[str, ...]:
+    if name not in values:
+        return default
+    entries = _string_list(values, name)
+    if any(not entry for entry in entries):
+        raise ConfigurationError(
+            f"naming.{name} must not contain empty strings"
+        )
+    return entries

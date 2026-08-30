@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-import mri_correction.pipeline as pipeline_module
-from mri_correction.fastr import FmriAcquisitionTiming
-from mri_correction.residual_qc import (
+import eegfmri_fastr.pipeline as pipeline_module
+from eegfmri_fastr.fastr import AcquisitionGeometry
+from eegfmri_fastr.residual_qc import (
     ResidualQcError,
     block_residual_uv,
     slice_harmonics,
@@ -150,14 +150,34 @@ def test_volume_harmonic_spectrum_is_robust_to_one_channel_outlier() -> None:
     assert profile[0].local_peak_frequency_hz == pytest.approx(10.0)
 
 
+def _acquisition(
+    repetition_time: float = 0.9,
+    *,
+    groups_per_volume: int = 2,
+    volume_count: int = 4,
+    sampling_rate: float = 1000.0,
+) -> AcquisitionGeometry:
+    """An evenly spaced geometry with the timing the measurement reads."""
+    samples_per_volume = round(repetition_time * sampling_rate)
+    offsets = np.arange(groups_per_volume) * (
+        samples_per_volume // groups_per_volume
+    )
+    volume_starts = np.arange(volume_count, dtype=np.int64) * samples_per_volume
+    triggers = (volume_starts[:, np.newaxis] + offsets).reshape(-1)
+    return AcquisitionGeometry(
+        volume_starts=volume_starts,
+        group_triggers=triggers.astype(np.float64),
+        repetition_time_seconds=repetition_time,
+        groups_per_volume=groups_per_volume,
+        group_offsets_seconds=tuple(offsets / sampling_rate),
+        source="declared_slice_timing",
+    )
+
+
 def test_pipeline_volume_harmonic_spectrum_excludes_ecg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    timing = FmriAcquisitionTiming(
-        repetition_time_seconds=0.1,
-        slice_timing_seconds=(0.0, 0.05),
-        multiband_acceleration_factor=1,
-    )
+    acquisition = _acquisition(0.1, sampling_rate=500.0)
     seen: dict[str, object] = {}
 
     def capture_volume_spectrum(data: np.ndarray, **kwargs: object) -> tuple:
@@ -175,11 +195,12 @@ def test_pipeline_volume_harmonic_spectrum_excludes_ecg(
         channel_names=["EEG 001", "EEG 002", "ECG"],
         non_eeg_indices=frozenset({2}),
         output_rate=500.0,
-        timing=timing,
+        acquisition=acquisition,
         threshold_uv=1.0,
         block_seconds=12.0,
         mains_frequency_hz=50.0,
         mains_exclusion_hz=0.5,
+        volume_spectrum_max_hz=110.0,
     )
 
     assert seen["shape"] == (2, 200)
@@ -203,11 +224,7 @@ def test_invalid_inputs_are_rejected() -> None:
 def test_pipeline_residual_qc_forwards_configured_measurement_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    timing = FmriAcquisitionTiming(
-        repetition_time_seconds=0.1,
-        slice_timing_seconds=(0.0, 0.05),
-        multiband_acceleration_factor=1,
-    )
+    acquisition = _acquisition(0.1, sampling_rate=500.0)
     seen: dict[str, object] = {}
 
     def capture_harmonics(**kwargs: object) -> tuple[float, ...]:
@@ -233,11 +250,12 @@ def test_pipeline_residual_qc_forwards_configured_measurement_settings(
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
         output_rate=500.0,
-        timing=timing,
+        acquisition=acquisition,
         threshold_uv=1.0,
         block_seconds=12.0,
         mains_frequency_hz=50.0,
         mains_exclusion_hz=0.5,
+        volume_spectrum_max_hz=110.0,
     )
 
     assert seen == {
@@ -266,7 +284,7 @@ def _residuals(channels: int, blocks: int, baseline: float = 0.4) -> np.ndarray:
 
 
 def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[:32, 7] = 25.0
@@ -278,7 +296,7 @@ def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
 
 def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
     """One noisy electrode must not condemn all 64 channels for 30 seconds."""
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[11, 7] = 25.0
@@ -288,7 +306,7 @@ def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
 
 def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
     """A high but flat residual is the recording's baseline, not an event."""
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20, baseline=18.0)
 
@@ -297,7 +315,7 @@ def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
 
 def test_flag_blocks_respects_the_absolute_floor() -> None:
     """A statistical outlier still below the floor is not worth flagging."""
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20, baseline=0.01)
     residuals[:32, 7] = 0.2
@@ -307,7 +325,7 @@ def test_flag_blocks_respects_the_absolute_floor() -> None:
 
 
 def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     residuals = np.full((64, 2), 50.0)
 
@@ -315,7 +333,7 @@ def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
 
 
 def test_flag_blocks_handles_an_empty_measurement() -> None:
-    from mri_correction.residual_qc import flag_blocks
+    from eegfmri_fastr.residual_qc import flag_blocks
 
     assert flag_blocks(np.empty((64, 0))).shape == (0,)
 
@@ -333,7 +351,7 @@ def _qc_report(flagged: list[bool]) -> dict[str, object]:
 
 def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
     """MNE drops any annotation whose "type/description" starts with "bad"."""
-    from mri_correction.pipeline_markers import residual_qc_markers
+    from eegfmri_fastr.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -347,7 +365,7 @@ def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
 
 
 def test_residual_qc_marker_spans_the_flagged_block() -> None:
-    from mri_correction.pipeline_markers import residual_qc_markers
+    from eegfmri_fastr.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -360,7 +378,7 @@ def test_residual_qc_marker_spans_the_flagged_block() -> None:
 
 
 def test_residual_qc_markers_follow_the_precomputed_flags() -> None:
-    from mri_correction.pipeline_markers import residual_qc_markers
+    from eegfmri_fastr.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([True, False, True]),
@@ -374,12 +392,37 @@ def test_residual_qc_markers_follow_the_precomputed_flags() -> None:
 # --- block boundaries and the sidecar contract -----------------------------
 
 
-def _timing(tr: float = 0.9) -> FmriAcquisitionTiming:
-    return FmriAcquisitionTiming(
-        repetition_time_seconds=tr,
-        slice_timing_seconds=(0.0, tr / 2.0),
-        multiband_acceleration_factor=1,
+def test_the_volume_spectrum_limit_is_forwarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reported harmonics stop where the configuration says, not at 110 Hz."""
+    seen: dict[str, object] = {}
+
+    def capture_volume_spectrum(data: np.ndarray, **kwargs: object) -> tuple:
+        seen.update(kwargs)
+        return ()
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "volume_harmonic_spectrum",
+        capture_volume_spectrum,
     )
+
+    pipeline_module._measure_residual_qc(
+        np.zeros((2, 3000)),
+        channel_names=["EEG 001", "EEG 002"],
+        non_eeg_indices=frozenset(),
+        output_rate=1000.0,
+        acquisition=_acquisition(0.9),
+        threshold_uv=1.0,
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=45.0,
+    )
+
+    assert seen["maximum_frequency_hz"] == 45.0
+
 
 
 def test_blocks_are_rounded_to_whole_volumes(
@@ -399,11 +442,12 @@ def test_blocks_are_rounded_to_whole_volumes(
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
         output_rate=1000.0,
-        timing=_timing(0.9),
+        acquisition=_acquisition(0.9),
         threshold_uv=1.0,
         block_seconds=30.0,
         mains_frequency_hz=60.0,
         mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=110.0,
     )
 
     block_seconds = float(seen["block_seconds"])
@@ -426,11 +470,12 @@ def test_sidecar_reports_the_flag_decision_and_its_settings(
         channel_names=[f"EEG {index:03d}" for index in range(8)],
         non_eeg_indices=frozenset(),
         output_rate=1000.0,
-        timing=_timing(0.9),
+        acquisition=_acquisition(0.9),
         threshold_uv=1.0,
         block_seconds=30.0,
         mains_frequency_hz=60.0,
         mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=110.0,
     )
 
     assert report["flagged_blocks"] == [False, False, False, True, False]

@@ -19,12 +19,21 @@ The tests cover:
 - strict YAML structure and scalar validation;
 - exact BrainVision marker selection and lossless marker round trips;
 - BIDS timing, TR-sample, marker-gap, boundary, and explicit repair validation;
+- one source of acquisition timing, whichever route declares it;
+- measuring geometry from acquisition-group markers, and the equivalence of the
+  two marker conventions over one recording;
 - shared FASTR alignment and channel-batch invariance;
 - fixed and automatic sectioned OBS, FMRIB LMS ANC, and stage ordering;
 - output-rate, filter, and output-collision checks;
 - safe disabled-low-pass behavior without decimation;
+- pairing two folders under a declared naming convention;
+- correcting the generated demo dataset end to end, checking that the artifact
+  falls and the off-comb probe tone survives;
 - reopening the generated BrainVision recording with MNE; and
 - generation of before/after MNE PSD figures.
+
+`eegfmri-fastr demo --output-dir DIR` reproduces that end-to-end check by hand,
+on a dataset that needs no recording of your own.
 
 The BCG-Correction package (AAS/PCA-OBS) additionally verifies that the FASTR input contains no
 pre-existing `Pulse Artifact,R` markers, detects R samples from ECG only, preserves the

@@ -1,4 +1,9 @@
-"""Compare matched MATLAB and Python FASTR outputs."""
+"""Compare matched MATLAB and Python FASTR outputs.
+
+Validation instrumentation: nothing in the correction pipeline imports this
+module. It exists to measure a correction after the fact, and may be changed or
+removed without affecting a run.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from numbers import Integral, Real
 import numpy as np
 import numpy.typing as npt
 
-from mri_correction.residual_qc import block_residual_uv
+from .residual_qc import block_residual_uv
 
 
 class ComparisonError(ValueError):

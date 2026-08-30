@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.matlab_comparison import ComparisonError, compare_arrays
+from eegfmri_fastr.matlab_comparison import ComparisonError, compare_arrays
 
 
 def make_recordings() -> tuple[np.ndarray, np.ndarray, np.ndarray]:

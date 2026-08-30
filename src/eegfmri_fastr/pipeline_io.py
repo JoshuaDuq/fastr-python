@@ -16,10 +16,15 @@ from .window import OutputWindow
 
 
 def validate_input_files(config: CorrectionConfig) -> None:
-    for path, label in (
-        (config.input.raw_vhdr, "raw BrainVision header"),
-        (config.input.fmri_metadata, "fMRI metadata"),
-    ):
+    """Check that every declared input file is present before any work starts.
+
+    ``fmri_metadata`` is optional: the acquisition timing may be declared inline
+    or measured from acquisition-group markers instead.
+    """
+    inputs = [(config.input.raw_vhdr, "raw BrainVision header")]
+    if config.input.fmri_metadata is not None:
+        inputs.append((config.input.fmri_metadata, "fMRI metadata"))
+    for path, label in inputs:
         if not path.is_file():
             raise PipelineInputError(f"{label} does not exist: {path}")
 

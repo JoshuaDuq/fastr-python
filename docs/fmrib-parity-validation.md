@@ -15,7 +15,7 @@ MATLAB was R2026a Update 3 (`26.1.0.3276743`) with EEGLAB and FMRIB 2.1.
 
 | FMRIB behavior | Python implementation | Status |
 | --- | --- | --- |
-| Slice-trigger template subtraction | `slice_fastr` low-level API | Complete |
+| Slice-trigger template subtraction | `timing.marker_kind: slice` in the pipeline, and the `slice_fastr` low-level API | Complete, and reachable from the YAML |
 | Volume-trigger template subtraction | BIDS-derived acquisition-group pipeline; a one-group timing gives classical volume mode | Complete, with a more precise production geometry |
 | Interpolation factor | `processing.interpolation_factor` | Complete |
 | Even moving-template window | `processing.neighbor_count` | Complete; invalid values fail instead of being silently changed |
@@ -29,7 +29,8 @@ MATLAB was R2026a Update 3 (`26.1.0.3276743`) with EEGLAB and FMRIB 2.1.
 | Adaptive noise cancellation | `adaptive_noise_cancellation` | Complete, opt-in, with strict divergence errors |
 | Output low-pass or no low-pass | `lowpass_hz`, including zero at unchanged sampling rate | Complete |
 | Decimation | `output_sampling_rate_hz` with an exact integer ratio | Complete with mandatory anti-alias filtering |
-| Trigger timing correction from expected slices × volumes | Repair volume starts, then synthesize groups from BIDS `SliceTiming` and multiband factor | Equivalent production capability without guessing slice markers |
+| Trigger timing correction from expected slices × volumes | Repair volume starts, then synthesize groups from declared `SliceTiming` and multiband factor | Equivalent production capability without guessing slice markers |
+| Slice timing supplied without a BIDS sidecar | `acquisition:` section carrying the same three fields through the same validation | Beyond the reference, which reads timing from EEGLAB events only |
 | EEGLAB GUI, `EEG.history`, and positional MATLAB call signature | YAML/CLI, BrainVision, and JSON provenance | Intentional interface difference |
 
 The production filter remains MNE's delay-compensated FIR. It does not copy

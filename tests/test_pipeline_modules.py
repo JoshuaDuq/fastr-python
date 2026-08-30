@@ -3,11 +3,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import mri_correction.pipeline as pipeline_module
-from mri_correction import pipeline_io, pipeline_markers, pipeline_provenance
-from mri_correction.pipeline import PipelineInputError
-from mri_correction.pipeline_types import PipelineInputError as SharedPipelineInputError
-from mri_correction.window import OutputWindow
+import eegfmri_fastr.pipeline as pipeline_module
+from eegfmri_fastr import pipeline_io, pipeline_markers, pipeline_provenance
+from eegfmri_fastr.pipeline import PipelineInputError
+from eegfmri_fastr.pipeline_types import PipelineInputError as SharedPipelineInputError
+from eegfmri_fastr.window import OutputWindow
 
 
 def test_pipeline_keeps_existing_private_test_seams() -> None:

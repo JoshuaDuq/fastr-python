@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 import numpy as np
 import pytest
 
-from mri_correction.fastr import (
+from eegfmri_fastr.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     load_bids_fmri_timing,

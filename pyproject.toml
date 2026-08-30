@@ -8,18 +8,21 @@ version = "0.1.0"
 description = "Validated scanner-gradient artifact correction for simultaneous EEG-fMRI"
 license = "GPL-2.0-only"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
+# Ranges, so the package installs beside other analysis tools. The exact
+# versions every published result was produced with are pinned in `uv.lock`;
+# `uv sync` reproduces them. Python 3.12 is the tested interpreter.
 dependencies = [
-    "matplotlib==3.11.1",
-    "mne==1.12.1",
-    "numpy==2.4.6",
-    "pybv==0.8.1",
-    "pyyaml==6.0.3",
-    "scipy==1.17.1",
+    "matplotlib>=3.8,<4",
+    "mne>=1.9,<2",
+    "numpy>=2.0,<3",
+    "pybv>=0.8,<0.9",
+    "pyyaml>=6.0,<7",
+    "scipy>=1.11,<2",
 ]
 
 [project.scripts]
-mri-correct = "mri_correction.cli:main"
+eegfmri-fastr = "eegfmri_fastr.cli:main"
 
 [dependency-groups]
 dev = [
@@ -39,4 +42,4 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "RUF"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/mri_correction"]
+packages = ["src/eegfmri_fastr"]

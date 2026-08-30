@@ -21,10 +21,13 @@ from .fastr_processing import (
     select_obs_rank,
 )
 from .fastr_timing import (
+    AcquisitionGeometry,
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
     make_group_trigger_samples,
     repair_volume_starts,
+    slice_marker_geometry,
+    volume_marker_geometry,
 )
 from .fastr_types import (
     AncCorrection,
@@ -37,6 +40,7 @@ from .fastr_types import (
 )
 
 __all__ = [
+    "AcquisitionGeometry",
     "AncCorrection",
     "FastrAlignment",
     "FastrCorrection",
@@ -63,6 +67,8 @@ __all__ = [
     "select_obs_rank",
     "slice_fastr",
     "slice_fastr_with_edges",
+    "slice_marker_geometry",
+    "volume_marker_geometry",
 ]
 
 

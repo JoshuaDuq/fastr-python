@@ -24,6 +24,7 @@ from .brainvision_io import (
 )
 from .config import CorrectionConfig
 from .fastr import (
+    AcquisitionGeometry,
     FastrAlignment,
     FastrGeometry,
     FastrInputError,
@@ -35,10 +36,11 @@ from .fastr import (
     fit_residual_obs,
     gate_fastr_geometry,
     load_bids_fmri_timing,
-    make_group_trigger_samples,
     obs_trigger_subset,
     prepare_fastr_geometry,
     repair_volume_starts,
+    slice_marker_geometry,
+    volume_marker_geometry,
 )
 from .pipeline_types import PipelineInputError
 from .psd import prepare_psd_raw, save_psd_plot
@@ -50,6 +52,20 @@ from .residual_qc import (
     volume_harmonic_spectrum,
 )
 from .window import OutputWindow, resolve_output_window
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedAcquisition:
+    """Acquisition geometry, plus what the run was told and what it found.
+
+    ``declared_timing`` is absent when acquisition-group markers supplied the
+    geometry, and ``detected_volume_count`` is the count before any volume
+    marker repair, so the sidecar can report both numbers.
+    """
+
+    geometry: AcquisitionGeometry
+    declared_timing: FmriAcquisitionTiming | None
+    detected_volume_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,34 +116,25 @@ def _run_correction(
         verbose="ERROR",
     )
     input_rate = float(raw.info["sfreq"])
-    volume_starts = select_marker_samples(
+    marker_samples = select_marker_samples(
         recording.markers,
         marker_type=config.timing.marker_type,
         marker_description=config.timing.marker_description,
         sample_count=int(raw.n_times),
     )
-    timing = load_bids_fmri_timing(config.input.fmri_metadata)
-    detected_volume_count = int(volume_starts.size)
-    if config.timing.missing_volume_markers == "repair":
-        volume_starts = repair_volume_starts(
-            volume_starts,
-            samples_per_volume=math.floor(
-                timing.repetition_time_seconds * input_rate + 0.5
-            ),
-            expected_volume_count=config.timing.expected_volume_count,
-        )
-    group_triggers = make_group_trigger_samples(
-        volume_starts,
+    resolved = _resolve_acquisition(
+        config,
+        marker_samples,
         sampling_rate=input_rate,
-        timing=timing,
     )
+    acquisition = resolved.geometry
     output_rate, decimation = _validate_rates(
         input_rate,
         config.processing.output_sampling_rate_hz,
         config.processing.lowpass_hz,
     )
     window = resolve_output_window(
-        volume_starts,
+        acquisition.volume_starts,
         mode=config.trim.mode,
         input_sample_count=int(raw.n_times),
     )
@@ -136,12 +143,12 @@ def _run_correction(
         config.processing.reference_channel,
     )
     geometry = prepare_fastr_geometry(
-        group_triggers,
+        acquisition.group_triggers,
         sample_count=int(raw.n_times),
         interpolation_factor=config.processing.interpolation_factor,
         neighbor_count=config.processing.neighbor_count,
         search_radius_samples=config.processing.search_radius_samples,
-        groups_per_volume=timing.groups_per_volume,
+        groups_per_volume=acquisition.groups_per_volume,
         allow_edges=True,
         pre_trigger_fraction=config.processing.pre_trigger_fraction,
     )
@@ -184,7 +191,7 @@ def _run_correction(
 
     obs_triggers = (
         obs_trigger_subset(
-            volume_starts,
+            acquisition.volume_starts,
             sample_count=int(raw.n_times),
             interpolation_factor=config.processing.interpolation_factor,
         )
@@ -217,7 +224,7 @@ def _run_correction(
     )
     with tempfile.TemporaryDirectory(
         dir=config.output.vhdr.parent,
-        prefix=".mri-correction-",
+        prefix=".eegfmri-fastr-",
     ) as temporary_directory:
         output_path = Path(temporary_directory) / "corrected-output.dat"
         corrected_output = np.memmap(
@@ -320,11 +327,12 @@ def _run_correction(
             channel_names=raw.ch_names,
             non_eeg_indices=non_eeg_indices,
             output_rate=output_rate,
-            timing=timing,
+            acquisition=acquisition,
             threshold_uv=config.processing.residual_threshold_uv,
             block_seconds=config.quality_control.block_seconds,
             mains_frequency_hz=config.quality_control.mains_frequency_hz,
             mains_exclusion_hz=config.quality_control.mains_exclusion_hz,
+            volume_spectrum_max_hz=config.quality_control.volume_spectrum_max_hz,
             mad_multiplier=config.quality_control.residual_mad_multiplier,
             minimum_channels=config.quality_control.residual_minimum_channels,
         )
@@ -333,7 +341,7 @@ def _run_correction(
             factor=decimation,
             window=window,
         ) + _bad_gradient_markers(
-            _skipped_group_spans(group_triggers, geometry),
+            _skipped_group_spans(acquisition.group_triggers, geometry),
             window=window,
             decimation=decimation,
             output_sample_count=output_sample_count,
@@ -401,7 +409,8 @@ def _run_correction(
         output_paths=output_paths,
         recording=recording,
         raw=raw,
-        timing=timing,
+        acquisition=acquisition,
+        declared_timing=resolved.declared_timing,
         geometry=geometry,
         alignment=alignment,
         amplitude_means=amplitude_means,
@@ -411,7 +420,7 @@ def _run_correction(
         window=window,
         residual_qc=residual_qc,
         obs_epoch_count=(0 if obs_triggers is None else int(obs_triggers.size)),
-        detected_volume_count=detected_volume_count,
+        detected_volume_count=resolved.detected_volume_count,
         selected_obs_ranks=selected_obs_ranks,
         anc_filter_order=anc_filter_order,
         anc_reference_scales=anc_reference_scales,
@@ -442,6 +451,56 @@ def _run_correction(
         marker_count=len(recording.markers),
         processed_group_count=geometry.triggers.size,
         skipped_group_count=geometry.skipped_group_indices.size,
+    )
+
+
+def _resolve_acquisition(
+    config: CorrectionConfig,
+    marker_samples: np.ndarray,
+    *,
+    sampling_rate: float,
+) -> _ResolvedAcquisition:
+    """Resolve where every acquisition group fires from the configured markers.
+
+    Volume markers are expanded with declared slice timing, optionally after
+    repairing interior gaps; acquisition-group markers are measured where they
+    were recorded. Both paths end at the same geometry, so only this function
+    has to know which convention the recording used.
+    """
+    if config.timing.marker_kind == "slice":
+        geometry = slice_marker_geometry(
+            marker_samples,
+            sampling_rate=sampling_rate,
+            groups_per_volume=config.timing.groups_per_volume,
+            expected_repetition_time_seconds=(
+                config.timing.expected_repetition_time_seconds
+            ),
+        )
+        return _ResolvedAcquisition(
+            geometry=geometry,
+            declared_timing=None,
+            detected_volume_count=geometry.volume_count,
+        )
+
+    timing = config.acquisition or load_bids_fmri_timing(config.input.fmri_metadata)
+    volume_starts = marker_samples
+    detected_volume_count = int(volume_starts.size)
+    if config.timing.missing_volume_markers == "repair":
+        volume_starts = repair_volume_starts(
+            volume_starts,
+            samples_per_volume=math.floor(
+                timing.repetition_time_seconds * sampling_rate + 0.5
+            ),
+            expected_volume_count=config.timing.expected_volume_count,
+        )
+    return _ResolvedAcquisition(
+        geometry=volume_marker_geometry(
+            volume_starts,
+            sampling_rate=sampling_rate,
+            timing=timing,
+        ),
+        declared_timing=timing,
+        detected_volume_count=detected_volume_count,
     )
 
 
@@ -575,11 +634,12 @@ def _measure_residual_qc(
     channel_names: list[str],
     non_eeg_indices: frozenset[int],
     output_rate: float,
-    timing: FmriAcquisitionTiming,
+    acquisition: AcquisitionGeometry,
     threshold_uv: float,
     block_seconds: float,
     mains_frequency_hz: float,
     mains_exclusion_hz: float,
+    volume_spectrum_max_hz: float,
     mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER,
     minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS,
 ) -> dict[str, object]:
@@ -589,19 +649,18 @@ def _measure_residual_qc(
     neither moves when a correction fails: on this cohort both stayed healthy
     through blocks carrying twenty microvolts of residual artifact.
     """
+    repetition_time = acquisition.repetition_time_seconds
     harmonics = slice_harmonics(
-        groups_per_volume=timing.groups_per_volume,
-        repetition_time_seconds=timing.repetition_time_seconds,
+        groups_per_volume=acquisition.groups_per_volume,
+        repetition_time_seconds=repetition_time,
         nyquist_hz=output_rate / 2.0,
         mains_hz=mains_frequency_hz,
         exclusion_hz=mains_exclusion_hz,
     )
     # A block boundary falling mid-volume splits one acquisition across two
     # blocks, so round the requested length to whole volumes.
-    volumes_per_block = max(
-        1, round(block_seconds / timing.repetition_time_seconds)
-    )
-    aligned_block_seconds = volumes_per_block * timing.repetition_time_seconds
+    volumes_per_block = max(1, round(block_seconds / repetition_time))
+    aligned_block_seconds = volumes_per_block * repetition_time
     residuals = block_residual_uv(
         np.asarray(corrected) * 1e6,
         sampling_rate=output_rate,
@@ -615,7 +674,7 @@ def _measure_residual_qc(
         floor_uv=threshold_uv,
     )
     maximum_spectrum_frequency = min(
-        110.0,
+        volume_spectrum_max_hz,
         float(np.nextafter(output_rate / 2.0, 0.0)),
     )
     eeg_indices = [
@@ -624,7 +683,7 @@ def _measure_residual_qc(
     volume_spectrum = volume_harmonic_spectrum(
         np.asarray(corrected)[eeg_indices] * 1e6,
         sampling_rate=output_rate,
-        repetition_time_seconds=timing.repetition_time_seconds,
+        repetition_time_seconds=repetition_time,
         maximum_frequency_hz=maximum_spectrum_frequency,
         mains_frequency_hz=mains_frequency_hz,
         mains_exclusion_hz=mains_exclusion_hz,
@@ -712,7 +771,8 @@ def _make_provenance(
     output_paths: dict[str, Path],
     recording: BrainVisionRecording,
     raw: mne.io.BaseRaw,
-    timing: FmriAcquisitionTiming,
+    acquisition: AcquisitionGeometry,
+    declared_timing: FmriAcquisitionTiming | None,
     geometry: FastrGeometry,
     alignment: FastrAlignment,
     amplitude_means: np.ndarray,
@@ -738,7 +798,8 @@ def _make_provenance(
         output_paths=output_paths,
         recording=recording,
         raw=raw,
-        timing=timing,
+        acquisition=acquisition,
+        declared_timing=declared_timing,
         geometry=geometry,
         alignment=alignment,
         amplitude_means=amplitude_means,

@@ -1,4 +1,9 @@
-"""Descriptive acquisition diagnostics that never become production metadata."""
+"""Descriptive acquisition diagnostics that never become production metadata.
+
+Validation instrumentation: nothing in the correction pipeline imports this
+module. It exists to measure a correction after the fact, and may be changed or
+removed without affecting a run.
+"""
 
 from dataclasses import dataclass
 

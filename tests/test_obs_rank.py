@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.fastr import (
+from eegfmri_fastr.fastr import (
     FastrInputError,
     fit_residual_obs,
     select_obs_rank,

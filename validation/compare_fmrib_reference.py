@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
-from mri_correction.matlab_comparison import ComparisonError, compare_arrays
+from eegfmri_fastr.matlab_comparison import ComparisonError, compare_arrays
 
 
 def compare_mat_files(

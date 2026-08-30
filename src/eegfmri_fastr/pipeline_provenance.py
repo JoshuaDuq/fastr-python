@@ -13,7 +13,12 @@ import numpy as np
 from . import __version__
 from .brainvision_io import BrainVisionRecording
 from .config import CorrectionConfig
-from .fastr import FastrAlignment, FastrGeometry, FmriAcquisitionTiming
+from .fastr import (
+    AcquisitionGeometry,
+    FastrAlignment,
+    FastrGeometry,
+    FmriAcquisitionTiming,
+)
 from .window import OutputWindow
 
 FMRIB_REFERENCE_COMMIT = "2aa522bc5ec4215f42b3ba8efdb2b84d2a312935"
@@ -46,13 +51,57 @@ def trim_provenance(
     }
 
 
+def timing_provenance(
+    config: CorrectionConfig,
+    *,
+    acquisition: AcquisitionGeometry,
+    declared_timing: FmriAcquisitionTiming | None,
+) -> dict[str, object]:
+    """Record the resolved acquisition timing and where each number came from.
+
+    ``declared`` is the slice timing the run was given, absent when the markers
+    supplied the geometry instead; ``resolved`` is what the correction actually
+    used. Keeping both lets a reader tell a measured offset from a derived one
+    without re-running anything.
+    """
+    return {
+        "marker_kind": config.timing.marker_kind,
+        "group_position_source": acquisition.source,
+        "declared_timing_source": (
+            "bids_sidecar"
+            if config.input.fmri_metadata is not None
+            else "configuration"
+            if config.acquisition is not None
+            else None
+        ),
+        "declared": (
+            None
+            if declared_timing is None
+            else {
+                "repetition_time_seconds": declared_timing.repetition_time_seconds,
+                "slice_timing_seconds": list(declared_timing.slice_timing_seconds),
+                "multiband_acceleration_factor": (
+                    declared_timing.multiband_acceleration_factor
+                ),
+            }
+        ),
+        "resolved": {
+            "repetition_time_seconds": acquisition.repetition_time_seconds,
+            "groups_per_volume": acquisition.groups_per_volume,
+            "group_offsets_seconds": list(acquisition.group_offsets_seconds),
+            "volume_count": acquisition.volume_count,
+        },
+    }
+
+
 def make_provenance(
     config: CorrectionConfig,
     *,
     output_paths: dict[str, Path],
     recording: BrainVisionRecording,
     raw: mne.io.BaseRaw,
-    timing: FmriAcquisitionTiming,
+    acquisition: AcquisitionGeometry,
+    declared_timing: FmriAcquisitionTiming | None,
     geometry: FastrGeometry,
     alignment: FastrAlignment,
     amplitude_means: np.ndarray,
@@ -80,12 +129,20 @@ def make_provenance(
             "raw_vhdr": str(recording.header_path),
             "raw_data": str(recording.data_path),
             "raw_vmrk": str(recording.marker_path),
-            "fmri_metadata": str(config.input.fmri_metadata),
+            "fmri_metadata": (
+                None
+                if config.input.fmri_metadata is None
+                else str(config.input.fmri_metadata)
+            ),
             "sha256": {
                 "vhdr": sha256(recording.header_path),
                 "eeg": sha256(recording.data_path),
                 "vmrk": sha256(recording.marker_path),
-                "fmri_metadata": sha256(config.input.fmri_metadata),
+                "fmri_metadata": (
+                    None
+                    if config.input.fmri_metadata is None
+                    else sha256(config.input.fmri_metadata)
+                ),
             },
         },
         "output": {
@@ -111,12 +168,11 @@ def make_provenance(
         ),
         "residual_qc": residual_qc,
         "configuration": jsonable_config(config),
-        "timing": {
-            "repetition_time_seconds": timing.repetition_time_seconds,
-            "slice_timing_seconds": list(timing.slice_timing_seconds),
-            "multiband_acceleration_factor": timing.multiband_acceleration_factor,
-            "groups_per_volume": timing.groups_per_volume,
-        },
+        "timing": timing_provenance(
+            config,
+            acquisition=acquisition,
+            declared_timing=declared_timing,
+        ),
         "markers": {
             "count": len(recording.markers),
             "processed_group_count": int(geometry.triggers.size),

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.simulation import (
+from eegfmri_fastr.simulation import (
     SimulationInputError,
     simulate_gradient_artifact,
     simulate_pulse_artifact,

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from mri_correction.fastr import (
+from eegfmri_fastr.fastr import (
     FastrInputError,
     FastrProvenance,
     FmriAcquisitionTiming,
@@ -11,7 +11,7 @@ from mri_correction.fastr import (
     residual_obs,
     slice_fastr,
 )
-from mri_correction.simulation import simulate_gradient_artifact
+from eegfmri_fastr.simulation import simulate_gradient_artifact
 
 SAMPLING_RATE = 1_000.0
 GROUP_INTERVAL_SAMPLES = 47.5

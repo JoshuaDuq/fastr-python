@@ -17,3 +17,27 @@ plot:
 subjects:
   include: []
   exclude: []
+
+# How file and folder names identify a recording, a subject, and a run. Every
+# export convention names its stages differently, so nothing here is assumed:
+# the two sides pair only once their suffixes are declared. Stripping the
+# declared suffixes from a file stem leaves the identifier both sides share.
+#
+# The values below are one lab's BrainVision Analyzer convention. Replace them
+# with the naming actually in use.
+naming:
+  # Appended by the correction stage. Longest match wins, so a specific suffix
+  # ending in a general one is not half-stripped.
+  corrected_suffixes: ["_fastr"]
+  # Appended by whatever produced the uncorrected export. Leave empty when the
+  # uncorrected files carry the bare recording name.
+  uncorrected_suffixes:
+    - "_first_to_last_volume_scanner_artifact_with_pulse_markers"
+    - "_scanner_artifact_with_pulse_markers"
+  # Directories under each root that hold one subject's recordings.
+  subject_directory_prefix: "sub-"
+  # Recordings whose name starts with one of these sort before numbered runs.
+  first_run_prefixes: ["BaselineEEG"]
+  # A run number is read from the digits following this token, case-insensitively.
+  # Recordings with no run number sort last.
+  run_index_token: "run"

@@ -9,16 +9,16 @@ import yaml
 from pybv import write_brainvision
 from scipy.signal import oaconvolve
 
-import mri_correction.pipeline as pipeline_module
-from mri_correction import pipeline_io
-from mri_correction.brainvision import (
+import eegfmri_fastr.pipeline as pipeline_module
+from eegfmri_fastr import pipeline_io
+from eegfmri_fastr.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from mri_correction.config import load_config
-from mri_correction.pipeline import PipelineInputError, run_correction
-from mri_correction.window import OutputWindow
+from eegfmri_fastr.config import load_config
+from eegfmri_fastr.pipeline import PipelineInputError, run_correction
+from eegfmri_fastr.window import OutputWindow
 
 
 def make_fixture(tmp_path: Path, *, gap: bool = False) -> Path:

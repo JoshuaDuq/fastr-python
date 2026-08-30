@@ -1,7 +1,7 @@
 import numpy as np
 
-from mri_correction import pipeline_io
-from mri_correction.metrics import tone_transfer
+from eegfmri_fastr import pipeline_io
+from eegfmri_fastr.metrics import tone_transfer
 
 
 def test_spectrum_fit_removes_only_the_configured_line() -> None:

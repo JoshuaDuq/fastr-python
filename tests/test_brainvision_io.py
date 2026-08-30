@@ -5,19 +5,19 @@ import numpy as np
 import pytest
 from pybv import write_brainvision
 
-from mri_correction.brainvision import (
+from eegfmri_fastr.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from mri_correction.brainvision_io import (
+from eegfmri_fastr.brainvision_io import (
     BrainVisionInputError,
     read_brainvision_recording,
     resample_markers,
     select_marker_samples,
     write_brainvision_recording,
 )
-from mri_correction.window import OutputWindow
+from eegfmri_fastr.window import OutputWindow
 
 
 def make_markers() -> tuple[BrainVisionMarker, ...]:

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.fastr import FastrInputError, prepare_fastr_geometry
+from eegfmri_fastr.fastr import FastrInputError, prepare_fastr_geometry
 
 
 def make_geometry(fraction: object):

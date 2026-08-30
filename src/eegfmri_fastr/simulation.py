@@ -1,4 +1,9 @@
-"""Deterministic simulated recordings with known artifact and signal content."""
+"""Deterministic simulated recordings with known artifact and signal content.
+
+Used by the tests and by `eegfmri_fastr.demo`; the correction pipeline itself
+never imports this module. A simulated recording is a probe with known answers,
+never evidence about a real acquisition.
+"""
 
 import math
 

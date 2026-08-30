@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from mri_correction.markers import (
+from eegfmri_fastr.markers import (
     MarkerTimingError,
     map_brainvision_position,
     split_volume_blocks,

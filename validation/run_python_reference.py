@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat, savemat
 
-from mri_correction.fastr import (
+from eegfmri_fastr.fastr import (
     apply_fastr_batch,
     fit_fastr_alignment,
     fit_residual_obs,
