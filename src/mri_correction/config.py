@@ -38,6 +38,8 @@ class TimingConfig:
 
     marker_type: str
     marker_description: str
+    missing_volume_markers: str = "error"
+    expected_volume_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +60,10 @@ class ProcessingConfig:
     residual_threshold_uv: float = 1.0
     residual_gate: bool = False
     residual_obs: bool = False
-    residual_obs_rank: int = 4
+    residual_obs_rank: int | str = 4
+    residual_obs_section_seconds: float | None = None
+    pre_trigger_fraction: float = 0.03
+    adaptive_noise_cancellation: bool = False
     adaptive_window: bool = False
     local_neighbor_count: int = 20
     residual_gate_mad_multiplier: float = 8.0
@@ -132,7 +137,18 @@ _TRIM_MODES = frozenset({"none", "first_to_last_volume"})
 _TRIM_KEYS = frozenset({"mode"})
 _INPUT_KEYS = frozenset({"raw_vhdr", "fmri_metadata"})
 _OUTPUT_KEYS = frozenset({"vhdr"})
-_TIMING_KEYS = frozenset({"marker_type", "marker_description"})
+_TIMING_KEYS = frozenset(
+    {
+        "marker_type",
+        "marker_description",
+        "missing_volume_markers",
+        "expected_volume_count",
+    }
+)
+_OPTIONAL_TIMING_KEYS = frozenset(
+    {"missing_volume_markers", "expected_volume_count"}
+)
+_MISSING_VOLUME_MARKER_POLICIES = frozenset({"error", "repair"})
 _QUALITY_CONTROL_KEYS = frozenset(
     {
         "block_seconds",
@@ -160,6 +176,9 @@ _PROCESSING_KEYS = frozenset(
         "residual_gate",
         "residual_obs",
         "residual_obs_rank",
+        "residual_obs_section_seconds",
+        "pre_trigger_fraction",
+        "adaptive_noise_cancellation",
         "adaptive_window",
         "local_neighbor_count",
         "residual_gate_mad_multiplier",
@@ -176,6 +195,9 @@ _OPTIONAL_PROCESSING_KEYS = frozenset(
         "residual_gate",
         "residual_obs",
         "residual_obs_rank",
+        "residual_obs_section_seconds",
+        "pre_trigger_fraction",
+        "adaptive_noise_cancellation",
         "adaptive_window",
         "local_neighbor_count",
         "residual_gate_mad_multiplier",
@@ -212,7 +234,12 @@ def load_config(path: str | Path) -> CorrectionConfig:
 
     input_values = _section(root, "input", _INPUT_KEYS)
     output_values = _section(root, "output", _OUTPUT_KEYS)
-    timing_values = _section(root, "timing", _TIMING_KEYS)
+    timing_values = _section(
+        root,
+        "timing",
+        _TIMING_KEYS,
+        optional_keys=_OPTIONAL_TIMING_KEYS,
+    )
     processing_values = _section(
         root,
         "processing",
@@ -233,17 +260,46 @@ def load_config(path: str | Path) -> CorrectionConfig:
         output=OutputConfig(
             vhdr=_path_value(output_values, "vhdr", base_directory),
         ),
-        timing=TimingConfig(
-            marker_type=_string_value(timing_values, "marker_type"),
-            marker_description=_string_value(
-                timing_values,
-                "marker_description",
-            ),
-        ),
+        timing=_timing_config(timing_values),
         processing=_processing_config(processing_values),
         trim=_trim_config(root),
         quality_control=_quality_control_config(root),
         diagnostics=_diagnostics_config(root),
+    )
+
+
+def _timing_config(values: Mapping[str, object]) -> TimingConfig:
+    policy = (
+        _string_value(values, "missing_volume_markers")
+        if "missing_volume_markers" in values
+        else "error"
+    )
+    if policy not in _MISSING_VOLUME_MARKER_POLICIES:
+        raise ConfigurationError(
+            "timing.missing_volume_markers must be one of "
+            f"{sorted(_MISSING_VOLUME_MARKER_POLICIES)}"
+        )
+
+    expected_count = _optional_integer_or_none(
+        values,
+        "expected_volume_count",
+    )
+    if policy == "repair" and expected_count is None:
+        raise ConfigurationError(
+            "timing.expected_volume_count is required when missing volume "
+            "markers are repaired"
+        )
+    if policy == "error" and expected_count is not None:
+        raise ConfigurationError(
+            "timing.expected_volume_count is only valid when "
+            "missing_volume_markers is 'repair'"
+        )
+
+    return TimingConfig(
+        marker_type=_string_value(values, "marker_type"),
+        marker_description=_string_value(values, "marker_description"),
+        missing_volume_markers=policy,
+        expected_volume_count=expected_count,
     )
 
 
@@ -360,10 +416,27 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         if "residual_obs" in values
         else ProcessingConfig.__dataclass_fields__["residual_obs"].default
     )
-    residual_obs_rank = _optional_positive_integer(
+    residual_obs_rank = _optional_obs_rank(
         values,
         "residual_obs_rank",
         default=ProcessingConfig.__dataclass_fields__["residual_obs_rank"].default,
+    )
+    residual_obs_section_seconds = _optional_positive_number_or_none(
+        values,
+        "residual_obs_section_seconds",
+    )
+    pre_trigger_fraction = _optional_finite_number(
+        values,
+        "pre_trigger_fraction",
+        default=0.03,
+        minimum=0.0,
+        inclusive=True,
+        maximum=1.0,
+    )
+    adaptive_noise_cancellation = (
+        _boolean_value(values, "adaptive_noise_cancellation")
+        if "adaptive_noise_cancellation" in values
+        else False
     )
     adaptive_window = (
         _boolean_value(values, "adaptive_window")
@@ -420,6 +493,9 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         residual_gate=residual_gate,
         residual_obs=residual_obs,
         residual_obs_rank=residual_obs_rank,
+        residual_obs_section_seconds=residual_obs_section_seconds,
+        pre_trigger_fraction=pre_trigger_fraction,
+        adaptive_noise_cancellation=adaptive_noise_cancellation,
         adaptive_window=adaptive_window,
         local_neighbor_count=local_neighbor_count,
         residual_gate_mad_multiplier=residual_gate_mad_multiplier,
@@ -569,6 +645,33 @@ def _optional_positive_integer(
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigurationError(f"{name} must be a positive integer")
     return value
+
+
+def _optional_obs_rank(
+    values: Mapping[str, object],
+    name: str,
+    *,
+    default: int | str,
+) -> int | str:
+    if name not in values:
+        return default
+    value = values[name]
+    if value == "auto":
+        return value
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigurationError(
+            f"{name} must be a positive integer or 'auto'"
+        )
+    return value
+
+
+def _optional_positive_number_or_none(
+    values: Mapping[str, object],
+    name: str,
+) -> float | None:
+    if name not in values or values[name] is None:
+        return None
+    return _finite_number(values, name, minimum=0.0)
 
 
 def _optional_integer_or_none(

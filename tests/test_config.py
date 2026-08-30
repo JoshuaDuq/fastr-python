@@ -48,6 +48,117 @@ def test_load_config_resolves_paths_relative_to_yaml(tmp_path: Path) -> None:
     assert config.processing.line_noise_frequencies_hz == (60.0,)
 
 
+def test_fmrib_parity_settings_have_strict_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.timing.missing_volume_markers == "error"
+    assert config.timing.expected_volume_count is None
+    assert config.processing.pre_trigger_fraction == 0.03
+    assert config.processing.residual_obs_section_seconds is None
+    assert config.processing.adaptive_noise_cancellation is False
+
+
+def test_missing_volume_marker_repair_requires_an_expected_count(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"]["missing_volume_markers"] = "repair"
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="expected_volume_count"):
+        load_config(config_path)
+
+
+def test_missing_volume_marker_repair_is_explicitly_configurable(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"].update(
+        missing_volume_markers="repair",
+        expected_volume_count=200,
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.timing.missing_volume_markers == "repair"
+    assert config.timing.expected_volume_count == 200
+
+
+@pytest.mark.parametrize(
+    ("missing_volume_markers", "expected_volume_count"),
+    [("guess", None), ("error", 200), ("repair", 0), ("repair", True)],
+)
+def test_missing_volume_marker_policy_rejects_ambiguous_settings(
+    tmp_path: Path,
+    missing_volume_markers: str,
+    expected_volume_count: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"]["missing_volume_markers"] = missing_volume_markers
+    if expected_volume_count is not None:
+        document["timing"]["expected_volume_count"] = expected_volume_count
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError):
+        load_config(config_path)
+
+
+def test_fmrib_parity_processing_settings_are_configurable(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        pre_trigger_fraction=0.25,
+        residual_obs_rank="auto",
+        residual_obs_section_seconds=30.0,
+        adaptive_noise_cancellation=True,
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.pre_trigger_fraction == 0.25
+    assert config.processing.residual_obs_rank == "auto"
+    assert config.processing.residual_obs_section_seconds == 30.0
+    assert config.processing.adaptive_noise_cancellation is True
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01, True, "0.03"])
+def test_pre_trigger_fraction_must_be_between_zero_and_one(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["pre_trigger_fraction"] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="pre_trigger_fraction"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, True, "30"])
+def test_residual_obs_section_seconds_must_be_positive(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["residual_obs_section_seconds"] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="residual_obs_section_seconds"):
+        load_config(config_path)
+
+
 def test_config_is_immutable(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yml"
     config_path.write_text(valid_document(), encoding="utf-8")
@@ -628,14 +739,32 @@ def test_residual_obs_rejects_a_non_boolean(tmp_path: Path) -> None:
         load_config(config_path)
 
 
-def test_residual_obs_rank_must_be_a_positive_integer(tmp_path: Path) -> None:
+@pytest.mark.parametrize("value", [0, -1, True, "automatic"])
+def test_residual_obs_rank_must_be_positive_or_auto(
+    tmp_path: Path,
+    value: object,
+) -> None:
     config_path = tmp_path / "config.yml"
-    config_path.write_text(
-        valid_document() + "  residual_obs_rank: 0\n",
-        encoding="utf-8",
-    )
+    document = yaml.safe_load(valid_document())
+    document["processing"]["residual_obs_rank"] = value
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="residual_obs_rank"):
+        load_config(config_path)
+
+
+def test_adaptive_noise_cancellation_rejects_a_non_boolean(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["adaptive_noise_cancellation"] = 1
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(
+        ConfigurationError,
+        match="adaptive_noise_cancellation",
+    ):
         load_config(config_path)
 
 
