@@ -152,3 +152,21 @@ def test_pipeline_runs_obs_before_anc_and_records_diagnostics(
         "repository": "sccn/fMRIb",
         "commit": "2aa522bc5ec4215f42b3ba8efdb2b84d2a312935",
     }
+
+
+def test_pipeline_supports_no_low_pass_without_rate_conversion(
+    tmp_path: Path,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    update_config(
+        config_path,
+        lowpass_hz=0.0,
+        output_sampling_rate_hz=1_000.0,
+    )
+
+    summary = run_correction(load_config(config_path))
+
+    assert summary.output_sampling_rate_hz == 1_000.0
+    assert summary.output_sample_count == summary.input_sample_count
+    provenance = read_provenance(summary.provenance_json)
+    assert provenance["output"]["psd_settings"]["fmax_hz"] == 100.0

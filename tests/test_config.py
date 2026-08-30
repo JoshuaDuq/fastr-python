@@ -267,7 +267,7 @@ def test_config_rejects_invalid_line_noise_frequencies(
         ("interpolation_factor", 0),
         ("neighbor_count", 3),
         ("search_radius_samples", -1),
-        ("lowpass_hz", 0.0),
+        ("lowpass_hz", -1.0),
         ("output_sampling_rate_hz", -1.0),
         ("channel_batch_size", 0),
         ("reference_channel", ""),
@@ -316,6 +316,17 @@ def test_config_rejects_non_mapping_yaml(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="mapping"):
         load_config(config_path)
+
+
+def test_config_accepts_disabled_output_low_pass(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["lowpass_hz"] = 0.0
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.lowpass_hz == 0.0
 
 
 def document_with_trim(trim: str | None) -> str:

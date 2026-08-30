@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import mri_correction.pipeline as pipeline_module
 from mri_correction import pipeline_io, pipeline_markers, pipeline_provenance
@@ -146,3 +147,27 @@ def test_output_low_pass_does_not_taper_the_start_of_the_emitted_span() -> None:
     half = (pipeline_io.make_output_low_pass(rate, 100.0).size - 1) // 2
     np.testing.assert_allclose(filtered[0, :half], tone[0, :half], atol=0.01)
     np.testing.assert_allclose(filtered[0, -half:], tone[0, -half:], atol=0.01)
+
+
+def test_zero_low_pass_returns_an_unfiltered_window_copy() -> None:
+    data = np.arange(20, dtype=np.float64).reshape(2, 10)
+
+    output = pipeline_io.lowpass_and_decimate(
+        data,
+        sampling_rate=500.0,
+        output_sampling_rate=500.0,
+        lowpass_hz=0.0,
+        window=OutputWindow(start=2, stop=8),
+    )
+
+    np.testing.assert_array_equal(output, data[:, 2:8])
+    assert not np.shares_memory(output, data)
+
+
+def test_zero_low_pass_rejects_decimation_without_an_antialias_filter() -> None:
+    with pytest.raises(PipelineInputError, match="anti-alias"):
+        pipeline_io.validate_rates(
+            input_rate=1_000.0,
+            output_rate=500.0,
+            lowpass_hz=0.0,
+        )

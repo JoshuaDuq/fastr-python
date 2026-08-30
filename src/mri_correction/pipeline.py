@@ -355,9 +355,14 @@ def _run_correction(
         )
         del corrected_output
 
+    psd_limit = (
+        output_rate / 2.0
+        if config.processing.lowpass_hz == 0.0
+        else config.processing.lowpass_hz
+    )
     psd_max_frequency = min(
         config.diagnostics.psd_max_frequency_hz,
-        config.processing.lowpass_hz,
+        psd_limit,
         output_rate / 2.0,
     )
     psd_tmin, psd_tmax = _corrected_psd_window(

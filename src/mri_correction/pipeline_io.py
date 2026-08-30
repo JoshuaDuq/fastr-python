@@ -59,6 +59,14 @@ def validate_rates(
         )
     if decimation < 1:
         raise PipelineInputError("output sampling rate cannot exceed input rate")
+    if lowpass_hz < 0.0 or not math.isfinite(lowpass_hz):
+        raise PipelineInputError("lowpass_hz must be finite and nonnegative")
+    if lowpass_hz == 0.0:
+        if decimation > 1:
+            raise PipelineInputError(
+                "decimation requires an anti-alias low-pass filter"
+            )
+        return float(output_rate), decimation
     if lowpass_hz >= min(input_rate, output_rate) / 2.0:
         raise PipelineInputError(
             "lowpass_hz must be below both input and output Nyquist frequencies"
@@ -128,7 +136,13 @@ def lowpass_and_decimate(
     recording across both ends before convolving stops an untrimmed run, whose
     emitted span reaches sample zero, from being faded in from nothing.
     """
-    ratio = round(sampling_rate / output_sampling_rate)
+    _, ratio = validate_rates(
+        sampling_rate,
+        output_sampling_rate,
+        lowpass_hz,
+    )
+    if lowpass_hz == 0.0:
+        return np.array(data[:, window.start : window.stop], copy=True)
     taps = make_output_low_pass(sampling_rate, lowpass_hz)
     pad = (taps.size - 1) // 2
     reflected = np.pad(
