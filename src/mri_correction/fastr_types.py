@@ -93,6 +93,7 @@ class FastrGeometry:
     triggers: np.ndarray
     fine_triggers: np.ndarray
     epoch: _ArtifactEpoch
+    pre_trigger_fraction: float
     window: _TemplateWindow
     interpolation_factor: int
     interpolation_taps: np.ndarray

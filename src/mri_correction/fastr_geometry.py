@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from numbers import Real
 
 import numpy as np
 
@@ -35,7 +36,7 @@ from .fastr_validation import (
 
 _GRID_TOLERANCE_SAMPLES = 1e-6
 _ARTIFACT_SLACK_FRACTION = 0.01
-_PRE_TRIGGER_FRACTION = 0.03
+_DEFAULT_PRE_TRIGGER_FRACTION = 0.03
 _RESIDUAL_GATE_MIN_NEIGHBORS = 2
 
 
@@ -48,6 +49,7 @@ def prepare_fastr_geometry(
     search_radius_samples: int = 3,
     groups_per_volume: int | None = None,
     allow_edges: bool = False,
+    pre_trigger_fraction: float = _DEFAULT_PRE_TRIGGER_FRACTION,
 ) -> FastrGeometry:
     """Validate FASTR geometry before fitting any channel data.
 
@@ -68,6 +70,7 @@ def prepare_fastr_geometry(
         raise FastrInputError("groups per volume must be a positive integer")
     if not isinstance(allow_edges, bool):
         raise FastrInputError("allow_edges must be a boolean")
+    fraction = _validate_pre_trigger_fraction(pre_trigger_fraction)
     return _build_fastr_geometry(
         triggers,
         sample_count=sample_count,
@@ -76,6 +79,7 @@ def prepare_fastr_geometry(
         search_radius_samples=search_radius_samples,
         groups_per_volume=groups_per_volume,
         allow_edges=allow_edges,
+        pre_trigger_fraction=fraction,
     )
 
 
@@ -303,6 +307,7 @@ def _build_fastr_geometry(
     search_radius_samples: int,
     groups_per_volume: int | None,
     allow_edges: bool,
+    pre_trigger_fraction: float,
     group_indices: np.ndarray | None = None,
     skipped_group_indices: np.ndarray | None = None,
 ) -> FastrGeometry:
@@ -322,6 +327,7 @@ def _build_fastr_geometry(
     epoch = _measure_artifact_epoch(
         fine_triggers,
         cover_full_gap=groups_per_volume is not None,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
     search_radius = search_radius_samples * interpolation_factor
     sample_count_interpolated = sample_count * interpolation_factor
@@ -367,6 +373,7 @@ def _build_fastr_geometry(
         triggers=triggers,
         fine_triggers=fine_triggers,
         epoch=epoch,
+        pre_trigger_fraction=pre_trigger_fraction,
         window=window,
         interpolation_factor=interpolation_factor,
         interpolation_taps=_make_interpolation_filter(interpolation_factor),
@@ -399,10 +406,11 @@ def _measure_artifact_epoch(
     fine_triggers: np.ndarray,
     *,
     cover_full_gap: bool,
+    pre_trigger_fraction: float = _DEFAULT_PRE_TRIGGER_FRACTION,
 ) -> _ArtifactEpoch:
     intervals = np.diff(fine_triggers)
     interval = math.ceil(np.median(intervals))
-    before = _round_half_up(interval * _PRE_TRIGGER_FRACTION)
+    before = _round_half_up(interval * pre_trigger_fraction)
     if cover_full_gap:
         return _ArtifactEpoch(
             samples_before=before,
@@ -412,9 +420,20 @@ def _measure_artifact_epoch(
     slack = math.ceil((1.0 + _ARTIFACT_SLACK_FRACTION) * interval) - interval
     return _ArtifactEpoch(
         samples_before=before + slack,
-        samples_after=_round_half_up((1.0 - _PRE_TRIGGER_FRACTION) * interval),
+        samples_after=_round_half_up((1.0 - pre_trigger_fraction) * interval),
         slack=slack,
     )
+
+
+def _validate_pre_trigger_fraction(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise FastrInputError("pre-trigger fraction must be a finite number")
+    fraction = float(value)
+    if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
+        raise FastrInputError(
+            "pre-trigger fraction must lie between zero and one"
+        )
+    return fraction
 
 
 def _round_half_up(value: float) -> int:

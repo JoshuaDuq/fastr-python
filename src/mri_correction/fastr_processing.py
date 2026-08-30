@@ -183,6 +183,7 @@ def _run_fastr(
     neighbor_count: int,
     search_radius_samples: int,
     groups_per_volume: int | None,
+    pre_trigger_fraction: float,
 ) -> FastrCorrection:
     """Run one explicit FASTR template geometry on validated trigger epochs."""
     recording = validate_recording(data)
@@ -194,6 +195,7 @@ def _run_fastr(
         search_radius_samples=search_radius_samples,
         groups_per_volume=groups_per_volume,
         allow_edges=False,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
     alignment = fit_fastr_alignment(recording[0], geometry)
     return apply_fastr_batch(recording, geometry, alignment)
@@ -207,6 +209,7 @@ def _run_fastr_with_edges(
     neighbor_count: int,
     search_radius_samples: int,
     groups_per_volume: int | None,
+    pre_trigger_fraction: float,
 ) -> FastrCorrection:
     recording = validate_recording(data)
     geometry = prepare_fastr_geometry(
@@ -217,6 +220,7 @@ def _run_fastr_with_edges(
         search_radius_samples=search_radius_samples,
         groups_per_volume=groups_per_volume,
         allow_edges=True,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
     alignment = fit_fastr_alignment(recording[0], geometry)
     return apply_fastr_batch(recording, geometry, alignment)

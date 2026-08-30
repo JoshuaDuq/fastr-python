@@ -62,6 +62,7 @@ def slice_fastr(
     interpolation_factor: int = 10,
     neighbor_count: int = 30,
     search_radius_samples: int = 3,
+    pre_trigger_fraction: float = 0.03,
 ) -> FastrCorrection:
     """Subtract target-excluding alternating FASTR templates.
 
@@ -76,6 +77,7 @@ def slice_fastr(
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=None,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
 
 
@@ -88,6 +90,7 @@ def acquisition_group_fastr(
     interpolation_factor: int = 10,
     neighbor_count: int = 20,
     search_radius_samples: int = 3,
+    pre_trigger_fraction: float = 0.03,
 ) -> FastrCorrection:
     """Correct repeated multiband acquisition-time slots with FASTR fitting.
 
@@ -107,6 +110,7 @@ def acquisition_group_fastr(
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=timing.groups_per_volume,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
 
 
@@ -117,6 +121,7 @@ def slice_fastr_with_edges(
     interpolation_factor: int = 10,
     neighbor_count: int = 30,
     search_radius_samples: int = 3,
+    pre_trigger_fraction: float = 0.03,
 ) -> FastrCorrection:
     """Correct estimable groups and report boundary groups left untouched.
 
@@ -131,6 +136,7 @@ def slice_fastr_with_edges(
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=None,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
 
 
@@ -143,6 +149,7 @@ def acquisition_group_fastr_with_edges(
     interpolation_factor: int = 10,
     neighbor_count: int = 20,
     search_radius_samples: int = 3,
+    pre_trigger_fraction: float = 0.03,
 ) -> FastrCorrection:
     """Correct estimable complete volumes and report skipped boundary volumes."""
     triggers = make_group_trigger_samples(
@@ -157,4 +164,5 @@ def acquisition_group_fastr_with_edges(
         neighbor_count=neighbor_count,
         search_radius_samples=search_radius_samples,
         groups_per_volume=timing.groups_per_volume,
+        pre_trigger_fraction=pre_trigger_fraction,
     )
