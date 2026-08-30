@@ -101,6 +101,22 @@ class ResidualObsCorrection:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
+class AncCorrection:
+    """Adaptive-noise-cancellation output and per-channel diagnostics."""
+
+    data: np.ndarray
+    reference_scales: np.ndarray
+    step_sizes: np.ndarray
+    filter_order: int
+
+    def __post_init__(self) -> None:
+        for field_name in ("data", "reference_scales", "step_sizes"):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
 class FastrGeometry:
     """Validated acquisition geometry shared by all channel batches."""
 

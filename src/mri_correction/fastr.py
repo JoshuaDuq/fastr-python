@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy.typing as npt
 
+from .fastr_anc import adaptive_noise_cancel, fmrib_lms
 from .fastr_geometry import (
     adapt_fastr_geometry,
     gate_fastr_geometry,
@@ -26,6 +27,7 @@ from .fastr_timing import (
     repair_volume_starts,
 )
 from .fastr_types import (
+    AncCorrection,
     FastrAlignment,
     FastrCorrection,
     FastrGeometry,
@@ -35,6 +37,7 @@ from .fastr_types import (
 )
 
 __all__ = [
+    "AncCorrection",
     "FastrAlignment",
     "FastrCorrection",
     "FastrGeometry",
@@ -45,9 +48,11 @@ __all__ = [
     "acquisition_group_fastr",
     "acquisition_group_fastr_with_edges",
     "adapt_fastr_geometry",
+    "adaptive_noise_cancel",
     "apply_fastr_batch",
     "fit_fastr_alignment",
     "fit_residual_obs",
+    "fmrib_lms",
     "gate_fastr_geometry",
     "load_bids_fmri_timing",
     "make_group_trigger_samples",

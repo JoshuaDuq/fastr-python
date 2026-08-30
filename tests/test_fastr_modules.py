@@ -45,6 +45,7 @@ def test_fastr_facade_reexports_stable_value_types() -> None:
 
 def test_fastr_facade_declares_only_public_names() -> None:
     assert fastr.__all__ == [
+        "AncCorrection",
         "FastrAlignment",
         "FastrCorrection",
         "FastrGeometry",
@@ -55,9 +56,11 @@ def test_fastr_facade_declares_only_public_names() -> None:
         "acquisition_group_fastr",
         "acquisition_group_fastr_with_edges",
         "adapt_fastr_geometry",
+        "adaptive_noise_cancel",
         "apply_fastr_batch",
         "fit_fastr_alignment",
         "fit_residual_obs",
+        "fmrib_lms",
         "gate_fastr_geometry",
         "load_bids_fmri_timing",
         "make_group_trigger_samples",
