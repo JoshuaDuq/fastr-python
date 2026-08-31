@@ -2,9 +2,8 @@
 
 ## Supported environment
 
-The supported and tested interpreter is Python 3.12. Runtime dependencies are
-declared as compatible ranges in `pyproject.toml`; `uv.lock` records the exact
-environment used for reproducible checks.
+The supported interpreter is Python 3.12. Runtime ranges are in
+`pyproject.toml`; `uv.lock` records the tested environment.
 
 Set up the environment:
 
@@ -24,7 +23,7 @@ uv sync
 
 ## Quality checks
 
-Run these commands before opening a review:
+Run the quality checks:
 
 ```text
 uv sync
@@ -34,35 +33,33 @@ git diff --check
 uv build
 ```
 
-`.github/workflows/quality.yml` runs the same checks in a locked Python
-environment for pushes and pull requests. The local commands and `uv.lock`
-remain the source of truth for contributors outside GitHub.
+`.github/workflows/quality.yml` runs the same checks in a locked environment for
+pushes and pull requests.
 
 ## Adding or changing configuration
 
-Treat `config.py`, both shipped examples, the tests, and
-[`configuration.md`](configuration.md) as one change. Add a failing contract
-test first, state units and defaults, preserve fail-fast validation, and update
-the interaction table. Do not add a fallback or silently reinterpret an
-ambiguous input.
+Update `config.py`, both examples, the tests, and
+[`configuration.md`](configuration.md) together. Add a failing contract test
+first, document units and defaults, preserve fail-fast validation, and update
+the interaction table. Do not add a fallback or silently reinterpret ambiguous
+input.
 
 ## Adding validation evidence
 
-Keep validation evidence reproducible and scoped. Record the input description,
+Keep validation evidence reproducible and scoped. Record the inputs,
 configuration, software version, hashes, metrics, and comparison conditions.
-Label project-generated measurements with their dataset scope. Keep private
-recordings and generated outputs outside the tracked repository.
+Label project-generated measurements and keep private recordings and outputs
+outside the repository.
 
 ## Data and generated files
 
-Do not commit subject recordings, BIDS sidecars containing private metadata,
-generated BrainVision outputs, plots, provenance from private runs, or local
-virtual environments. Use temporary or ignored directories for these files.
+Do not commit subject recordings, private BIDS metadata, generated BrainVision
+outputs, plots, private provenance, or virtual environments. Use temporary or
+ignored directories.
 
 ## Commit and review expectations
 
-Keep commits focused and use descriptive names. Preserve valid-input behavior,
-output schemas, CLI formats, and expected errors during refactors. Review
-numerical changes with tests and, where relevant, a reference or signal-transfer
-comparison. Update [references](references.md) when a scientific or software
-claim is introduced.
+Keep commits focused and descriptive. Preserve valid-input behavior, output
+schemas, CLI formats, and expected errors. Test numerical changes and compare
+with a reference or signal-transfer measure when relevant. Update
+[references](references.md) for new scientific or software claims.

@@ -1,12 +1,11 @@
 # Architecture
 
-## Design principles
+## Principles
 
-The production path has explicit boundaries: configuration is validated before
-I/O, acquisition geometry is resolved before numerical processing, and outputs
-are written only after all required checks pass. Modules expose small data
-structures and functions with units visible in their names. Unexpected errors
-are allowed to surface.
+Validate configuration before I/O, resolve geometry before numerical processing,
+and write outputs only after required checks pass. Modules expose small data
+structures and functions; names include units where needed. Unexpected errors
+surface.
 
 ## Public API
 
@@ -20,8 +19,8 @@ summary = run_correction(load_config("configuration.yml"))
 ```
 
 The low-level array interface is [`fastr_python.fastr`](../src/fastr_python/fastr.py).
-The package root exports only `__version__`; importing it does not eagerly load
-MNE or the correction pipeline.
+The package root exports only `__version__` and does not eagerly load MNE or the
+pipeline.
 
 ## Correction data flow
 
@@ -30,9 +29,9 @@ YAML -> config -> timing/markers -> geometry -> channel batches ->
 optional OBS/ANC -> output filter/decimation -> markers/QC/PSD/provenance
 ```
 
-The pipeline accepts BrainVision headers and marker files, resolves one timing
-source, constructs acquisition-group geometry, corrects channels in batches,
-and writes a complete BrainVision output with a JSON provenance sidecar.
+FASTR reads BrainVision headers and markers, resolves one timing source,
+constructs acquisition-group geometry, corrects channels in batches, and writes
+BrainVision output with a JSON provenance sidecar.
 
 ## Module responsibilities
 
@@ -74,14 +73,13 @@ and writes a complete BrainVision output with a JSON provenance sidecar.
 
 ## Production versus validation code
 
-Production correction is the path through `config.py`, `pipeline.py`, the
-BrainVision I/O modules, timing/geometry/processing modules, and pipeline
-support modules. It imports neither simulation helpers nor comparison metrics.
-The validation-only modules (`diagnostics.py`, `metrics.py`,
-`matlab_comparison.py`, and `simulation.py`) support tests, demos, and audit
-runners without becoming runtime dependencies of correction.
+Production correction uses `config.py`, `pipeline.py`, the BrainVision I/O
+modules, timing/geometry/processing modules, and pipeline support modules. It
+does not import simulation or comparison helpers. The validation-only modules
+(`diagnostics.py`, `metrics.py`, `matlab_comparison.py`, and `simulation.py`)
+serve tests, demos, and audit runners.
 
-The top-level validation area retains these descriptive entry points:
+The validation area contains:
 
 - `validation/run_python_reference.py`: shared classical volume-stage contract;
 - `validation/run_python_bids_reference.py`: production BIDS geometry path; and
@@ -91,8 +89,7 @@ The original MATLAB reference is `validation/fmrib_reference.m`.
 
 ## Naming and units
 
-Names state their domain and units where ambiguity is likely: BIDS timing is in
-seconds, input and internal signal arrays use volts, residual reports use
-microvolts, marker positions and geometry samples are zero-based internally,
-and BrainVision marker positions are one-based on disk. `*_hz` names frequency
-values; `*_seconds` names durations; `*_uv` names reported microvolt values.
+Names state domain and units where needed: BIDS timing uses seconds, signal
+arrays use volts, residual reports use microvolts, internal samples are
+zero-based, and BrainVision marker positions are one-based. `*_hz`,
+`*_seconds`, and `*_uv` identify frequencies, durations, and microvolt values.

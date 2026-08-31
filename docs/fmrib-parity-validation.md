@@ -3,10 +3,10 @@
 ## Reference audited
 
 The audit used [`sccn/fMRIb`](https://github.com/sccn/fMRIb) commit
-`2aa522bc5ec4215f42b3ba8efdb2b84d2a312935` (2024-08-02). The complete
-`fmrib_fastr.m`, its EEGLAB wrapper and GUI, `trigcorrect.m`, `decimate2.m`,
-`pca_calc.m`, `fastranc.c`/`.m`, and `prcorr2.c`/`.m` were reviewed. The GitHub
-and locally installed FMRIB 2.1 copies of `fmrib_fastr.m` both have SHA-256
+`2aa522bc5ec4215f42b3ba8efdb2b84d2a312935` (2024-08-02). It reviewed
+`fmrib_fastr.m`, its EEGLAB wrapper/GUI, `trigcorrect.m`, `decimate2.m`,
+`pca_calc.m`, `fastranc.c`/`.m`, and `prcorr2.c`/`.m`. GitHub and local FMRIB 2.1
+copies of `fmrib_fastr.m` have SHA-256
 `0c193406735266e94000eb16aeeaf13d62e4e3f9b975f55e19f84e30c12dd4de`.
 
 MATLAB was R2026a Update 3 (`26.1.0.3276743`) with EEGLAB and FMRIB 2.1.
@@ -33,16 +33,16 @@ MATLAB was R2026a Update 3 (`26.1.0.3276743`) with EEGLAB and FMRIB 2.1.
 | Slice timing supplied without a BIDS sidecar | `acquisition:` section carrying the same three fields through the same validation | Beyond the reference, which reads timing from EEGLAB events only |
 | EEGLAB GUI, `EEG.history`, and positional MATLAB call signature | YAML/CLI, BrainVision, and JSON provenance | Intentional interface difference |
 
-The production filter remains [MNE's delay-compensated FIR](references.md#mne-python). It does not copy
-MATLAB's twice-applied least-squares response: filtering is an implementation
-choice, whereas selecting or disabling the low-pass is the user-facing FMRIB
-capability. Python also fails on invalid or unstable inputs where the MATLAB
-code changes a value, warns and skips, or enters `keyboard` from a broad catch.
+The production filter is [MNE's delay-compensated FIR](references.md#mne-python),
+not MATLAB's twice-applied least-squares response. Filtering is an
+implementation choice; selecting or disabling the low-pass is the supported
+capability. Python raises on invalid or unstable inputs where MATLAB changes a
+value, warns and skips, or enters `keyboard` from a broad catch.
 
 ## Algorithm audit
 
-The original function performs these scientifically relevant operations,
-following [Niazy et al. (2005)](references.md#niazy-et-al-2005) and the
+The original function performs these operations, following
+[Niazy et al. (2005)](references.md#niazy-et-al-2005) and the
 [FMRIB implementation](references.md#fmrib-fastr-implementation):
 
 1. validate or repair triggers and derive the artifact epoch around each event;
@@ -55,17 +55,15 @@ following [Niazy et al. (2005)](references.md#niazy-et-al-2005) and the
 6. optionally scale the artifact reference and run normalized LMS ANC; and
 7. preserve excluded channels from residual PCA and ANC.
 
-Those operations map respectively to `fastr_timing.py`, `fastr_geometry.py`,
-`fastr_processing.py`, `fastr_anc.py`, and `pipeline_io.py`. Python derives
-actual multiband acquisition slots from the
-[BIDS MRI specification](references.md#bids) rather than treating the entire
-0.9-second volume as a single repeated waveform.
+They map to `fastr_timing.py`, `fastr_geometry.py`, `fastr_processing.py`,
+`fastr_anc.py`, and `pipeline_io.py`. Python derives multiband acquisition slots
+from the [BIDS MRI specification](references.md#bids), rather than treating the
+entire 0.9-second volume as one repeated waveform.
 
-The automatic-rank criteria are the three FMRIB rules: four consecutive
-eigenvalue slopes below 2 percentage points, cumulative explained variance
-above 80%, and the first component below 5%. Python rejects spectra for which
-the three rules do not identify a stable rank. It re-estimates rank with each
-section; MATLAB selects it from the first section and reuses it.
+Automatic rank uses the three FMRIB rules: four consecutive eigenvalue slopes
+below 2 percentage points, cumulative explained variance above 80%, and first
+component below 5%. Python rejects spectra without a stable rank and re-estimates
+rank by section; MATLAB selects it from the first section and reuses it.
 
 The LMS update has a MATLAB-generated deterministic fixture. Python matches
 both the FMRIB error and noise vectors to absolute and relative tolerance
@@ -75,18 +73,17 @@ both the FMRIB error and noise vectors to absolute and relative tolerance
 
 ### Evidence scope
 
-The numerical values below are project-generated validation evidence from the
-recording and parameter set described in this document. They are not a general
-performance guarantee across scanners, protocols, marker streams, or electrode
-montages.
+The values below are project-generated evidence for the recording and parameters
+described here. They are not a performance guarantee across scanners, protocols,
+marker streams, or montages.
 
-No subject data or generated MAT files are tracked. The reproducible runners
-used the run-1 BrainVision recording for one representative subject, channels
-Fp1, Cz, and ECG, and 100 contiguous volume markers starting with marker 20.
-The bounded array held 468,001 samples (93.6002 seconds) at 5 kHz. Parameters
-were TR 0.9 seconds, multiband factor 3, 18 acquisition groups per volume,
-interpolation factor 4, window 20, search radius 3, pre-trigger fraction 0.03,
-60-second OBS sections, and ECG excluded from OBS and ANC.
+No subject data or generated MAT files are tracked. The runners used one
+representative run-1 BrainVision recording, channels Fp1, Cz, and ECG, and 100
+contiguous volume markers beginning at marker 20. The bounded array contained
+468,001 samples (93.6002 seconds) at 5 kHz. Parameters: TR 0.9 s, multiband
+factor 3, 18 groups/volume, interpolation factor 4, window 20, search radius 3,
+pre-trigger fraction 0.03, 60-second OBS sections, and ECG excluded from OBS
+and ANC.
 
 The input hashes were:
 
@@ -95,11 +92,10 @@ The input hashes were:
 - EEG: `b1f1ad5b541bd9ae993da199d720e726f8786e3f3d354d962a3b826f40fa2cc2`
 - BIDS JSON: `4a6b44fd7fdf0f35ed620e1e9446c968322cfc1b644be804905952215d82229e`
 
-Metrics use volts internally and report microvolts. Scanner-harmonic RMS is
-the median EEG-channel excess amplitude at volume harmonics up to 100 Hz,
-excluding the 60 Hz collision. Broadband transfer is corrected/raw amplitude
-from 1–40 Hz after excluding scanner and mains bins. ECG correlation uses the
-0.5–40 Hz physiological band with those bins removed.
+Metrics use volts internally and report microvolts. Scanner-harmonic RMS is the
+median EEG-channel excess at harmonics up to 100 Hz, excluding 60 Hz. Broadband
+transfer is corrected/raw amplitude from 1–40 Hz after excluding scanner and
+mains bins. ECG correlation uses 0.5–40 Hz with those bins removed.
 
 | Setting | Raw | MATLAB FMRIB | Python BIDS groups |
 | --- | ---: | ---: | ---: |
@@ -112,25 +108,23 @@ from 1–40 Hz after excluding scanner and mains bins. ECG correlation uses the
 | ANC + 100 Hz low-pass: broadband transfer | — | 0.918 | 1.085 |
 | ANC + 100 Hz low-pass: ECG correlation | — | 0.872 | 0.872 |
 
-For automatic OBS, MATLAB selected rank 13 for both EEG channels. Python
-selected `[10, 11]` for Fp1 and `[7, 11]` for Cz across the two sections; ECG
-remained rank zero. Aggregate suppression was effectively unchanged.
+For automatic OBS, MATLAB selected rank 13 for both EEG channels. Python selected
+`[10, 11]` for Fp1 and `[7, 11]` for Cz across the two sections; ECG remained
+rank zero. Aggregate suppression was effectively unchanged.
 
 Exact samples are not an acceptance criterion for this whole-pipeline test.
-MATLAB volume mode fits one 0.9-second artifact, uses a fixed 70 Hz template
-high-pass, and applies its own `firls`/`filtfilt` output filter. Production
-Python fits the 18 actual acquisition slots, uses the configured 1 Hz template
-high-pass, and uses the MNE FIR. The comparable acceptance evidence is that
-both reduce the measured scanner residual by about an order of magnitude,
-retain near-unity non-harmonic broadband amplitude, and preserve the excluded
-ECG band similarly. ANC gives only a small residual improvement here while
-moving broadband transfer farther from unity, supporting its opt-in warning.
+MATLAB fits one 0.9-second artifact with a fixed 70 Hz template high-pass and
+`firls`/`filtfilt`. Python fits 18 acquisition slots with the configured 1 Hz
+high-pass and MNE FIR. Comparable evidence is residual suppression of about one
+order of magnitude, near-unity off-harmonic transfer, and similar ECG
+preservation. ANC improves residuals only slightly here while moving transfer
+farther from unity, supporting its opt-in warning.
 
 ## Reproduction
 
-`validation/fmrib_reference.m` runs the original implementation over an
-explicit bounded input. `validation/run_python_reference.py` exercises the
-shared classical volume-stage contract,
-`validation/run_python_bids_reference.py` exercises production BIDS geometry,
-and `validation/compare_fmrib_reference.py` emits the JSON metrics. Every runner
-requires explicit input/output paths and refuses to overwrite an output.
+`validation/fmrib_reference.m` runs the original implementation over an explicit
+bounded input. `validation/run_python_reference.py` exercises the shared
+classical volume-stage contract, `validation/run_python_bids_reference.py`
+exercises production BIDS geometry, and `validation/compare_fmrib_reference.py`
+emits JSON metrics. All runners require explicit paths and refuse to overwrite
+outputs.
