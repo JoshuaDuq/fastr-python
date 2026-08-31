@@ -33,3 +33,19 @@ def test_citation_file_contains_version_license_and_required_references() -> Non
         title.startswith("The brain imaging data structure")
         for title in reference_titles
     )
+
+
+def test_quality_workflow_uses_the_documented_read_only_quality_gates() -> None:
+    workflow = (ROOT / ".github/workflows/quality.yml").read_text()
+
+    for required_text in (
+        "push:",
+        "pull_request:",
+        "python-version-file: .python-version",
+        "uv sync --locked",
+        "uv run pytest",
+        "uv run ruff check src tests validation",
+        "uv build",
+        "permissions:\n  contents: read",
+    ):
+        assert required_text in workflow
