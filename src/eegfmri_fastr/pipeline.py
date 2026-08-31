@@ -63,6 +63,13 @@ from .residual_qc import (
 from .window import OutputWindow, resolve_output_window
 
 
+__all__ = [
+    "CorrectionSummary",
+    "PipelineInputError",
+    "run_correction",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class _ResolvedAcquisition:
     """Acquisition geometry, plus what the run was told and what it found.

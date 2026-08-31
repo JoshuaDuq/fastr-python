@@ -15,6 +15,20 @@ from .fastr_types import FastrInputError
 from .residual_qc import residual_qc_defaults
 
 
+__all__ = [
+    "ConfigurationError",
+    "CorrectionConfig",
+    "DiagnosticsConfig",
+    "InputConfig",
+    "OutputConfig",
+    "ProcessingConfig",
+    "QualityControlConfig",
+    "TimingConfig",
+    "TrimConfig",
+    "load_config",
+]
+
+
 class ConfigurationError(ValueError):
     """Raised when a YAML configuration does not describe a valid run."""
 

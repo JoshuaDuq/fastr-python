@@ -1,8 +1,10 @@
 """Scanner-gradient artifact correction for simultaneous EEG-fMRI.
 
-The correction pipeline is `config` -> `pipeline`, over `fastr` and the
-BrainVision reader and writer. `demo` writes a runnable synthetic dataset, and
-`compare` plots two folders of recordings against each other.
+The high-level configuration-driven interface is in `eegfmri_fastr.api`; the
+low-level array interface is in `eegfmri_fastr.fastr`. The correction pipeline
+uses `config` -> `pipeline` over the BrainVision reader and writer. `demo`
+writes a runnable synthetic dataset, and `compare` plots two folders of
+recordings against each other.
 
 `metrics`, `diagnostics`, `simulation`, and `matlab_comparison` are validation
 instrumentation: they measure or simulate a correction and are imported by the
@@ -12,3 +14,5 @@ Cardiac detection and BCG correction live in BCG-Correction, not this package.
 """
 
 __version__ = "0.1.0"
+
+__all__ = ["__version__"]
