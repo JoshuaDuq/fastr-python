@@ -78,12 +78,12 @@ complete slice timing metadata.
 | `processing.interpolation_factor` | positive integer | required | samples/grid | Temporal interpolation factor used for sub-sample alignment. |
 | `processing.neighbor_count` | positive even integer | required | volumes/groups | Wide moving-template width; must be even. |
 | `processing.search_radius_samples` | nonnegative integer | required | input samples | Alignment search radius around each trigger. |
-| `processing.pre_trigger_fraction` | number, default `0.03` | fraction | fraction of epoch | Relative trigger location within the artifact epoch; must be in `(0, 1]` under the loader's positive unit-interval validation. |
+| `processing.pre_trigger_fraction` | number, default `0.03` | fraction | fraction of epoch | Relative trigger location within the artifact epoch; must be in `[0, 1]`. |
 | `processing.lowpass_hz` | nonnegative number | required | Hz | Output anti-alias cutoff; must be below both input and output Nyquist frequencies unless zero. Zero is allowed only without decimation. |
 | `processing.output_sampling_rate_hz` | positive number | required | Hz | Output rate; input/output rates must have an integer ratio and output may not exceed input. |
 | `processing.channel_batch_size` | positive integer | required | channels/batch | Controls memory use without changing the numerical path. |
 | `processing.reference_channel` | string or integer | required | channel name/index | Alignment reference; names must exist and integer indices must be in range. |
-| `processing.line_noise_frequencies_hz` | list of nonnegative numbers | required | Hz | Stationary sinusoidal regression frequencies; use `[]` to disable. Applied to EEG channels after output filtering/decimation. |
+| `processing.line_noise_frequencies_hz` | list of positive numbers | required | Hz | Stationary sinusoidal regression frequencies below output Nyquist; use `[]` to disable. Applied to EEG channels after output filtering/decimation. |
 | `processing.non_eeg_channels` | list of strings, default `[ECG]` | channel names | channels | Excluded from template scaling, residual OBS, ANC, line-noise regression, and residual-QC channel statistics. |
 | `processing.template_high_pass_hz` | nonnegative number, default `1.0` | Hz | High-pass used for template estimation and alignment; `0.0` uses the unfiltered estimate. |
 | `processing.residual_threshold_uv` | nonnegative number, default `1.0` | µV | Legacy absolute residual threshold used by residual gating. It does not replace the robust QC thresholds. |
