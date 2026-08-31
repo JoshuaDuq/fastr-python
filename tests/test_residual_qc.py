@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-import eegfmri_fastr.pipeline as pipeline_module
-from eegfmri_fastr.fastr import AcquisitionGeometry
-from eegfmri_fastr.residual_qc import (
+import fastr_python.pipeline as pipeline_module
+from fastr_python.fastr import AcquisitionGeometry
+from fastr_python.residual_qc import (
     ResidualQcError,
     block_residual_uv,
     evaluate_local_retry,
@@ -287,7 +287,7 @@ def _residuals(channels: int, blocks: int, baseline: float = 0.4) -> np.ndarray:
 
 
 def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[:32, 7] = 25.0
@@ -299,7 +299,7 @@ def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
 
 def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
     """One noisy electrode must not condemn all 64 channels for 30 seconds."""
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[11, 7] = 25.0
@@ -308,7 +308,7 @@ def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
 
 
 def test_flag_channel_blocks_reports_an_isolated_channel_failure() -> None:
-    from eegfmri_fastr.residual_qc import flag_channel_blocks
+    from fastr_python.residual_qc import flag_channel_blocks
 
     residuals = _residuals(64, 20)
     residuals[11, 7] = 25.0
@@ -321,7 +321,7 @@ def test_flag_channel_blocks_reports_an_isolated_channel_failure() -> None:
 
 
 def test_flag_channel_blocks_returns_empty_width_without_calibration() -> None:
-    from eegfmri_fastr.residual_qc import flag_channel_blocks
+    from fastr_python.residual_qc import flag_channel_blocks
 
     flagged = flag_channel_blocks(np.full((64, 2), 50.0))
 
@@ -331,7 +331,7 @@ def test_flag_channel_blocks_returns_empty_width_without_calibration() -> None:
 
 def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
     """A high but flat residual is the recording's baseline, not an event."""
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20, baseline=18.0)
 
@@ -340,7 +340,7 @@ def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
 
 def test_flag_blocks_respects_the_absolute_floor() -> None:
     """A statistical outlier still below the floor is not worth flagging."""
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     residuals = _residuals(64, 20, baseline=0.01)
     residuals[:32, 7] = 0.2
@@ -350,7 +350,7 @@ def test_flag_blocks_respects_the_absolute_floor() -> None:
 
 
 def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     residuals = np.full((64, 2), 50.0)
 
@@ -358,7 +358,7 @@ def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
 
 
 def test_flag_blocks_handles_an_empty_measurement() -> None:
-    from eegfmri_fastr.residual_qc import flag_blocks
+    from fastr_python.residual_qc import flag_blocks
 
     assert flag_blocks(np.empty((64, 0))).shape == (0,)
 
@@ -376,7 +376,7 @@ def _qc_report(flagged: list[bool]) -> dict[str, object]:
 
 def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
     """MNE drops any annotation whose "type/description" starts with "bad"."""
-    from eegfmri_fastr.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -390,7 +390,7 @@ def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
 
 
 def test_residual_qc_marker_spans_the_flagged_block() -> None:
-    from eegfmri_fastr.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -403,7 +403,7 @@ def test_residual_qc_marker_spans_the_flagged_block() -> None:
 
 
 def test_residual_qc_markers_follow_the_precomputed_flags() -> None:
-    from eegfmri_fastr.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline_markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([True, False, True]),

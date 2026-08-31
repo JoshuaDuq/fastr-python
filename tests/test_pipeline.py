@@ -9,16 +9,16 @@ import yaml
 from pybv import write_brainvision
 from scipy.signal import oaconvolve
 
-import eegfmri_fastr.pipeline as pipeline_module
-from eegfmri_fastr import pipeline_io
-from eegfmri_fastr.brainvision import (
+import fastr_python.pipeline as pipeline_module
+from fastr_python import pipeline_io
+from fastr_python.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from eegfmri_fastr.config import load_config
-from eegfmri_fastr.pipeline import PipelineInputError, run_correction
-from eegfmri_fastr.window import OutputWindow
+from fastr_python.config import load_config
+from fastr_python.pipeline import PipelineInputError, run_correction
+from fastr_python.window import OutputWindow
 
 FIXTURE_OUTPUT = "pipeline_fixture_output.npy"
 
@@ -156,7 +156,16 @@ def test_channel_batch_helper_preserves_pipeline_samples(tmp_path: Path) -> None
         verbose="ERROR",
     )
 
-    np.testing.assert_allclose(raw.get_data(), expected_fixture_output())
+    actual = raw.get_data()
+    expected = expected_fixture_output()
+    # The first samples are cancellation residuals; allow one machine-scale
+    # rounding unit across platforms while retaining tight relative comparison.
+    absolute_tolerance = np.finfo(actual.dtype).eps * np.max(np.abs(expected))
+    np.testing.assert_allclose(
+        actual,
+        expected,
+        atol=absolute_tolerance,
+    )
 
 
 def test_channel_batch_size_does_not_change_output(tmp_path: Path) -> None:

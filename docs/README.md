@@ -1,4 +1,4 @@
-# EEG-fMRI FASTR documentation
+# FASTR-Python documentation
 
 ## Start here
 

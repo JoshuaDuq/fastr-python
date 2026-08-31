@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from eegfmri_fastr.fastr import (
+from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     adapt_fastr_geometry,

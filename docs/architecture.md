@@ -10,16 +10,16 @@ are allowed to surface.
 
 ## Public API
 
-Use [`eegfmri_fastr.api`](../src/eegfmri_fastr/api.py) for the stable,
+Use [`fastr_python.api`](../src/fastr_python/api.py) for the stable,
 configuration-driven interface:
 
 ```python
-from eegfmri_fastr.api import load_config, run_correction
+from fastr_python.api import load_config, run_correction
 
 summary = run_correction(load_config("configuration.yml"))
 ```
 
-The low-level array interface is [`eegfmri_fastr.fastr`](../src/eegfmri_fastr/fastr.py).
+The low-level array interface is [`fastr_python.fastr`](../src/fastr_python/fastr.py).
 The package root exports only `__version__`; importing it does not eagerly load
 MNE or the correction pipeline.
 

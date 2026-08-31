@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from eegfmri_fastr.window import OutputWindow, WindowError, resolve_output_window
+from fastr_python.window import OutputWindow, WindowError, resolve_output_window
 
 
 def test_none_mode_covers_the_whole_recording() -> None:

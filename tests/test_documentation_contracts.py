@@ -18,13 +18,13 @@ def test_project_metadata_identifies_the_research_software() -> None:
     assert metadata["authors"] == [{"name": "Joshua Duquette"}]
     assert "Intended Audience :: Science/Research" in metadata["classifiers"]
     assert metadata["urls"]["Repository"] == (
-        "https://github.com/JoshuaDuq/eeg-fmri-fastr"
+        "https://github.com/JoshuaDuq/fastr-python"
     )
 
 
 def test_citation_file_contains_version_license_and_required_references() -> None:
     citation = yaml.safe_load((ROOT / "CITATION.cff").read_text())
-    assert citation["title"] == "EEG-fMRI FASTR"
+    assert citation["title"] == "FASTR-Python"
     assert citation["version"] == "0.1.0"
     assert citation["license"] == "GPL-2.0-only"
     reference_titles = {
@@ -58,7 +58,7 @@ def test_quality_workflow_uses_the_documented_read_only_quality_gates() -> None:
 
 
 def test_shipped_configuration_examples_are_loadable() -> None:
-    from eegfmri_fastr.config import load_config
+    from fastr_python.config import load_config
 
     volume = load_config(ROOT / "examples/configuration.yml")
     sliced = load_config(ROOT / "examples/configuration-slice.yml")

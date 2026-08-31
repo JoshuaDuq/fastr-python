@@ -14,7 +14,7 @@ uv sync
 
 ## Repository layout
 
-- `src/eegfmri_fastr/`: production package and low-level numerical modules;
+- `src/fastr_python/`: production package and low-level numerical modules;
 - `tests/`: deterministic unit, integration, compatibility, and contract tests;
 - `examples/`: loadable configuration examples;
 - `validation/`: explicit reference and comparison runners;

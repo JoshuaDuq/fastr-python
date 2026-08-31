@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from test_pipeline import make_fixture
 
-from eegfmri_fastr.cli import main
+from fastr_python.cli import main
 
 
 def test_run_command_executes_yaml_pipeline(tmp_path: Path, capsys) -> None:

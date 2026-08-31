@@ -1,7 +1,7 @@
 """Scanner-gradient artifact correction for simultaneous EEG-fMRI.
 
-The high-level configuration-driven interface is in `eegfmri_fastr.api`; the
-low-level array interface is in `eegfmri_fastr.fastr`. The correction pipeline
+The high-level configuration-driven interface is in `fastr_python.api`; the
+low-level array interface is in `fastr_python.fastr`. The correction pipeline
 uses `config` -> `pipeline` over the BrainVision reader and writer. `demo`
 writes a runnable synthetic dataset, and `compare` plots two folders of
 recordings against each other.

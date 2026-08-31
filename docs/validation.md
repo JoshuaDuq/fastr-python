@@ -79,7 +79,7 @@ deletion or interpolation decision.
 
 Keep the following with each result:
 
-- installed `eegfmri-fastr --version` output;
+- installed `fastr-python --version` output;
 - the exact YAML configuration;
 - the provenance JSON sidecar and input hashes;
 - scanner, sequence, sampling-rate, montage, and marker details;

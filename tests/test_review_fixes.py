@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from eegfmri_fastr.fastr import (
+from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     acquisition_group_fastr,
@@ -12,7 +12,7 @@ from eegfmri_fastr.fastr import (
     make_group_trigger_samples,
     slice_fastr_with_edges,
 )
-from eegfmri_fastr.metrics import MetricInputError, trigger_locked_rms
+from fastr_python.metrics import MetricInputError, trigger_locked_rms
 
 
 def make_timing() -> FmriAcquisitionTiming:
@@ -149,7 +149,7 @@ def test_trigger_locked_rms_rejects_invalid_triggers(triggers: np.ndarray) -> No
 
 
 def test_cli_module_can_be_imported() -> None:
-    from eegfmri_fastr.cli import main
+    from fastr_python.cli import main
 
     assert callable(main)
 
@@ -173,12 +173,12 @@ def test_cli_validate_timing_refuses_existing_output(
     output = tmp_path / "result.json"
     output.write_text("existing", encoding="utf-8")
 
-    from eegfmri_fastr.cli import main
+    from fastr_python.cli import main
 
     monkeypatch.setattr(
         "sys.argv",
         [
-            "eegfmri-fastr",
+            "fastr-python",
             "validate-timing",
             "--metadata",
             str(metadata),
@@ -213,12 +213,12 @@ def test_cli_reports_timing_failure_without_a_traceback(
         encoding="utf-8",
     )
 
-    from eegfmri_fastr.cli import main
+    from fastr_python.cli import main
 
     monkeypatch.setattr(
         "sys.argv",
         [
-            "eegfmri-fastr",
+            "fastr-python",
             "validate-timing",
             "--metadata",
             str(metadata),
@@ -266,7 +266,7 @@ def test_cli_reports_invalid_timing_without_a_traceback(
     metadata = tmp_path / "timing.json"
     _write_timing_metadata(metadata)
 
-    from eegfmri_fastr.cli import main
+    from fastr_python.cli import main
 
     status = main(
         [

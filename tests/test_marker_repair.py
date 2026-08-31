@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from eegfmri_fastr.fastr import FastrInputError, repair_volume_starts
+from fastr_python.fastr import FastrInputError, repair_volume_starts
 
 
 def test_repair_volume_starts_fills_unique_interior_gaps() -> None:

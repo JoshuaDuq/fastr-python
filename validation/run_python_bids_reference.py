@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat, savemat
 
-from eegfmri_fastr.fastr import (
+from fastr_python.fastr import (
     adaptive_noise_cancel,
     apply_fastr_batch,
     fit_fastr_alignment,
@@ -19,8 +19,8 @@ from eegfmri_fastr.fastr import (
     obs_trigger_subset,
     prepare_fastr_geometry,
 )
-from eegfmri_fastr.pipeline_io import lowpass_and_decimate
-from eegfmri_fastr.window import OutputWindow
+from fastr_python.pipeline_io import lowpass_and_decimate
+from fastr_python.window import OutputWindow
 
 
 def run_bids_stages(

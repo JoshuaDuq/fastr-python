@@ -1,7 +1,7 @@
 import pytest
 
-from eegfmri_fastr import __version__, api, config, pipeline
-from eegfmri_fastr.cli import main
+from fastr_python import __version__, api, config, pipeline
+from fastr_python.cli import main
 
 
 def test_high_level_api_reexports_existing_objects_by_identity() -> None:
@@ -49,4 +49,4 @@ def test_cli_reports_package_version(capsys) -> None:
         main(["--version"])
 
     assert error.value.code == 0
-    assert capsys.readouterr().out.strip() == f"eegfmri-fastr {__version__}"
+    assert capsys.readouterr().out.strip() == f"fastr-python {__version__}"

@@ -305,7 +305,7 @@ def _run_correction(
     )
     with tempfile.TemporaryDirectory(
         dir=config.output.vhdr.parent,
-        prefix=".eegfmri-fastr-",
+        prefix=".fastr-python-",
     ) as temporary_directory:
         output_path = Path(temporary_directory) / "corrected-output.dat"
         corrected_output = np.memmap(

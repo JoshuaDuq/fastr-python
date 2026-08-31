@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from eegfmri_fastr.brainvision import (
+from fastr_python.brainvision import (
     BrainVisionMarker,
     BrainVisionMarkerError,
     read_brainvision_markers,

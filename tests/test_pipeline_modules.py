@@ -3,15 +3,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import eegfmri_fastr.pipeline as pipeline_module
-from eegfmri_fastr import pipeline_io, pipeline_markers, pipeline_provenance
-from eegfmri_fastr.pipeline import PipelineInputError
-from eegfmri_fastr.pipeline_types import PipelineInputError as SharedPipelineInputError
-from eegfmri_fastr.residual_qc import (
+import fastr_python.pipeline as pipeline_module
+from fastr_python import pipeline_io, pipeline_markers, pipeline_provenance
+from fastr_python.pipeline import PipelineInputError
+from fastr_python.pipeline_types import PipelineInputError as SharedPipelineInputError
+from fastr_python.residual_qc import (
     ResidualQcDefaults,
     residual_qc_defaults,
 )
-from eegfmri_fastr.window import OutputWindow
+from fastr_python.window import OutputWindow
 
 
 def test_pipeline_keeps_existing_private_test_seams() -> None:

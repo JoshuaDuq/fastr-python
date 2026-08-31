@@ -9,8 +9,8 @@ from pathlib import Path
 
 import yaml
 
-from eegfmri_fastr.compare.config import load_compare_config
-from eegfmri_fastr.config import load_config
+from fastr_python.compare.config import load_compare_config
+from fastr_python.config import load_config
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
@@ -47,7 +47,7 @@ def test_the_correction_example_documents_every_processing_field() -> None:
     document = yaml.safe_load(
         (EXAMPLES / "configuration.yml").read_text(encoding="utf-8")
     )
-    from eegfmri_fastr.config import _PROCESSING_KEYS
+    from fastr_python.config import _PROCESSING_KEYS
 
     assert set(document["processing"]) == set(_PROCESSING_KEYS)
 
@@ -56,7 +56,7 @@ def test_the_correction_example_documents_every_quality_control_field() -> None:
     document = yaml.safe_load(
         (EXAMPLES / "configuration.yml").read_text(encoding="utf-8")
     )
-    from eegfmri_fastr.config import _QUALITY_CONTROL_KEYS
+    from fastr_python.config import _QUALITY_CONTROL_KEYS
 
     assert set(document["quality_control"]) == set(_QUALITY_CONTROL_KEYS)
 
@@ -65,6 +65,6 @@ def test_the_compare_example_documents_every_naming_field() -> None:
     document = yaml.safe_load(
         (EXAMPLES / "compare.yaml").read_text(encoding="utf-8")
     )
-    from eegfmri_fastr.compare.config import _NAMING_KEYS
+    from fastr_python.compare.config import _NAMING_KEYS
 
     assert set(document["naming"]) == set(_NAMING_KEYS)

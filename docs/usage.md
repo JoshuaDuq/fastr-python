@@ -17,7 +17,7 @@ uv pip install .
 Record the installed package version with:
 
 ```text
-eegfmri-fastr --version
+fastr-python --version
 ```
 
 ## Synthetic demo
@@ -25,13 +25,13 @@ eegfmri-fastr --version
 Generate a BrainVision recording, BIDS timing sidecar, and configuration:
 
 ```text
-eegfmri-fastr demo --output-dir /path/to/demo
+fastr-python demo --output-dir /path/to/demo
 ```
 
 Correct that generated recording:
 
 ```text
-eegfmri-fastr run --config /path/to/demo/demo.yml
+fastr-python run --config /path/to/demo/demo.yml
 ```
 
 The synthetic data exercises the software path only; it does not establish
@@ -45,7 +45,7 @@ volume-marker recording or
 acquisition-group markers. Set the paths and timing fields, then run:
 
 ```text
-eegfmri-fastr run --config /path/to/configuration.yml
+fastr-python run --config /path/to/configuration.yml
 ```
 
 Paths in the YAML are resolved relative to the YAML file. Existing output files
@@ -57,7 +57,7 @@ inputs fail before an incomplete output is written.
 For one marker per volume, provide BIDS metadata:
 
 ```text
-eegfmri-fastr validate-timing \
+fastr-python validate-timing \
   --metadata /path/to/bold.json \
   --sampling-rate 5000 \
   --vhdr /path/to/raw.vhdr \
@@ -70,7 +70,7 @@ For one marker per acquisition group, provide the group count and optional TR
 check instead:
 
 ```text
-eegfmri-fastr validate-timing \
+fastr-python validate-timing \
   --marker-kind slice \
   --groups-per-volume 18 \
   --expected-repetition-time-seconds 0.9 \
@@ -91,7 +91,7 @@ conversion. It does not infer scanner events from EEG waveforms.
 Declare both export naming conventions in `examples/compare.yaml`, then run:
 
 ```text
-eegfmri-fastr compare --config examples/compare.yaml
+fastr-python compare --config examples/compare.yaml
 ```
 
 The comparison pairs recordings only through the configured suffixes and
@@ -104,13 +104,13 @@ errors remain visible.
 Use the high-level façade for a configuration-driven run:
 
 ```python
-from eegfmri_fastr.api import load_config, run_correction
+from fastr_python.api import load_config, run_correction
 
 summary = run_correction(load_config("configuration.yml"))
 print(summary.output_vhdr)
 ```
 
-The low-level functions in `eegfmri_fastr.fastr` accept validated arrays and
+The low-level functions in `fastr_python.fastr` accept validated arrays and
 geometry when a lab needs to integrate FASTR into a larger analysis system.
 
 ## Output files

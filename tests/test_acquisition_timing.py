@@ -8,18 +8,18 @@ import pytest
 import yaml
 from pybv import write_brainvision
 
-from eegfmri_fastr.brainvision import (
+from fastr_python.brainvision import (
     BrainVisionMarker,
     write_brainvision_markers,
 )
-from eegfmri_fastr.config import ConfigurationError, load_config
-from eegfmri_fastr.fastr import (
+from fastr_python.config import ConfigurationError, load_config
+from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     slice_marker_geometry,
     volume_marker_geometry,
 )
-from eegfmri_fastr.pipeline import run_correction
+from fastr_python.pipeline import run_correction
 
 SAMPLING_RATE = 1_000.0
 SAMPLES_PER_VOLUME = 100

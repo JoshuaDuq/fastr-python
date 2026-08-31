@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 from scipy.signal import butter, filtfilt
 
-from eegfmri_fastr.fastr_processing import obs_trigger_subset, residual_obs
-from eegfmri_fastr.fastr_types import FastrInputError
+from fastr_python.fastr_processing import obs_trigger_subset, residual_obs
+from fastr_python.fastr_types import FastrInputError
 
 
 def test_obs_trigger_subset_drops_triggers_whose_epochs_would_overrun() -> None:

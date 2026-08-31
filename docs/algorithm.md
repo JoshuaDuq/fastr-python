@@ -151,8 +151,8 @@ both suppression and independent signal-transfer measurements.
 Generate and correct the deterministic synthetic demo:
 
 ```text
-eegfmri-fastr demo --output-dir /path/to/demo
-eegfmri-fastr run --config /path/to/demo/demo.yml
+fastr-python demo --output-dir /path/to/demo
+fastr-python run --config /path/to/demo/demo.yml
 ```
 
 The demo validates the software path and an injected off-comb signal. It is not

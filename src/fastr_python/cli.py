@@ -58,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="eegfmri-fastr",
+        prog="fastr-python",
         description=(
             "Validate and correct scanner-gradient artifact in EEG-fMRI recordings."
         ),
@@ -131,7 +131,7 @@ def _demo(arguments: argparse.Namespace) -> None:
     paths = write_demo_dataset(arguments.output_dir)
     print(json.dumps(asdict(paths), indent=2, default=str))
     print(
-        f"\nRun the correction with:\n  eegfmri-fastr run --config {paths.config}",
+        f"\nRun the correction with:\n  fastr-python run --config {paths.config}",
         file=sys.stderr,
     )
 

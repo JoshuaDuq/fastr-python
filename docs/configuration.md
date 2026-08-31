@@ -2,7 +2,7 @@
 
 ## File format and path resolution
 
-Configurations are YAML mappings loaded by `eegfmri_fastr.config.load_config`.
+Configurations are YAML mappings loaded by `fastr_python.config.load_config`.
 Relative paths are resolved against the directory containing the YAML file;
 they are not resolved against the current shell directory. Unknown fields,
 missing required fields, invalid scalar types, and incompatible combinations

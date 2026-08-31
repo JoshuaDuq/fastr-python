@@ -1,13 +1,13 @@
 cff-version: 1.2.0
-message: "If you use EEG-fMRI FASTR, please cite it and the references below."
-title: "EEG-fMRI FASTR"
+message: "If you use FASTR-Python, please cite it and the references below."
+title: "FASTR-Python"
 type: software
 authors:
   - family-names: Duquette
     given-names: Joshua
 version: 0.1.0
 date-released: 2026-08-30
-repository-code: "https://github.com/JoshuaDuq/eeg-fmri-fastr"
+repository-code: "https://github.com/JoshuaDuq/fastr-python"
 license: GPL-2.0-only
 keywords:
   - electroencephalography

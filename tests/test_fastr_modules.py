@@ -1,22 +1,22 @@
-from eegfmri_fastr import fastr
-from eegfmri_fastr.fastr_geometry import (
+from fastr_python import fastr
+from fastr_python.fastr_geometry import (
     adapt_fastr_geometry,
     gate_fastr_geometry,
     prepare_fastr_geometry,
 )
-from eegfmri_fastr.fastr_processing import (
+from fastr_python.fastr_processing import (
     apply_channel_adaptive_fastr_batch,
     apply_fastr_batch,
     apply_selected_local_fastr_batch,
     fit_fastr_alignment,
     residual_obs,
 )
-from eegfmri_fastr.fastr_timing import (
+from fastr_python.fastr_timing import (
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
     make_group_trigger_samples,
 )
-from eegfmri_fastr.fastr_types import (
+from fastr_python.fastr_types import (
     ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,

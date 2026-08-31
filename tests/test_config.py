@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from eegfmri_fastr.config import (
+from fastr_python.config import (
     ConfigurationError,
     CorrectionConfig,
     load_config,

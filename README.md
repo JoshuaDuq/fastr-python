@@ -1,16 +1,19 @@
-# EEG-fMRI FASTR
+# FASTR-Python
+
+FASTR-Python is the Python version of [FMRIB FASTR](https://github.com/sccn/fMRIb)
+for correcting scanner-gradient artifacts in simultaneous EEG-fMRI recordings.
 
 ## What it does
 
-`eegfmri-fastr` is research software for correcting scanner-gradient artifact
+`fastr-python` is research software for correcting scanner-gradient artifact
 in simultaneous EEG-fMRI BrainVision recordings. It validates acquisition
 timing, applies acquisition-slot FASTR, preserves markers, and writes a
 provenance record. It corrects scanner-gradient artifact only: it does not
 correct ballistocardiogram (BCG) artifact, general bad-electrode conditions, or
 other physiological artifacts.
 
-The package is `eegfmri_fastr`, the command is `eegfmri-fastr`, and the stable
-configuration-driven API is in [`eegfmri_fastr.api`](src/eegfmri_fastr/api.py).
+The package is `fastr_python`, the command is `fastr-python`, and the stable
+configuration-driven API is in [`fastr_python.api`](src/fastr_python/api.py).
 This is separate Python software from the FMRIB EEGLAB plug-in and is not
 affiliated with, sponsored by, or endorsed by the FMRIB Centre or the
 University of Oxford. It is released under GPL-2.0-only; see
@@ -36,8 +39,8 @@ uv pip install .
 Generate a self-contained BrainVision dataset, then correct it:
 
 ```text
-eegfmri-fastr demo --output-dir /path/to/demo
-eegfmri-fastr run --config /path/to/demo/demo.yml
+fastr-python demo --output-dir /path/to/demo
+fastr-python run --config /path/to/demo/demo.yml
 ```
 
 The demo checks the interface and processing path on simulated data. It is not
@@ -49,7 +52,7 @@ Copy [`examples/configuration.yml`](examples/configuration.yml), set the input
 and output paths, confirm the timing source, and run:
 
 ```text
-eegfmri-fastr run --config /path/to/configuration.yml
+fastr-python run --config /path/to/configuration.yml
 ```
 
 For recordings marked once per acquisition group, use the separate
@@ -97,7 +100,7 @@ the references in [`CITATION.cff`](CITATION.cff), and record the installed
 version with:
 
 ```text
-eegfmri-fastr --version
+fastr-python --version
 ```
 
 ## Development

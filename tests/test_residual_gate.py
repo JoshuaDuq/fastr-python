@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from eegfmri_fastr.fastr import (
+from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     apply_fastr_batch,
@@ -14,7 +14,7 @@ from eegfmri_fastr.fastr import (
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
-from eegfmri_fastr.fastr_geometry import (
+from fastr_python.fastr_geometry import (
     adapt_channel_fastr_geometry,
     prepare_local_fastr_geometry,
 )

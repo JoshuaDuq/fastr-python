@@ -8,10 +8,10 @@ import numpy as np
 import pytest
 import yaml
 
-from eegfmri_fastr.cli import main
-from eegfmri_fastr.config import load_config
-from eegfmri_fastr.demo import write_demo_dataset
-from eegfmri_fastr.pipeline import run_correction
+from fastr_python.cli import main
+from fastr_python.config import load_config
+from fastr_python.demo import write_demo_dataset
+from fastr_python.pipeline import run_correction
 
 PROBE_HZ = 10.5
 PROBE_MICROVOLTS = 12.0

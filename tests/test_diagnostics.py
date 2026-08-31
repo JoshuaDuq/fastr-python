@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from eegfmri_fastr.diagnostics import (
+from fastr_python.diagnostics import (
     DiagnosticInputError,
     estimate_slice_period_candidates,
 )

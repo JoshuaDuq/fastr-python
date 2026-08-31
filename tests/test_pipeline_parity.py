@@ -6,10 +6,10 @@ import pytest
 import yaml
 from test_pipeline import make_fixture
 
-import eegfmri_fastr.pipeline as pipeline_module
-from eegfmri_fastr.config import ConfigurationError, load_config
-from eegfmri_fastr.fastr import AncCorrection, ResidualObsCorrection
-from eegfmri_fastr.pipeline import run_correction
+import fastr_python.pipeline as pipeline_module
+from fastr_python.config import ConfigurationError, load_config
+from fastr_python.fastr import AncCorrection, ResidualObsCorrection
+from fastr_python.pipeline import run_correction
 
 
 def update_config(config_path: Path, **processing: object) -> None:

@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from eegfmri_fastr.cli import main
-from eegfmri_fastr.compare.config import (
+from fastr_python.cli import main
+from fastr_python.compare.config import (
     ConfigurationError,
     NamingConfig,
     load_compare_config,
 )
-from eegfmri_fastr.compare.pairs import RecordingPair, pair_recordings, recording_key
+from fastr_python.compare.pairs import RecordingPair, pair_recordings, recording_key
 
 ANALYZER_NAMING = NamingConfig(
     corrected_suffixes=("_fastr",),
@@ -188,7 +188,7 @@ def _raw_with_volumes(onsets: list[float], *, n_seconds: float = 5.0):
 
 
 def test_align_to_fastr_accepts_shared_origin() -> None:
-    from eegfmri_fastr.compare.plots import align_to_fastr
+    from fastr_python.compare.plots import align_to_fastr
 
     left = _raw_with_volumes([0.0, 0.9, 1.8], n_seconds=5.0)
     right = _raw_with_volumes([0.0, 0.9, 1.8, 2.7], n_seconds=6.0)
@@ -200,7 +200,7 @@ def test_align_to_fastr_accepts_shared_origin() -> None:
 def test_align_to_fastr_rejects_offset_recordings() -> None:
     import pytest
 
-    from eegfmri_fastr.compare.plots import AlignmentError, align_to_fastr
+    from fastr_python.compare.plots import AlignmentError, align_to_fastr
 
     left = _raw_with_volumes([0.0, 0.9, 1.8])
     right = _raw_with_volumes([0.5, 1.4, 2.3])
@@ -211,7 +211,7 @@ def test_align_to_fastr_rejects_offset_recordings() -> None:
 def test_align_to_fastr_rejects_missing_volume_markers() -> None:
     import pytest
 
-    from eegfmri_fastr.compare.plots import AlignmentError, align_to_fastr
+    from fastr_python.compare.plots import AlignmentError, align_to_fastr
 
     with pytest.raises(AlignmentError, match="volume markers are missing"):
         align_to_fastr(_raw_with_volumes([]), _raw_with_volumes([0.0]))
@@ -220,7 +220,7 @@ def test_align_to_fastr_rejects_missing_volume_markers() -> None:
 def test_eeg_rms_excludes_ecg() -> None:
     import numpy as np
 
-    from eegfmri_fastr.compare.plots import eeg_rms
+    from fastr_python.compare.plots import eeg_rms
 
     raw = _raw_with_volumes([0.0])
     data = raw.get_data()
@@ -250,7 +250,7 @@ def test_compare_reports_expected_loader_failures(
     tmp_path: Path,
     error: Exception,
 ) -> None:
-    from eegfmri_fastr.compare import pipeline as compare_pipeline
+    from fastr_python.compare import pipeline as compare_pipeline
 
     def fail(_path: Path) -> object:
         raise error
@@ -264,7 +264,7 @@ def test_compare_surfaces_unexpected_loader_failures(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from eegfmri_fastr.compare import pipeline as compare_pipeline
+    from fastr_python.compare import pipeline as compare_pipeline
 
     def fail(_path: Path) -> object:
         raise TypeError("programming error")
