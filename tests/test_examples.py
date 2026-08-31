@@ -16,13 +16,23 @@ from eegfmri_fastr.config import load_config
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 
 
-def test_the_correction_example_loads() -> None:
+def test_the_volume_correction_example_loads() -> None:
     config = load_config(EXAMPLES / "configuration.yml")
 
     assert config.processing.method == "acquisition_group_fastr"
     assert config.input.fmri_metadata is not None
     assert config.timing.marker_kind == "volume"
     assert config.trim.mode == "first_to_last_volume"
+
+
+def test_the_slice_correction_example_loads() -> None:
+    config = load_config(EXAMPLES / "configuration-slice.yml")
+
+    assert config.processing.method == "acquisition_group_fastr"
+    assert config.input.fmri_metadata is None
+    assert config.acquisition is None
+    assert config.timing.marker_kind == "slice"
+    assert config.timing.groups_per_volume == 18
 
 
 def test_the_compare_example_loads() -> None:
@@ -59,23 +69,3 @@ def test_the_compare_example_documents_every_naming_field() -> None:
     from eegfmri_fastr.compare.config import _NAMING_KEYS
 
     assert set(document["naming"]) == set(_NAMING_KEYS)
-
-
-@pytest.mark.parametrize(
-    "commented_block",
-    [
-        "acquisition:",
-        "marker_kind: slice",
-        "groups_per_volume: 18",
-        "expected_repetition_time_seconds: 0.9",
-        "volume_marker_start_index: 0",
-        "volume_marker_count: 570",
-    ],
-)
-def test_the_correction_example_shows_the_alternatives(
-    commented_block: str,
-) -> None:
-    """Both timing routes have to be visible in the file a user copies."""
-    text = (EXAMPLES / "configuration.yml").read_text(encoding="utf-8")
-
-    assert commented_block in text

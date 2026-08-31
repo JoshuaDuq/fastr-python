@@ -1,0 +1,25 @@
+# Complete acquisition-group-marker example. See docs/configuration.md.
+input:
+  raw_vhdr: /path/to/raw.vhdr
+
+output:
+  vhdr: /path/to/corrected.vhdr
+
+timing:
+  marker_type: Slice
+  marker_description: slice-start
+  marker_kind: slice
+  groups_per_volume: 18
+  expected_repetition_time_seconds: 0.9
+
+processing:
+  method: acquisition_group_fastr
+  interpolation_factor: 10
+  neighbor_count: 60
+  search_radius_samples: 3
+  pre_trigger_fraction: 0.03
+  lowpass_hz: 100.0
+  output_sampling_rate_hz: 1000.0
+  channel_batch_size: 8
+  reference_channel: EEG 001
+  line_noise_frequencies_hz: [60.0]

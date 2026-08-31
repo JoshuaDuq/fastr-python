@@ -49,3 +49,12 @@ def test_quality_workflow_uses_the_documented_read_only_quality_gates() -> None:
         "permissions:\n  contents: read",
     ):
         assert required_text in workflow
+
+
+def test_shipped_configuration_examples_are_loadable() -> None:
+    from eegfmri_fastr.config import load_config
+
+    volume = load_config(ROOT / "examples/configuration.yml")
+    sliced = load_config(ROOT / "examples/configuration-slice.yml")
+    assert volume.timing.marker_kind == "volume"
+    assert sliced.timing.marker_kind == "slice"
