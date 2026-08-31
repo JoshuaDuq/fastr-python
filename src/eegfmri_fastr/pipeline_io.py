@@ -30,6 +30,7 @@ def validate_input_files(config: CorrectionConfig) -> None:
 
 
 def output_paths(output_vhdr: Path) -> dict[str, Path]:
+    """Return all BrainVision, diagnostic, and provenance output paths."""
     stem = output_vhdr.with_suffix("")
     return {
         "vhdr": output_vhdr,
@@ -42,6 +43,7 @@ def output_paths(output_vhdr: Path) -> dict[str, Path]:
 
 
 def validate_output_paths(output_paths: dict[str, Path]) -> None:
+    """Create the output directory and reject any existing output file."""
     output_paths["vhdr"].parent.mkdir(parents=True, exist_ok=True)
     existing = [path for path in output_paths.values() if path.exists()]
     if existing:
@@ -54,6 +56,7 @@ def validate_rates(
     output_rate: float,
     lowpass_hz: float,
 ) -> tuple[float, int]:
+    """Validate rates and return the output rate with its integer decimation."""
     if output_rate <= 0.0 or not math.isfinite(output_rate):
         raise PipelineInputError("output sampling rate must be finite and positive")
     ratio = input_rate / output_rate
@@ -83,6 +86,7 @@ def resolve_reference_channel(
     channel_names: list[str],
     reference: str | int,
 ) -> int:
+    """Resolve a reference channel name or index to its integer position."""
     if isinstance(reference, str):
         if reference not in channel_names:
             raise PipelineInputError(

@@ -18,6 +18,8 @@ _UNNUMBERED_RUN = sys.maxsize
 
 @dataclass(frozen=True, slots=True)
 class RecordingPair:
+    """Store the two files belonging to one logical recording."""
+
     bids_id: str
     idx_run: int
     key: str

@@ -50,18 +50,17 @@ from .pipeline_types import ChannelFailurePolicyResult, PipelineInputError
 from .psd import prepare_psd_raw, save_psd_plot
 from .residual_qc import (
     LocalRetryEvaluation,
+    ResidualQcDefaults,
     block_residual_uv,
     evaluate_local_retry,
     flag_blocks,
     flag_channel_blocks,
     flag_spatial_channel_blocks,
     recommend_persistent_bad_channels,
-    residual_qc_defaults,
     slice_harmonics,
     volume_harmonic_spectrum,
 )
 from .window import OutputWindow, resolve_output_window
-
 
 __all__ = [
     "CorrectionSummary",
@@ -1033,8 +1032,8 @@ def _measure_residual_qc(
     mains_frequency_hz: float,
     mains_exclusion_hz: float,
     volume_spectrum_max_hz: float,
-    mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER,
-    minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS,
+    mad_multiplier: float = ResidualQcDefaults.MAD_MULTIPLIER,
+    minimum_channels: int = ResidualQcDefaults.MINIMUM_CHANNELS,
     report_channel_outliers: bool = True,
 ) -> dict[str, object]:
     """Measure residual gradient artifact across the whole corrected recording.

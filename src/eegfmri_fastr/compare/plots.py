@@ -13,6 +13,7 @@ from .pairs import RecordingPair
 
 
 def load_vhdr(path: Path) -> mne.io.BaseRaw:
+    """Load a BrainVision recording with MNE and preload its data."""
     return mne.io.read_raw_brainvision(path, preload=True, verbose="ERROR")
 
 
@@ -102,6 +103,7 @@ def eeg_rms(raw: mne.io.BaseRaw) -> float:
 def mean_eeg_psd(
     raw: mne.io.BaseRaw, *, max_hz: float
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the mean EEG PSD in microvolt-squared per hertz."""
     data = raw.get_data(picks=_eeg_indices(raw)) * 1e6
     fs = float(raw.info["sfreq"])
     nperseg = min(int(fs * 3), data.shape[1])
@@ -117,6 +119,7 @@ def plot_psd(
     output: Path,
     max_hz: float,
 ) -> None:
+    """Write PSD overlays for available traces as a PNG."""
     styles = {
         "Uncorrected": ("C1-", "Uncorrected"),
         "FASTR": ("C3--", "FASTR"),
@@ -138,6 +141,7 @@ def plot_psd(
 
 
 def band_power(freqs: np.ndarray, pxx: np.ndarray, low: float, high: float) -> float:
+    """Sum PSD values inside an inclusive frequency band."""
     mask = (freqs >= low) & (freqs <= high)
     return float(np.sum(pxx[mask]))
 
@@ -145,6 +149,7 @@ def band_power(freqs: np.ndarray, pxx: np.ndarray, low: float, high: float) -> f
 def metrics_row(
     pair: RecordingPair, traces: dict[str, mne.io.BaseRaw], *, max_hz: float
 ) -> dict[str, object]:
+    """Build one comparison metrics row from aligned traces."""
     row: dict[str, object] = {
         "bids_id": pair.bids_id,
         "key": pair.key,

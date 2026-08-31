@@ -31,6 +31,7 @@ class OutputWindow:
 
     @property
     def length(self) -> int:
+        """Return the number of samples in the half-open output span."""
         return self.stop - self.start
 
 

@@ -116,7 +116,7 @@ def _readout_burst(
     positions: np.ndarray,
     weights: np.ndarray,
 ) -> np.ndarray:
-    """A sharp band-limited burst that vanishes and integrates to zero.
+    """Build a sharp band-limited burst that vanishes and integrates to zero.
 
     Every term vanishes at both ends of the readout and integrates to zero over
     it, so the burst carries no net offset however its harmonics are weighted.

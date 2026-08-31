@@ -8,7 +8,7 @@ from eegfmri_fastr.compare.config import (
     NamingConfig,
     load_compare_config,
 )
-from eegfmri_fastr.compare.pairs import pair_recordings, recording_key
+from eegfmri_fastr.compare.pairs import RecordingPair, pair_recordings, recording_key
 
 ANALYZER_NAMING = NamingConfig(
     corrected_suffixes=("_fastr",),
@@ -229,3 +229,47 @@ def test_eeg_rms_excludes_ecg() -> None:
     assert eeg_rms(raw) < 10.0, "ECG must not leak into the EEG RMS"
     with_ecg = float(np.sqrt(np.mean(np.square(data * 1e6))))
     assert with_ecg > 1e5
+
+
+def _recording_pair(tmp_path: Path) -> RecordingPair:
+    return RecordingPair(
+        bids_id="sub-0000",
+        idx_run=1,
+        key="run01",
+        uncorrected_vhdr=tmp_path / "uncorrected.vhdr",
+        fastr_vhdr=tmp_path / "fastr.vhdr",
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("missing header"), RuntimeError("invalid header"), ValueError("bad data")],
+)
+def test_compare_reports_expected_loader_failures(
+    monkeypatch,
+    tmp_path: Path,
+    error: Exception,
+) -> None:
+    from eegfmri_fastr.compare import pipeline as compare_pipeline
+
+    def fail(_path: Path) -> object:
+        raise error
+
+    monkeypatch.setattr(compare_pipeline, "load_vhdr", fail)
+
+    assert compare_pipeline._load_traces(_recording_pair(tmp_path)) == {}
+
+
+def test_compare_surfaces_unexpected_loader_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from eegfmri_fastr.compare import pipeline as compare_pipeline
+
+    def fail(_path: Path) -> object:
+        raise TypeError("programming error")
+
+    monkeypatch.setattr(compare_pipeline, "load_vhdr", fail)
+
+    with pytest.raises(TypeError, match="programming error"):
+        compare_pipeline._load_traces(_recording_pair(tmp_path))

@@ -183,33 +183,59 @@ def _validate_data_file_name(data_file_name: str) -> None:
         )
 
 
-def read_brainvision_markers(
-    path: str | PathLike[str],
-) -> tuple[str, tuple[BrainVisionMarker, ...]]:
-    """Read a strict BrainVision marker file without losing marker fields."""
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0] not in _MARKER_FILE_IDENTIFIERS:
-        raise BrainVisionMarkerError("invalid BrainVision marker-file identifier")
-
+def _parse_marker_file_sections(
+    lines: Iterable[str],
+) -> tuple[
+    list[str],
+    dict[str, str],
+    list[tuple[int, BrainVisionMarker]],
+    list[tuple[int, int, tuple[str, ...]]],
+]:
     section: str | None = None
     sections: list[str] = []
     common_infos: dict[str, str] = {}
     indexed_markers: list[tuple[int, BrainVisionMarker]] = []
     user_info_records: list[tuple[int, int, tuple[str, ...]]] = []
-    for line in lines[1:]:
+    for line in lines:
         if not line or line.startswith(";"):
             continue
         if line.startswith("["):
             section = _enter_marker_file_section(line, sections)
-        elif section == "[Common Infos]":
-            _parse_common_info_line(line, common_infos)
-        elif section == "[Marker Infos]":
-            indexed_markers.append(_parse_marker_line(line))
-        elif section == "[Marker User Infos]":
-            user_info_records.append(_parse_user_info_line(line))
-        else:
-            raise BrainVisionMarkerError(f"content outside a supported section: {line}")
+            continue
+        _parse_marker_section_line(
+            line,
+            section=section,
+            common_infos=common_infos,
+            indexed_markers=indexed_markers,
+            user_info_records=user_info_records,
+        )
+    return sections, common_infos, indexed_markers, user_info_records
 
+
+def _parse_marker_section_line(
+    line: str,
+    *,
+    section: str | None,
+    common_infos: dict[str, str],
+    indexed_markers: list[tuple[int, BrainVisionMarker]],
+    user_info_records: list[tuple[int, int, tuple[str, ...]]],
+) -> None:
+    if section == "[Common Infos]":
+        _parse_common_info_line(line, common_infos)
+    elif section == "[Marker Infos]":
+        indexed_markers.append(_parse_marker_line(line))
+    elif section == "[Marker User Infos]":
+        user_info_records.append(_parse_user_info_line(line))
+    else:
+        raise BrainVisionMarkerError(f"content outside a supported section: {line}")
+
+
+def _validate_marker_file_contents(
+    sections: list[str],
+    common_infos: dict[str, str],
+    indexed_markers: list[tuple[int, BrainVisionMarker]],
+    user_info_records: list[tuple[int, int, tuple[str, ...]]],
+) -> tuple[str, tuple[BrainVisionMarker, ...]]:
     if sections not in (
         ["[Common Infos]", "[Marker Infos]"],
         ["[Common Infos]", "[Marker Infos]", "[Marker User Infos]"],
@@ -230,6 +256,16 @@ def read_brainvision_markers(
         )
     markers = _attach_user_infos(indexed_markers, user_info_records)
     return data_file_name, markers
+
+
+def read_brainvision_markers(
+    path: str | PathLike[str],
+) -> tuple[str, tuple[BrainVisionMarker, ...]]:
+    """Read a strict BrainVision marker file without losing marker fields."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] not in _MARKER_FILE_IDENTIFIERS:
+        raise BrainVisionMarkerError("invalid BrainVision marker-file identifier")
+    return _validate_marker_file_contents(*_parse_marker_file_sections(lines[1:]))
 
 
 def _parse_user_info_line(line: str) -> tuple[int, int, tuple[str, ...]]:

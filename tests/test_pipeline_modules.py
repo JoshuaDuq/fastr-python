@@ -7,6 +7,10 @@ import eegfmri_fastr.pipeline as pipeline_module
 from eegfmri_fastr import pipeline_io, pipeline_markers, pipeline_provenance
 from eegfmri_fastr.pipeline import PipelineInputError
 from eegfmri_fastr.pipeline_types import PipelineInputError as SharedPipelineInputError
+from eegfmri_fastr.residual_qc import (
+    ResidualQcDefaults,
+    residual_qc_defaults,
+)
 from eegfmri_fastr.window import OutputWindow
 
 
@@ -24,6 +28,13 @@ def test_pipeline_helpers_are_available_in_focused_modules() -> None:
 
 def test_pipeline_exception_identity_is_preserved() -> None:
     assert PipelineInputError is SharedPipelineInputError
+
+
+def test_residual_qc_defaults_keep_their_public_values() -> None:
+    assert residual_qc_defaults is ResidualQcDefaults
+    assert ResidualQcDefaults.MAD_MULTIPLIER == 6.0
+    assert ResidualQcDefaults.MINIMUM_CHANNELS == 4
+    assert ResidualQcDefaults.FLOOR_UV == 1.0
 
 
 def test_pipeline_wrapper_delegates_to_lowpass_helper(monkeypatch) -> None:

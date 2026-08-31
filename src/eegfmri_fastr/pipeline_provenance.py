@@ -195,6 +195,7 @@ def make_provenance(
     psd_n_fft: int | None,
     runtime_seconds: float,
 ) -> dict[str, object]:
+    """Assemble the JSON-serializable provenance record for one run."""
     return {
         "package_version": __version__,
         "method": config.processing.method,
@@ -352,10 +353,12 @@ def make_provenance(
 
 
 def jsonable_config(config: CorrectionConfig) -> dict[str, object]:
+    """Convert a correction configuration to JSON-compatible values."""
     return stringify_paths(asdict(config))
 
 
 def stringify_paths(value: object) -> object:
+    """Recursively convert ``Path`` values and tuples to JSON-safe values."""
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
@@ -371,6 +374,7 @@ def nullable_floats(values: np.ndarray) -> list[float | None]:
 
 
 def sha256(path: Path) -> str:
+    """Return the SHA-256 hexadecimal digest of a file."""
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):

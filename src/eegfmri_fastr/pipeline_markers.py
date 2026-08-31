@@ -16,6 +16,7 @@ def validate_marker_output_positions(
     markers: tuple[BrainVisionMarker, ...],
     output_sample_count: int,
 ) -> None:
+    """Validate that resampled markers fit inside the output recording."""
     if any(marker.position > output_sample_count for marker in markers):
         raise PipelineInputError(
             "resampled marker positions extend beyond the output recording"

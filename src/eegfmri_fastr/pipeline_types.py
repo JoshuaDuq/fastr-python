@@ -32,7 +32,7 @@ class ChannelFailurePolicyResult:
 
     @classmethod
     def inactive(cls) -> ChannelFailurePolicyResult:
-        """The result of a run that never nominated a channel."""
+        """Build the result for a run that never nominated a channel."""
         return cls(
             candidate_blocks_by_channel={},
             retry_evaluations={},

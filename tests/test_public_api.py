@@ -1,12 +1,4 @@
 from eegfmri_fastr import api, config, pipeline
-from eegfmri_fastr.api import (
-    ConfigurationError,
-    CorrectionConfig,
-    CorrectionSummary,
-    PipelineInputError,
-    load_config,
-    run_correction,
-)
 
 
 def test_high_level_api_reexports_existing_objects_by_identity() -> None:

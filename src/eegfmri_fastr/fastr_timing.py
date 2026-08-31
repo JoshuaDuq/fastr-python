@@ -56,10 +56,12 @@ class FmriAcquisitionTiming:
 
     @property
     def group_offsets_seconds(self) -> tuple[float, ...]:
+        """Return unique within-volume acquisition offsets in seconds."""
         return tuple(sorted(set(self.slice_timing_seconds)))
 
     @property
     def groups_per_volume(self) -> int:
+        """Return the number of unique acquisition groups per volume."""
         return len(self.group_offsets_seconds)
 
 
@@ -88,10 +90,12 @@ class AcquisitionGeometry:
 
     @property
     def volume_count(self) -> int:
+        """Return the number of detected volume starts."""
         return int(self.volume_starts.size)
 
 
 def load_bids_fmri_timing(path: str | Path) -> FmriAcquisitionTiming:
+    """Load validated acquisition timing from a BIDS JSON sidecar."""
     metadata_path = _coerce_path(path)
     metadata = _read_json_object(metadata_path)
     repetition_time, slice_timing, multiband_factor = _extract_timing_fields(
@@ -202,6 +206,7 @@ def make_group_trigger_samples(
     sampling_rate: float,
     timing: FmriAcquisitionTiming,
 ) -> np.ndarray:
+    """Convert volume starts and declared offsets to sample positions."""
     starts = _validate_volume_starts(volume_starts)
     rate = validate_sampling_rate(sampling_rate)
     if not isinstance(timing, FmriAcquisitionTiming):

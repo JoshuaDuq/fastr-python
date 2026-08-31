@@ -12,8 +12,7 @@ import yaml
 
 from .fastr_timing import FmriAcquisitionTiming
 from .fastr_types import FastrInputError
-from .residual_qc import residual_qc_defaults
-
+from .residual_qc import ResidualQcDefaults
 
 __all__ = [
     "ConfigurationError",
@@ -130,8 +129,8 @@ class QualityControlConfig:
     mains_exclusion_hz: float = 1.0
     # How far above a channel's own median residual a block must sit, and on
     # how many channels at once, before it is annotated. See residual_qc.
-    residual_mad_multiplier: float = residual_qc_defaults.MAD_MULTIPLIER
-    residual_minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS
+    residual_mad_multiplier: float = ResidualQcDefaults.MAD_MULTIPLIER
+    residual_minimum_channels: int = ResidualQcDefaults.MINIMUM_CHANNELS
     # Highest volume harmonic reported, capped at the output Nyquist frequency.
     volume_spectrum_max_hz: float = 110.0
     report_channel_outliers: bool = True
@@ -488,7 +487,9 @@ def _validate_marker_selection_trim(
         )
 
 
-def _timing_config(values: Mapping[str, object]) -> TimingConfig:
+def _timing_marker_settings(
+    values: Mapping[str, object],
+) -> tuple[str, int | None, float | None]:
     marker_kind = (
         _string_value(values, "marker_kind")
         if "marker_kind" in values
@@ -523,7 +524,13 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
             "timing.marker_kind is 'slice'; with volume markers the repetition "
             "time is declared, not measured"
         )
+    return marker_kind, groups_per_volume, expected_repetition_time
 
+
+def _timing_missing_marker_settings(
+    values: Mapping[str, object],
+    marker_kind: str,
+) -> tuple[str, int | None]:
     policy = (
         _string_value(values, "missing_volume_markers")
         if "missing_volume_markers" in values
@@ -556,7 +563,15 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
             "timing.expected_volume_count is only valid when "
             "missing_volume_markers is 'repair'"
         )
+    return policy, expected_count
 
+
+def _timing_volume_selection(
+    values: Mapping[str, object],
+    *,
+    marker_kind: str,
+    policy: str,
+) -> tuple[int | None, int | None]:
     marker_start = (
         _integer_value(values, "volume_marker_start_index", minimum=0)
         if "volume_marker_start_index" in values
@@ -578,6 +593,22 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
             "explicit volume marker selection cannot be combined with "
             "missing volume marker repair"
         )
+    return marker_start, marker_count
+
+
+def _timing_config(values: Mapping[str, object]) -> TimingConfig:
+    marker_kind, groups_per_volume, expected_repetition_time = (
+        _timing_marker_settings(values)
+    )
+    policy, expected_count = _timing_missing_marker_settings(
+        values,
+        marker_kind,
+    )
+    marker_start, marker_count = _timing_volume_selection(
+        values,
+        marker_kind=marker_kind,
+        policy=policy,
+    )
 
     return TimingConfig(
         marker_type=_string_value(values, "marker_type"),
@@ -623,14 +654,14 @@ def _quality_control_config(
         residual_mad_multiplier=_optional_finite_number(
             values,
             "residual_mad_multiplier",
-            default=residual_qc_defaults.MAD_MULTIPLIER,
+            default=ResidualQcDefaults.MAD_MULTIPLIER,
             minimum=0.0,
             inclusive=True,
         ),
         residual_minimum_channels=_optional_positive_integer(
             values,
             "residual_minimum_channels",
-            default=residual_qc_defaults.MINIMUM_CHANNELS,
+            default=ResidualQcDefaults.MINIMUM_CHANNELS,
         ),
         mains_exclusion_hz=_optional_finite_number(
             values,

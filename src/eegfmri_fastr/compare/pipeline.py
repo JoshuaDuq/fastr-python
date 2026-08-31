@@ -22,6 +22,7 @@ from .plots import (
 
 
 def run_comparison(config: CompareConfig) -> list[dict]:
+    """Compare paired uncorrected and FASTR recordings and write summaries."""
     pairs = pair_recordings(config)
     rows: list[dict] = []
     fig_root = config.paths.output_root / "figures"
@@ -48,12 +49,12 @@ def _load_traces(pair: RecordingPair) -> dict[str, object]:
     traces: dict[str, object] = {}
     try:
         fastr = load_vhdr(pair.fastr_vhdr)
-    except Exception as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"failed to load FASTR {pair.fastr_vhdr}: {error}")
         return traces
     try:
         uncorrected = load_vhdr(pair.uncorrected_vhdr)
-    except Exception as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"failed to load uncorrected {pair.uncorrected_vhdr}: {error}")
         fastr.close()
         return traces

@@ -784,7 +784,7 @@ def _volumes_helped_by_local_window(
     protected_edge_volumes: int = 2,
     improvement_ratio: float,
 ) -> np.ndarray:
-    """True for groups whose volume leftover falls enough with a short window."""
+    """Mark groups whose volume leftover falls enough with a short window."""
     if stride > 1 and wide_scores.size % stride == 0:
         wide_volume = wide_scores.reshape(-1, stride).mean(axis=1)
         local_volume = local_scores.reshape(-1, stride).mean(axis=1)

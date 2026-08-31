@@ -47,12 +47,15 @@ _BAD_CHANNEL_MINIMUM_BLOCKS = 2
 _BAD_CHANNEL_MINIMUM_FRACTION = 0.10
 
 
-class residual_qc_defaults:
+class ResidualQcDefaults:
     """Defaults shared with the pipeline and configuration layers."""
 
     MAD_MULTIPLIER = _DEFAULT_MAD_MULTIPLIER
     MINIMUM_CHANNELS = _DEFAULT_MINIMUM_CHANNELS
     FLOOR_UV = _DEFAULT_FLOOR_UV
+
+
+residual_qc_defaults = ResidualQcDefaults
 
 
 class ResidualQcError(ValueError):

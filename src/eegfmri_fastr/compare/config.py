@@ -13,6 +13,8 @@ from ..config import ConfigurationError
 
 @dataclass(frozen=True, slots=True)
 class ComparePaths:
+    """Store the input and output roots used for a comparison."""
+
     uncorrected_root: Path
     fastr_root: Path
     output_root: Path
@@ -20,6 +22,8 @@ class ComparePaths:
 
 @dataclass(frozen=True, slots=True)
 class PlotSettings:
+    """Store PSD plotting limits for a comparison."""
+
     psd_max_hz: float
 
 
@@ -42,6 +46,8 @@ class NamingConfig:
 
 @dataclass(frozen=True, slots=True)
 class CompareConfig:
+    """Store validated paths, subject selection, and naming rules."""
+
     paths: ComparePaths
     plot: PlotSettings
     include: tuple[str, ...]
@@ -66,6 +72,7 @@ _NAMING_KEYS = frozenset(
 
 
 def load_compare_config(path: str | Path) -> CompareConfig:
+    """Load and validate a comparison configuration from YAML."""
     config_path = Path(path).expanduser().resolve()
     try:
         document = yaml.safe_load(config_path.read_text(encoding="utf-8"))

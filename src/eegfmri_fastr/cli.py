@@ -30,6 +30,7 @@ from .pipeline import PipelineInputError, run_correction
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line interface and return its exit status."""
     parser = _make_parser()
     arguments = parser.parse_args(argv)
     try:

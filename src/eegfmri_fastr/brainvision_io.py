@@ -252,14 +252,10 @@ def write_brainvision_recording(
             temporary_path.rename(header_path.with_suffix(suffix))
 
 
-def _read_header_references(path: Path) -> tuple[str, str]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if not lines or lines[0] not in _HEADER_IDENTIFIERS:
-        raise BrainVisionInputError("invalid BrainVision header identifier")
-
+def _collect_header_references(lines: Iterable[str]) -> dict[str, str]:
     in_common_infos = False
     references: dict[str, str] = {}
-    for line in lines[1:]:
+    for line in lines:
         if not line or line.startswith(";"):
             continue
         if line.startswith("["):
@@ -275,13 +271,25 @@ def _read_header_references(path: Path) -> tuple[str, str]:
             if key in references:
                 raise BrainVisionInputError(f"duplicate BrainVision {key} declaration")
             references[key] = value
+    return references
 
+
+def _validate_header_references(references: dict[str, str]) -> tuple[str, str]:
     missing = [key for key in ("DataFile", "MarkerFile") if key not in references]
     if missing:
         raise BrainVisionInputError(
             f"BrainVision header is missing {', '.join(missing)}"
         )
     return references["DataFile"], references["MarkerFile"]
+
+
+def _read_header_references(path: Path) -> tuple[str, str]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] not in _HEADER_IDENTIFIERS:
+        raise BrainVisionInputError("invalid BrainVision header identifier")
+
+    references = _collect_header_references(lines[1:])
+    return _validate_header_references(references)
 
 
 def _resolve_local_reference(

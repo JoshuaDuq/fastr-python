@@ -168,7 +168,7 @@ def _bids_metadata() -> dict[str, object]:
 
 
 def _configuration(paths: DemoDataset) -> str:
-    """A configuration for this dataset, commented as a starting point.
+    """Build a commented configuration for this dataset.
 
     Written as text rather than dumped, because the comments are most of what
     makes a first configuration readable.

@@ -40,6 +40,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
+extend-select = ["C90", "N", "D101", "D102", "D103", "D401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D101", "D102", "D103", "D401"]
+"validation/**/*.py" = ["D101", "D102", "D103", "D401"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/eegfmri_fastr"]
