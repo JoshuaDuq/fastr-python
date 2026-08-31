@@ -1,0 +1,125 @@
+cff-version: 1.2.0
+message: "If you use EEG-fMRI FASTR, please cite it and the references below."
+title: "EEG-fMRI FASTR"
+type: software
+authors:
+  - family-names: Duquette
+    given-names: Joshua
+version: 0.1.0
+date-released: 2026-08-30
+repository-code: "https://github.com/JoshuaDuq/eeg-fmri-fastr"
+license: GPL-2.0-only
+keywords:
+  - electroencephalography
+  - functional magnetic resonance imaging
+  - EEG-fMRI
+  - scanner-gradient artifact correction
+  - FASTR
+abstract: >-
+  A validated Python implementation of FASTR scanner-gradient artifact
+  correction for simultaneous EEG-fMRI recordings.
+references:
+  - type: article
+    authors:
+      - family-names: Niazy
+        given-names: R. K.
+      - family-names: Beckmann
+        given-names: C. F.
+      - family-names: Iannetti
+        given-names: G. D.
+      - family-names: Brady
+        given-names: J. M.
+      - family-names: Smith
+        given-names: S. M.
+    title: "Removal of FMRI environment artifacts from EEG data using optimal basis sets"
+    journal: NeuroImage
+    year: 2005
+    volume: 28
+    issue: 3
+    start: 720
+    end: 737
+    doi: 10.1016/j.neuroimage.2005.06.067
+  - type: article
+    authors:
+      - family-names: Gramfort
+        given-names: Alexandre
+      - family-names: Luessi
+        given-names: Martin
+      - family-names: Larson
+        given-names: Eric
+      - family-names: Engemann
+        given-names: Denis A.
+      - family-names: Strohmeier
+        given-names: Daniel
+      - family-names: Brodbeck
+        given-names: Christian
+      - family-names: Goj
+        given-names: Roman
+      - family-names: Jas
+        given-names: Mainak
+      - family-names: Brooks
+        given-names: Teon
+      - family-names: Parkkonen
+        given-names: Lauri
+      - family-names: Hämäläinen
+        given-names: Matti S.
+    title: "MEG and EEG data analysis with MNE-Python"
+    journal: Frontiers in Neuroscience
+    year: 2013
+    volume: 7
+    issue: 267
+    doi: 10.3389/fnins.2013.00267
+  - type: article
+    authors:
+      - family-names: Gorgolewski
+        given-names: Krzysztof J.
+      - family-names: Auer
+        given-names: Tobias
+      - family-names: Calhoun
+        given-names: Vince D.
+      - family-names: Craddock
+        given-names: R. Cameron
+      - family-names: Das
+        given-names: Sandhitsu
+      - family-names: Duff
+        given-names: Eugene P.
+      - family-names: Flandin
+        given-names: Guillaume
+      - family-names: Ghosh
+        given-names: Satrajit S.
+      - family-names: Glatard
+        given-names: Tristan
+      - family-names: Halchenko
+        given-names: Yury O.
+      - family-names: Handwerker
+        given-names: Daniel A.
+      - family-names: Hanke
+        given-names: Michael
+      - family-names: Keator
+        given-names: David
+      - family-names: Li
+        given-names: Xiang
+      - family-names: Maumet
+        given-names: Camille
+      - family-names: Nichols
+        given-names: Thomas E.
+      - family-names: Poline
+        given-names: Jean-Baptiste
+      - family-names: Reynolds
+        given-names: Richard C.
+      - family-names: Sochat
+        given-names: Vanessa V.
+      - family-names: Triplett
+        given-names: William
+      - family-names: Turner
+        given-names: Jessica A.
+      - family-names: Varoquaux
+        given-names: Gaël
+      - family-names: Poldrack
+        given-names: Russell A.
+    title: "The brain imaging data structure, a format for organizing and describing outputs of neuroimaging experiments"
+    journal: Scientific Data
+    year: 2016
+    volume: 3
+    issue: 160044
+    doi: 10.1038/sdata.2016.44

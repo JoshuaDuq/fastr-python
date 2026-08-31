@@ -6,6 +6,16 @@ build-backend = "hatchling.build"
 name = "eegfmri-fastr"
 version = "0.1.0"
 description = "Validated scanner-gradient artifact correction for simultaneous EEG-fMRI"
+authors = [{ name = "Joshua Duquette" }]
+keywords = ["EEG", "fMRI", "FASTR", "BrainVision", "artifact correction"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 license = "GPL-2.0-only"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -23,6 +33,11 @@ dependencies = [
 
 [project.scripts]
 eegfmri-fastr = "eegfmri_fastr.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/JoshuaDuq/eeg-fmri-fastr/tree/main/docs"
+Issues = "https://github.com/JoshuaDuq/eeg-fmri-fastr/issues"
+Repository = "https://github.com/JoshuaDuq/eeg-fmri-fastr"
 
 [dependency-groups]
 dev = [

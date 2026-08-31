@@ -11,6 +11,7 @@ from pathlib import Path
 
 import mne
 
+from . import __version__
 from .brainvision import BrainVisionMarkerError
 from .brainvision_io import (
     BrainVisionInputError,
@@ -61,6 +62,11 @@ def _make_parser() -> argparse.ArgumentParser:
         description=(
             "Validate and correct scanner-gradient artifact in EEG-fMRI recordings."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser(

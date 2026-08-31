@@ -1,4 +1,7 @@
-from eegfmri_fastr import api, config, pipeline
+import pytest
+
+from eegfmri_fastr import __version__, api, config, pipeline
+from eegfmri_fastr.cli import main
 
 
 def test_high_level_api_reexports_existing_objects_by_identity() -> None:
@@ -39,3 +42,11 @@ def test_existing_facades_declare_public_boundaries() -> None:
         "PipelineInputError",
         "run_correction",
     ]
+
+
+def test_cli_reports_package_version(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["--version"])
+
+    assert error.value.code == 0
+    assert capsys.readouterr().out.strip() == f"eegfmri-fastr {__version__}"
