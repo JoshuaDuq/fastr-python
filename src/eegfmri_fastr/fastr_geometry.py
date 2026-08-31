@@ -38,6 +38,7 @@ _GRID_TOLERANCE_SAMPLES = 1e-6
 _ARTIFACT_SLACK_FRACTION = 0.01
 _DEFAULT_PRE_TRIGGER_FRACTION = 0.03
 _RESIDUAL_GATE_MIN_NEIGHBORS = 2
+_MIN_EDGE_ADAPTATION_ENERGY_RATIO = 1e-3
 
 
 def prepare_fastr_geometry(
@@ -206,26 +207,64 @@ def adapt_fastr_geometry(
     window so a non-stationary gradient can be tracked; the rest keep N wide
     so transfer-gain inflation does not return on clean data.
     """
+    return _adapt_fastr_geometry(
+        geometry,
+        alignment,
+        reference_channel,
+        local_neighbor_count=local_neighbor_count,
+        template_high_pass_hz=template_high_pass_hz,
+        sampling_rate=sampling_rate,
+        adaptive_improvement_ratio=adaptive_improvement_ratio,
+        protect_edge_windows=True,
+    )
+
+
+def adapt_channel_fastr_geometry(
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    channel: np.ndarray,
+    *,
+    local_neighbor_count: int = 20,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
+    adaptive_improvement_ratio: float = 0.85,
+) -> FastrGeometry:
+    """Adapt one channel, including one-sided template windows at run edges."""
+    return _adapt_fastr_geometry(
+        geometry,
+        alignment,
+        channel,
+        local_neighbor_count=local_neighbor_count,
+        template_high_pass_hz=template_high_pass_hz,
+        sampling_rate=sampling_rate,
+        adaptive_improvement_ratio=adaptive_improvement_ratio,
+        protect_edge_windows=False,
+    )
+
+
+def _adapt_fastr_geometry(
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    channel: np.ndarray,
+    *,
+    local_neighbor_count: int,
+    template_high_pass_hz: float | None,
+    sampling_rate: float | None,
+    adaptive_improvement_ratio: float,
+    protect_edge_windows: bool,
+) -> FastrGeometry:
     _validate_geometry_alignment(geometry, alignment)
     improvement_ratio = validate_unit_interval(
         adaptive_improvement_ratio,
         name="adaptive improvement ratio",
     )
-    if (
-        isinstance(local_neighbor_count, bool)
-        or not isinstance(local_neighbor_count, int)
-        or local_neighbor_count < 2
-        or local_neighbor_count % 2
-    ):
-        raise FastrInputError(
-            "local neighbour count must be an even integer of at least two"
-        )
+    _validate_local_neighbor_count(local_neighbor_count)
 
     wide_count = geometry.window.indices.shape[1]
     if local_neighbor_count >= wide_count:
         return geometry
 
-    reference = validate_reference_channel(reference_channel, geometry.sample_count)
+    reference = validate_reference_channel(channel, geometry.sample_count)
     template_filter = _make_template_high_pass(
         template_high_pass_hz,
         sampling_rate=sampling_rate,
@@ -247,11 +286,7 @@ def adapt_fastr_geometry(
         geometry.window,
         geometry.epoch,
     )
-    local_indices = _nearest_slot_neighbors(
-        epochs.shape[0],
-        geometry.window.stride,
-        local_neighbor_count,
-    )
+    local_indices = _local_neighbor_indices(geometry, local_neighbor_count)
     local_templates = _mean_selected_epochs(epochs, local_indices)
     wide_scores = np.mean(_template_residual(epochs, wide_templates) ** 2, axis=1)
     local_scores = np.mean(_template_residual(epochs, local_templates) ** 2, axis=1)
@@ -261,10 +296,25 @@ def adapt_fastr_geometry(
         geometry.window.stride,
         improvement_ratio=improvement_ratio,
     )
+    excluded_targets = np.isin(
+        geometry.group_indices,
+        geometry.excluded_group_indices,
+    )
+    shrink &= ~excluded_targets
     edge_window = (geometry.window.run_starts == geometry.window.run_starts.min()) | (
         geometry.window.run_starts == geometry.window.run_starts.max()
     )
-    shrink &= ~edge_window
+    if protect_edge_windows:
+        shrink &= ~edge_window
+    else:
+        epoch_scores = np.mean(epochs**2, axis=1)
+        edge_residual_ratio = _volume_residual_energy_ratio(
+            wide_scores,
+            epoch_scores,
+            geometry.window.stride,
+        )
+        reliable_edge = edge_residual_ratio > _MIN_EDGE_ADAPTATION_ENERGY_RATIO
+        shrink &= ~edge_window | reliable_edge
     if not np.any(shrink):
         return geometry
 
@@ -284,6 +334,46 @@ def adapt_fastr_geometry(
         ),
         adapted_group_indices=geometry.group_indices[np.flatnonzero(shrink)],
     )
+
+
+def prepare_local_fastr_geometry(
+    geometry: FastrGeometry,
+    *,
+    local_neighbor_count: int,
+) -> FastrGeometry:
+    """Use the short same-slot template window for every acquisition group."""
+    if not isinstance(geometry, FastrGeometry):
+        raise FastrInputError("geometry must be a FastrGeometry instance")
+    _validate_local_neighbor_count(local_neighbor_count)
+    wide_count = geometry.window.indices.shape[1]
+    if local_neighbor_count >= wide_count:
+        raise FastrInputError(
+            "local neighbour count must be smaller than the configured "
+            "neighbour count"
+        )
+    local_indices = _local_neighbor_indices(geometry, local_neighbor_count)
+    return replace(
+        geometry,
+        window=replace(
+            geometry.window,
+            indices=local_indices,
+            contains_target=False,
+            summed_contiguous=False,
+        ),
+        adapted_group_indices=geometry.group_indices,
+    )
+
+
+def _validate_local_neighbor_count(local_neighbor_count: int) -> None:
+    if (
+        isinstance(local_neighbor_count, bool)
+        or not isinstance(local_neighbor_count, int)
+        or local_neighbor_count < 2
+        or local_neighbor_count % 2
+    ):
+        raise FastrInputError(
+            "local neighbour count must be an even integer of at least two"
+        )
 
 
 def _validate_geometry_alignment(
@@ -650,19 +740,40 @@ def _nearest_slot_neighbors(
     group_count: int,
     stride: int,
     neighbor_count: int,
+    excluded_rows: np.ndarray,
 ) -> np.ndarray:
-    """Nearest same-slot groups, excluding the target, padded with -1."""
-    indices = np.full((group_count, neighbor_count), -1, dtype=np.int64)
+    """Nearest clean same-slot groups, excluding the target."""
+    indices = np.empty((group_count, neighbor_count), dtype=np.int64)
+    excluded = np.zeros(group_count, dtype=bool)
+    excluded[excluded_rows] = True
     for residue in range(stride):
         class_indices = np.arange(residue, group_count, stride, dtype=np.int64)
-        for position, target in enumerate(class_indices):
-            others = np.delete(class_indices, position)
-            if others.size == 0:
-                continue
+        available = class_indices[~excluded[class_indices]]
+        for target in class_indices:
+            others = available[available != target]
+            if others.size < neighbor_count:
+                raise FastrInputError(
+                    "too few non-excluded same-slot groups remain for the "
+                    "requested local neighbour count"
+                )
             order = np.argsort(np.abs(others - target), kind="stable")
-            take = min(neighbor_count, others.size)
-            indices[target, :take] = others[order[:take]]
+            indices[target] = others[order[:neighbor_count]]
     return indices
+
+
+def _local_neighbor_indices(
+    geometry: FastrGeometry,
+    neighbor_count: int,
+) -> np.ndarray:
+    excluded_rows = np.flatnonzero(
+        np.isin(geometry.group_indices, geometry.excluded_group_indices)
+    )
+    return _nearest_slot_neighbors(
+        geometry.group_indices.size,
+        geometry.window.stride,
+        neighbor_count,
+        excluded_rows,
+    )
 
 
 def _volumes_helped_by_local_window(
@@ -687,6 +798,29 @@ def _volumes_helped_by_local_window(
         helped[:protected_edge_volumes] = False
         helped[-protected_edge_volumes:] = False
     return helped
+
+
+def _volume_residual_energy_ratio(
+    residual_scores: np.ndarray,
+    epoch_scores: np.ndarray,
+    stride: int,
+) -> np.ndarray:
+    if stride > 1 and residual_scores.size % stride == 0:
+        residual = residual_scores.reshape(-1, stride).mean(axis=1)
+        epoch = epoch_scores.reshape(-1, stride).mean(axis=1)
+        ratio = np.divide(
+            residual,
+            epoch,
+            out=np.zeros(residual.shape),
+            where=epoch > 0.0,
+        )
+        return np.repeat(ratio, stride)
+    return np.divide(
+        residual_scores,
+        epoch_scores,
+        out=np.zeros(residual_scores.shape),
+        where=epoch_scores > 0.0,
+    )
 
 
 def _cap_outliers(

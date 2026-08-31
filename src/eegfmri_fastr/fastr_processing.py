@@ -14,7 +14,9 @@ from .fastr_geometry import (
     _measure_artifact_epoch,
     _to_interpolated_grid,
     _validate_epoch_bounds,
+    adapt_channel_fastr_geometry,
     prepare_fastr_geometry,
+    prepare_local_fastr_geometry,
 )
 from .fastr_templates import (
     _extract_epochs,
@@ -28,6 +30,7 @@ from .fastr_templates import (
     _unscaled_channel_noise,
 )
 from .fastr_types import (
+    ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,
     FastrGeometry,
@@ -173,6 +176,134 @@ def apply_fastr_batch(
             correlations=alignment.correlations,
             amplitudes=amplitudes,
             skipped_group_indices=geometry.skipped_group_indices,
+        ),
+    )
+
+
+def apply_channel_adaptive_fastr_batch(
+    data: npt.ArrayLike,
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    *,
+    local_neighbor_count: int,
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
+    adaptive_improvement_ratio: float = 0.85,
+    unscaled_channels: Sequence[int] = (),
+) -> ChannelAdaptiveFastrCorrection:
+    """Correct EEG channels with independently selected template windows.
+
+    Alignment remains shared across the batch. Non-EEG rows are corrected with
+    the configured wide geometry and unscaled subtraction because their
+    physiological signal is not valid evidence for an EEG template-window
+    decision.
+    """
+    recording = validate_recording(data)
+    unscaled = validate_channel_indices(
+        unscaled_channels,
+        recording.shape[0],
+        name="unscaled channels",
+    )
+    channel_geometries = []
+    for index, channel in enumerate(recording):
+        channel_geometry = geometry
+        if index not in unscaled:
+            channel_geometry = adapt_channel_fastr_geometry(
+                geometry,
+                alignment,
+                channel,
+                local_neighbor_count=local_neighbor_count,
+                template_high_pass_hz=template_high_pass_hz,
+                sampling_rate=sampling_rate,
+                adaptive_improvement_ratio=adaptive_improvement_ratio,
+            )
+        channel_geometries.append(channel_geometry)
+    return _apply_channel_geometries(
+        recording,
+        tuple(channel_geometries),
+        alignment,
+        template_high_pass_hz=template_high_pass_hz,
+        sampling_rate=sampling_rate,
+        unscaled_channels=unscaled,
+    )
+
+
+def apply_selected_local_fastr_batch(
+    data: npt.ArrayLike,
+    geometry: FastrGeometry,
+    alignment: FastrAlignment,
+    *,
+    local_neighbor_count: int,
+    local_channels: Sequence[int],
+    template_high_pass_hz: float | None = None,
+    sampling_rate: float | None = None,
+    unscaled_channels: Sequence[int] = (),
+) -> ChannelAdaptiveFastrCorrection:
+    """Correct selected rows with a short window across the complete run."""
+    recording = validate_recording(data)
+    local = validate_channel_indices(
+        local_channels,
+        recording.shape[0],
+        name="local channels",
+    )
+    unscaled = validate_channel_indices(
+        unscaled_channels,
+        recording.shape[0],
+        name="unscaled channels",
+    )
+    if local & unscaled:
+        raise FastrInputError("channels cannot be both local and unscaled")
+    local_geometry = prepare_local_fastr_geometry(
+        geometry,
+        local_neighbor_count=local_neighbor_count,
+    )
+    channel_geometries = tuple(
+        local_geometry if index in local else geometry
+        for index in range(recording.shape[0])
+    )
+    return _apply_channel_geometries(
+        recording,
+        channel_geometries,
+        alignment,
+        template_high_pass_hz=template_high_pass_hz,
+        sampling_rate=sampling_rate,
+        unscaled_channels=unscaled,
+    )
+
+
+def _apply_channel_geometries(
+    recording: np.ndarray,
+    channel_geometries: tuple[FastrGeometry, ...],
+    alignment: FastrAlignment,
+    *,
+    template_high_pass_hz: float | None,
+    sampling_rate: float | None,
+    unscaled_channels: frozenset[int],
+) -> ChannelAdaptiveFastrCorrection:
+    corrected = np.empty_like(recording, dtype=np.float64)
+    amplitudes = np.empty(
+        (recording.shape[0], channel_geometries[0].triggers.size),
+        dtype=np.float64,
+    )
+    for index, (channel, channel_geometry) in enumerate(
+        zip(recording, channel_geometries, strict=True)
+    ):
+        correction = apply_fastr_batch(
+            channel[np.newaxis, :],
+            channel_geometry,
+            alignment,
+            template_high_pass_hz=template_high_pass_hz,
+            sampling_rate=sampling_rate,
+            unscaled_channels=(0,) if index in unscaled_channels else (),
+        )
+        corrected[index] = correction.data[0]
+        amplitudes[index] = correction.provenance.amplitudes[0]
+    return ChannelAdaptiveFastrCorrection(
+        data=corrected,
+        amplitudes=amplitudes,
+        adapted_group_indices=tuple(
+            channel_geometry.adapted_group_indices
+            for channel_geometry in channel_geometries
         ),
     )
 

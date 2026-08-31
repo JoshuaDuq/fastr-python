@@ -5,7 +5,9 @@ from eegfmri_fastr.fastr_geometry import (
     prepare_fastr_geometry,
 )
 from eegfmri_fastr.fastr_processing import (
+    apply_channel_adaptive_fastr_batch,
     apply_fastr_batch,
+    apply_selected_local_fastr_batch,
     fit_fastr_alignment,
     residual_obs,
 )
@@ -15,6 +17,7 @@ from eegfmri_fastr.fastr_timing import (
     make_group_trigger_samples,
 )
 from eegfmri_fastr.fastr_types import (
+    ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,
     FastrGeometry,
@@ -28,6 +31,11 @@ def test_fastr_facade_reexports_extracted_implementations() -> None:
     assert fastr.gate_fastr_geometry is gate_fastr_geometry
     assert fastr.adapt_fastr_geometry is adapt_fastr_geometry
     assert fastr.apply_fastr_batch is apply_fastr_batch
+    assert fastr.apply_selected_local_fastr_batch is apply_selected_local_fastr_batch
+    assert (
+        fastr.apply_channel_adaptive_fastr_batch
+        is apply_channel_adaptive_fastr_batch
+    )
     assert fastr.fit_fastr_alignment is fit_fastr_alignment
     assert fastr.residual_obs is residual_obs
     assert fastr.FmriAcquisitionTiming is FmriAcquisitionTiming
@@ -36,6 +44,7 @@ def test_fastr_facade_reexports_extracted_implementations() -> None:
 
 
 def test_fastr_facade_reexports_stable_value_types() -> None:
+    assert fastr.ChannelAdaptiveFastrCorrection is ChannelAdaptiveFastrCorrection
     assert fastr.FastrAlignment is FastrAlignment
     assert fastr.FastrCorrection is FastrCorrection
     assert fastr.FastrGeometry is FastrGeometry
@@ -47,6 +56,7 @@ def test_fastr_facade_declares_only_public_names() -> None:
     assert fastr.__all__ == [
         "AcquisitionGeometry",
         "AncCorrection",
+        "ChannelAdaptiveFastrCorrection",
         "FastrAlignment",
         "FastrCorrection",
         "FastrGeometry",
@@ -58,7 +68,9 @@ def test_fastr_facade_declares_only_public_names() -> None:
         "acquisition_group_fastr_with_edges",
         "adapt_fastr_geometry",
         "adaptive_noise_cancel",
+        "apply_channel_adaptive_fastr_batch",
         "apply_fastr_batch",
+        "apply_selected_local_fastr_batch",
         "fit_fastr_alignment",
         "fit_residual_obs",
         "fmrib_lms",

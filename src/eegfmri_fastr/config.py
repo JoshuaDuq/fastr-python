@@ -57,6 +57,8 @@ class TimingConfig:
     expected_repetition_time_seconds: float | None = None
     missing_volume_markers: str = "error"
     expected_volume_count: int | None = None
+    volume_marker_start_index: int | None = None
+    volume_marker_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,11 +84,14 @@ class ProcessingConfig:
     pre_trigger_fraction: float = 0.03
     adaptive_noise_cancellation: bool = False
     adaptive_window: bool = False
+    channel_adaptive_window: bool = False
     local_neighbor_count: int = 20
+    local_window_channels: tuple[str, ...] = ()
     residual_gate_mad_multiplier: float = 8.0
     residual_gate_ratio: float = 8.0
     residual_gate_max_fraction: float = 0.02
     adaptive_improvement_ratio: float = 0.85
+    channel_failure_policy: str = "report"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +120,12 @@ class QualityControlConfig:
     residual_minimum_channels: int = residual_qc_defaults.MINIMUM_CHANNELS
     # Highest volume harmonic reported, capped at the output Nyquist frequency.
     volume_spectrum_max_hz: float = 110.0
+    report_channel_outliers: bool = True
+    # Absolute floor a channel-block residual must clear before the automatic
+    # policy may call it a failure. Unlike residual_threshold_uv this one is
+    # never relative: a spatial comparison alone cannot separate a broken
+    # electrode from a quiet recording. See residual_qc.
+    bad_channel_residual_uv: float = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +192,8 @@ _TIMING_KEYS = frozenset(
         "expected_repetition_time_seconds",
         "missing_volume_markers",
         "expected_volume_count",
+        "volume_marker_start_index",
+        "volume_marker_count",
     }
 )
 _OPTIONAL_TIMING_KEYS = frozenset(
@@ -190,6 +203,8 @@ _OPTIONAL_TIMING_KEYS = frozenset(
         "expected_repetition_time_seconds",
         "missing_volume_markers",
         "expected_volume_count",
+        "volume_marker_start_index",
+        "volume_marker_count",
     }
 )
 _MISSING_VOLUME_MARKER_POLICIES = frozenset({"error", "repair"})
@@ -201,6 +216,8 @@ _QUALITY_CONTROL_KEYS = frozenset(
         "residual_mad_multiplier",
         "residual_minimum_channels",
         "volume_spectrum_max_hz",
+        "report_channel_outliers",
+        "bad_channel_residual_uv",
     }
 )
 _DIAGNOSTICS_KEYS = frozenset({"psd_max_frequency_hz", "psd_n_fft"})
@@ -225,11 +242,14 @@ _PROCESSING_KEYS = frozenset(
         "pre_trigger_fraction",
         "adaptive_noise_cancellation",
         "adaptive_window",
+        "channel_adaptive_window",
         "local_neighbor_count",
+        "local_window_channels",
         "residual_gate_mad_multiplier",
         "residual_gate_ratio",
         "residual_gate_max_fraction",
         "adaptive_improvement_ratio",
+        "channel_failure_policy",
     }
 )
 _OPTIONAL_PROCESSING_KEYS = frozenset(
@@ -244,14 +264,20 @@ _OPTIONAL_PROCESSING_KEYS = frozenset(
         "pre_trigger_fraction",
         "adaptive_noise_cancellation",
         "adaptive_window",
+        "channel_adaptive_window",
         "local_neighbor_count",
+        "local_window_channels",
         "residual_gate_mad_multiplier",
         "residual_gate_ratio",
         "residual_gate_max_fraction",
         "adaptive_improvement_ratio",
+        "channel_failure_policy",
     }
 )
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
+_CHANNEL_FAILURE_POLICIES = frozenset(
+    {"report", "retry_local_and_recommend_bad"}
+)
 
 
 def load_config(path: str | Path) -> CorrectionConfig:
@@ -310,6 +336,11 @@ def load_config(path: str | Path) -> CorrectionConfig:
         fmri_metadata=fmri_metadata,
         acquisition=acquisition,
     )
+    trim = _trim_config(root)
+    _validate_marker_selection_trim(timing, trim)
+    processing = _processing_config(processing_values)
+    quality_control = _quality_control_config(root)
+    _validate_channel_failure_policy(processing, quality_control)
     return CorrectionConfig(
         input=InputConfig(
             raw_vhdr=_path_value(input_values, "raw_vhdr", base_directory),
@@ -319,10 +350,10 @@ def load_config(path: str | Path) -> CorrectionConfig:
             vhdr=_path_value(output_values, "vhdr", base_directory),
         ),
         timing=timing,
-        processing=_processing_config(processing_values),
-        trim=_trim_config(root),
+        processing=processing,
+        trim=trim,
         acquisition=acquisition,
-        quality_control=_quality_control_config(root),
+        quality_control=quality_control,
         diagnostics=_diagnostics_config(root),
     )
 
@@ -389,6 +420,57 @@ def _validate_timing_sources(
             "acquisition-group markers record their own timing: remove "
             "input.fmri_metadata and the acquisition section, or set "
             "timing.marker_kind to 'volume'"
+        )
+
+
+def _validate_channel_failure_policy(
+    processing: ProcessingConfig,
+    quality_control: QualityControlConfig,
+) -> None:
+    """Require the retry policy to own the local window it decides to install.
+
+    The policy earns its answer by comparing one wide correction against one
+    local retry of the same channel. Another mode that already moved some
+    channels to the local window would make that comparison meaningless, and a
+    local window no narrower than the wide one would make it empty.
+    """
+    active = processing.channel_failure_policy == "retry_local_and_recommend_bad"
+    if not active:
+        return
+    conflicting = (
+        processing.adaptive_window
+        or processing.channel_adaptive_window
+        or bool(processing.local_window_channels)
+    )
+    if conflicting:
+        raise ConfigurationError(
+            "processing.channel_failure_policy cannot be combined with "
+            "adaptive or explicit local-window modes"
+        )
+    if not quality_control.report_channel_outliers:
+        raise ConfigurationError(
+            "retry_local_and_recommend_bad requires "
+            "quality_control.report_channel_outliers"
+        )
+    if processing.local_neighbor_count >= processing.neighbor_count:
+        raise ConfigurationError(
+            "processing.local_neighbor_count must be smaller than "
+            "processing.neighbor_count when retrying failed channels"
+        )
+
+
+def _validate_marker_selection_trim(
+    timing: TimingConfig,
+    trim: TrimConfig,
+) -> None:
+    if (
+        timing.volume_marker_start_index is not None
+        and trim.mode != "first_to_last_volume"
+    ):
+        raise ConfigurationError(
+            "explicit volume marker selection requires "
+            "trim.mode 'first_to_last_volume' so unmatched acquisitions are "
+            "excluded from the output"
         )
 
 
@@ -461,6 +543,28 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
             "missing_volume_markers is 'repair'"
         )
 
+    marker_start = (
+        _integer_value(values, "volume_marker_start_index", minimum=0)
+        if "volume_marker_start_index" in values
+        else None
+    )
+    marker_count = _optional_integer_or_none(values, "volume_marker_count")
+    if (marker_start is None) != (marker_count is None):
+        raise ConfigurationError(
+            "timing.volume_marker_start_index and timing.volume_marker_count "
+            "must be configured together"
+        )
+    if marker_kind == "slice" and marker_start is not None:
+        raise ConfigurationError(
+            "timing.volume_marker_start_index and timing.volume_marker_count "
+            "are only valid for volume markers"
+        )
+    if marker_start is not None and policy == "repair":
+        raise ConfigurationError(
+            "explicit volume marker selection cannot be combined with "
+            "missing volume marker repair"
+        )
+
     return TimingConfig(
         marker_type=_string_value(values, "marker_type"),
         marker_description=_string_value(values, "marker_description"),
@@ -469,6 +573,8 @@ def _timing_config(values: Mapping[str, object]) -> TimingConfig:
         expected_repetition_time_seconds=expected_repetition_time,
         missing_volume_markers=policy,
         expected_volume_count=expected_count,
+        volume_marker_start_index=marker_start,
+        volume_marker_count=marker_count,
     )
 
 
@@ -524,6 +630,21 @@ def _quality_control_config(
             "volume_spectrum_max_hz",
             default=QualityControlConfig.__dataclass_fields__[
                 "volume_spectrum_max_hz"
+            ].default,
+            minimum=0.0,
+        ),
+        report_channel_outliers=(
+            _boolean_value(values, "report_channel_outliers")
+            if "report_channel_outliers" in values
+            else QualityControlConfig.__dataclass_fields__[
+                "report_channel_outliers"
+            ].default
+        ),
+        bad_channel_residual_uv=_optional_finite_number(
+            values,
+            "bad_channel_residual_uv",
+            default=QualityControlConfig.__dataclass_fields__[
+                "bad_channel_residual_uv"
             ].default,
             minimum=0.0,
         ),
@@ -631,6 +752,36 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         if "adaptive_window" in values
         else ProcessingConfig.__dataclass_fields__["adaptive_window"].default
     )
+    channel_adaptive_window = (
+        _boolean_value(values, "channel_adaptive_window")
+        if "channel_adaptive_window" in values
+        else ProcessingConfig.__dataclass_fields__[
+            "channel_adaptive_window"
+        ].default
+    )
+    if adaptive_window and channel_adaptive_window:
+        raise ConfigurationError(
+            "processing.adaptive_window and "
+            "processing.channel_adaptive_window cannot both be enabled"
+        )
+    local_window_channels = _channel_names(
+        values,
+        "local_window_channels",
+        default=(),
+    )
+    if local_window_channels and (adaptive_window or channel_adaptive_window):
+        raise ConfigurationError(
+            "processing.local_window_channels cannot be combined with "
+            "adaptive window modes"
+        )
+    non_eeg_channels = _non_eeg_channels(values)
+    overlap = set(local_window_channels) & set(non_eeg_channels)
+    if overlap:
+        channels = ", ".join(sorted(overlap))
+        raise ConfigurationError(
+            "processing.local_window_channels cannot contain non-EEG "
+            f"channels: {channels}"
+        )
     local_neighbor_count = (
         _integer_value(values, "local_neighbor_count", minimum=2)
         if "local_neighbor_count" in values
@@ -638,6 +789,27 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     )
     if local_neighbor_count % 2:
         raise ConfigurationError("processing.local_neighbor_count must be even")
+    if (
+        adaptive_window or channel_adaptive_window or local_window_channels
+    ) and local_neighbor_count >= neighbor_count:
+        raise ConfigurationError(
+            "processing.local_neighbor_count must be smaller than "
+            "processing.neighbor_count when a local-window mode is enabled"
+        )
+
+    channel_failure_policy = (
+        _string_value(values, "channel_failure_policy")
+        if "channel_failure_policy" in values
+        else ProcessingConfig.__dataclass_fields__[
+            "channel_failure_policy"
+        ].default
+    )
+    if channel_failure_policy not in _CHANNEL_FAILURE_POLICIES:
+        supported = ", ".join(sorted(_CHANNEL_FAILURE_POLICIES))
+        raise ConfigurationError(
+            f"processing.channel_failure_policy must be one of {supported}; "
+            f"got {channel_failure_policy!r}"
+        )
 
     residual_gate_mad_multiplier = _optional_finite_number(
         values,
@@ -685,11 +857,14 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         pre_trigger_fraction=pre_trigger_fraction,
         adaptive_noise_cancellation=adaptive_noise_cancellation,
         adaptive_window=adaptive_window,
+        channel_adaptive_window=channel_adaptive_window,
         local_neighbor_count=local_neighbor_count,
+        local_window_channels=local_window_channels,
         residual_gate_mad_multiplier=residual_gate_mad_multiplier,
         residual_gate_ratio=residual_gate_ratio,
         residual_gate_max_fraction=residual_gate_max_fraction,
         adaptive_improvement_ratio=adaptive_improvement_ratio,
+        channel_failure_policy=channel_failure_policy,
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         template_high_pass_hz=template_high_pass_hz,
@@ -707,21 +882,35 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         ),
         reference_channel=_reference_channel(values),
         line_noise_frequencies_hz=line_noise_frequencies_hz,
-        non_eeg_channels=_non_eeg_channels(values),
+        non_eeg_channels=non_eeg_channels,
     )
 
 
 def _non_eeg_channels(values: Mapping[str, object]) -> tuple[str, ...]:
     """Names of channels the correction must not fit a scalar or a basis to."""
     default = ProcessingConfig.__dataclass_fields__["non_eeg_channels"].default
-    if "non_eeg_channels" not in values:
+    return _channel_names(values, "non_eeg_channels", default=default)
+
+
+def _channel_names(
+    values: Mapping[str, object],
+    name: str,
+    *,
+    default: tuple[str, ...],
+) -> tuple[str, ...]:
+    if name not in values:
         return default
-    names = values["non_eeg_channels"]
+    names = values[name]
     if not isinstance(names, list) or any(
-        not isinstance(name, str) or not name for name in names
+        not isinstance(channel_name, str) or not channel_name
+        for channel_name in names
     ):
         raise ConfigurationError(
-            "processing.non_eeg_channels must be a list of nonempty channel names"
+            f"processing.{name} must be a list of nonempty channel names"
+        )
+    if len(names) != len(set(names)):
+        raise ConfigurationError(
+            f"processing.{name} must not contain duplicate channel names"
         )
     return tuple(names)
 

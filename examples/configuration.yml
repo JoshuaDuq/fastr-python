@@ -23,6 +23,12 @@ timing:
   # interior gaps are filled; missing boundary markers remain an error.
   missing_volume_markers: error
   # expected_volume_count: 580
+  # When one marker stream contains multiple acquisitions, select the exact
+  # zero-based range belonging to this BOLD run. Both fields are required and
+  # the selected markers must still be contiguous; this never bridges a gap.
+  # volume_marker_start_index: 0
+  # volume_marker_count: 570
+  # Marker selection requires trim.mode: first_to_last_volume below.
 
 # Slice timing declared here instead of in a BIDS sidecar, for a recording whose
 # sidecar omits SliceTiming or MultibandAccelerationFactor. The three fields are
@@ -73,8 +79,20 @@ processing:
   residual_gate_ratio: 8.0
   residual_gate_max_fraction: 0.02
   adaptive_window: false
+  # Decide between the wide and local windows independently for each EEG
+  # channel. This cannot be combined with the shared adaptive_window mode.
+  channel_adaptive_window: false
+  # Force the local window across the full run only for listed EEG channels.
+  # Use this for confirmed isolated residual failures such as AF4. This cannot
+  # be combined with either adaptive-window mode.
+  local_window_channels: []
   local_neighbor_count: 20
   adaptive_improvement_ratio: 0.85
+  # Report only by default. The retry policy reruns isolated EEG failures with
+  # local_neighbor_count, then recommends persistent failures in provenance.
+  # It never interpolates or drops a channel, and cannot be combined with
+  # either adaptive-window mode or with local_window_channels.
+  channel_failure_policy: report
 
 # Optional quality-control settings. These describe how residuals are measured;
 # they do not enable or change correction stages by themselves.
@@ -91,6 +109,13 @@ quality_control:
   # noisy run is not flagged end to end for being noisy.
   residual_mad_multiplier: 6.0
   residual_minimum_channels: 4
+  # Report isolated channel/block failures in the sidecar without marking the
+  # entire time block bad or changing correction.
+  report_channel_outliers: true
+  # Absolute scanner-residual floor for automatic channel retry decisions. A
+  # channel-block below this is never a candidate, however far it sits from the
+  # other channels measured in the same block.
+  bad_channel_residual_uv: 5.0
   # Highest volume harmonic reported, capped at the output Nyquist frequency.
   volume_spectrum_max_hz: 110.0
 

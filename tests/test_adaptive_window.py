@@ -9,7 +9,9 @@ from eegfmri_fastr.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     adapt_fastr_geometry,
+    apply_channel_adaptive_fastr_batch,
     apply_fastr_batch,
+    apply_selected_local_fastr_batch,
     fit_fastr_alignment,
     make_group_trigger_samples,
     prepare_fastr_geometry,
@@ -124,6 +126,105 @@ def test_adapted_windows_reduce_leftover_inside_the_burst() -> None:
     )
     assert wide_leftover > 50.0
     assert adapted_leftover < 0.5 * wide_leftover
+
+
+def test_channel_adaptive_correction_selects_windows_per_eeg_channel() -> None:
+    drifting, _starts, triggers = make_nonstationary_burst()
+    stationary, _starts, _triggers = make_nonstationary_burst(burst=(0, 0))
+    non_eeg = 2.0 * stationary
+    data = np.vstack([drifting, stationary, non_eeg])
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(stationary[0], geometry)
+
+    correction = apply_channel_adaptive_fastr_batch(
+        data,
+        geometry,
+        alignment,
+        local_neighbor_count=4,
+        sampling_rate=1_000.0,
+        unscaled_channels=(2,),
+    )
+
+    assert correction.data.shape == data.shape
+    assert correction.amplitudes.shape == (3, geometry.triggers.size)
+    assert correction.adapted_group_indices[0].size > 0
+    assert correction.adapted_group_indices[1].size == 0
+    assert correction.adapted_group_indices[2].size == 0
+
+    wide = apply_fastr_batch(data, geometry, alignment, unscaled_channels=(2,))
+    burst_start = int(triggers[22 * 2])
+    burst_stop = burst_start + 25
+    wide_leftover = np.max(np.abs(wide.data[0, burst_start:burst_stop]))
+    adaptive_leftover = np.max(
+        np.abs(correction.data[0, burst_start:burst_stop])
+    )
+    assert adaptive_leftover < 0.5 * wide_leftover
+    np.testing.assert_allclose(correction.data[1:], wide.data[1:])
+
+
+def test_channel_adaptive_correction_can_shrink_an_edge_window() -> None:
+    drifting, _starts, triggers = make_nonstationary_burst(burst=(2, 10))
+    geometry = _geometry(drifting, triggers)
+    alignment = fit_fastr_alignment(drifting[0], geometry)
+
+    correction = apply_channel_adaptive_fastr_batch(
+        drifting,
+        geometry,
+        alignment,
+        local_neighbor_count=4,
+        sampling_rate=1_000.0,
+    )
+
+    target_group = 5 * 2
+    assert target_group in correction.adapted_group_indices[0]
+
+
+def test_selected_channels_use_the_local_window_for_every_group() -> None:
+    drifting, _starts, triggers = make_nonstationary_burst()
+    stationary, _starts, _triggers = make_nonstationary_burst(burst=(0, 0))
+    data = np.vstack([drifting, stationary])
+    wide_geometry = _geometry(data, triggers)
+    local_geometry = _geometry(data, triggers, neighbor_count=4)
+    alignment = fit_fastr_alignment(stationary[0], wide_geometry)
+
+    correction = apply_selected_local_fastr_batch(
+        data,
+        wide_geometry,
+        alignment,
+        local_neighbor_count=4,
+        local_channels=(0,),
+        sampling_rate=1_000.0,
+    )
+    expected_local = apply_fastr_batch(
+        data[[0]],
+        local_geometry,
+        alignment,
+    )
+    expected_wide = apply_fastr_batch(data[[1]], wide_geometry, alignment)
+
+    np.testing.assert_allclose(correction.data[[0]], expected_local.data)
+    np.testing.assert_allclose(correction.data[[1]], expected_wide.data)
+    np.testing.assert_array_equal(
+        correction.adapted_group_indices[0],
+        wide_geometry.group_indices,
+    )
+    assert correction.adapted_group_indices[1].size == 0
+
+
+def test_selected_local_channels_cannot_be_non_eeg() -> None:
+    data, _starts, triggers = make_nonstationary_burst()
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+
+    with pytest.raises(FastrInputError, match="both local and unscaled"):
+        apply_selected_local_fastr_batch(
+            data,
+            geometry,
+            alignment,
+            local_neighbor_count=4,
+            local_channels=(0,),
+            unscaled_channels=(0,),
+        )
 
 
 def test_volumes_far_from_the_burst_keep_the_wide_window() -> None:

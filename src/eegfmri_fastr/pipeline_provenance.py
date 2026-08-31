@@ -19,6 +19,7 @@ from .fastr import (
     FastrGeometry,
     FmriAcquisitionTiming,
 )
+from .pipeline_types import ChannelFailurePolicyResult
 from .window import OutputWindow
 
 FMRIB_REFERENCE_COMMIT = "2aa522bc5ec4215f42b3ba8efdb2b84d2a312935"
@@ -94,6 +95,73 @@ def timing_provenance(
     }
 
 
+def channel_failure_policy_provenance(
+    config: CorrectionConfig,
+    *,
+    result: ChannelFailurePolicyResult,
+    channel_names: list[str],
+    reference_index: int,
+) -> dict[str, object]:
+    """Record every automatic channel decision the run made, and the bar it used.
+
+    Both sides of each retry comparison are kept, because "rejected" is only
+    informative next to the numbers that rejected it. The recommendation is
+    advisory and lives here alone: no channel was replaced, interpolated or
+    removed, so a reader who disagrees still has the data to disagree with.
+    """
+
+    def named(indices: frozenset[int] | dict[int, np.ndarray]) -> list[str]:
+        return [channel_names[index] for index in sorted(indices)]
+
+    def named_blocks(blocks: dict[int, np.ndarray]) -> dict[str, list[int]]:
+        return {
+            channel_names[index]: [int(block) for block in blocks[index]]
+            for index in sorted(blocks)
+        }
+
+    return {
+        "policy": config.processing.channel_failure_policy,
+        "enabled": (
+            config.processing.channel_failure_policy
+            == "retry_local_and_recommend_bad"
+        ),
+        "absolute_floor_uv": float(
+            config.quality_control.bad_channel_residual_uv
+        ),
+        "spatial_mad_multiplier": float(
+            config.quality_control.residual_mad_multiplier
+        ),
+        "local_neighbor_count": config.processing.local_neighbor_count,
+        "candidate_channels": named(result.candidate_blocks_by_channel),
+        "candidate_blocks_by_channel": named_blocks(
+            result.candidate_blocks_by_channel
+        ),
+        "retry_by_channel": {
+            channel_names[index]: {
+                "accepted": bool(evaluation.accepted),
+                "reason": evaluation.reason,
+                "wide_failed_blocks": [
+                    int(block) for block in evaluation.wide_failed_blocks
+                ],
+                "local_failed_blocks": [
+                    int(block) for block in evaluation.local_failed_blocks
+                ],
+                "wide_maximum_uv": float(evaluation.wide_maximum_uv),
+                "local_maximum_uv": float(evaluation.local_maximum_uv),
+            }
+            for index, evaluation in sorted(result.retry_evaluations.items())
+        },
+        "accepted_local_window_channels": named(result.accepted_channels),
+        "final_failed_blocks_by_channel": named_blocks(
+            result.final_failed_blocks_by_channel
+        ),
+        "recommended_bad_channels": named(result.recommended_bad_channels),
+        "reference_channel_recommended_bad": (
+            reference_index in result.recommended_bad_channels
+        ),
+    }
+
+
 def make_provenance(
     config: CorrectionConfig,
     *,
@@ -110,8 +178,13 @@ def make_provenance(
     output_sample_count: int,
     window: OutputWindow,
     residual_qc: dict[str, object],
+    channel_failure_policy: ChannelFailurePolicyResult,
+    reference_index: int,
     obs_epoch_count: int,
     detected_volume_count: int,
+    matching_marker_count: int,
+    selected_marker_count: int,
+    adapted_group_indices_by_channel: list[np.ndarray],
     selected_obs_ranks: np.ndarray,
     anc_filter_order: int | None,
     anc_reference_scales: np.ndarray,
@@ -177,6 +250,12 @@ def make_provenance(
             "count": len(recording.markers),
             "processed_group_count": int(geometry.triggers.size),
             "skipped_group_indices": geometry.skipped_group_indices.tolist(),
+            "volume_marker_selection": {
+                "matching_marker_count": matching_marker_count,
+                "selected_marker_count": selected_marker_count,
+                "start_index": config.timing.volume_marker_start_index,
+                "count": config.timing.volume_marker_count,
+            },
             "volume_marker_repair": {
                 "mode": config.timing.missing_volume_markers,
                 "detected_volume_count": detected_volume_count,
@@ -234,6 +313,38 @@ def make_provenance(
                 "local_neighbor_count": config.processing.local_neighbor_count,
                 "adapted_group_indices": geometry.adapted_group_indices.tolist(),
                 "adapted_group_count": int(geometry.adapted_group_indices.size),
+            },
+            "channel_adaptive_window": {
+                "enabled": config.processing.channel_adaptive_window,
+                "local_neighbor_count": config.processing.local_neighbor_count,
+                "adapted_group_indices_by_channel": {
+                    channel_name: indices.tolist()
+                    for channel_name, indices in zip(
+                        raw.ch_names,
+                        adapted_group_indices_by_channel,
+                        strict=True,
+                    )
+                },
+                "adapted_channel_count": sum(
+                    indices.size > 0
+                    for indices in adapted_group_indices_by_channel
+                ),
+            },
+            "channel_failure_policy": channel_failure_policy_provenance(
+                config,
+                result=channel_failure_policy,
+                channel_names=raw.ch_names,
+                reference_index=reference_index,
+            ),
+            "local_window_channels": {
+                "enabled": bool(config.processing.local_window_channels),
+                "channels": list(config.processing.local_window_channels),
+                "local_neighbor_count": config.processing.local_neighbor_count,
+                "corrected_group_count": (
+                    int(geometry.group_indices.size)
+                    if config.processing.local_window_channels
+                    else 0
+                ),
             },
         },
         "runtime_seconds": runtime_seconds,

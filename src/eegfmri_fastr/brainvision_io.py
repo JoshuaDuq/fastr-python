@@ -124,6 +124,34 @@ def select_marker_samples(
     return positions
 
 
+def select_marker_sample_block(
+    marker_samples: npt.ArrayLike,
+    *,
+    start_index: int,
+    count: int,
+) -> np.ndarray:
+    """Return one explicit contiguous range from matched marker samples."""
+    samples = np.asarray(marker_samples)
+    if samples.ndim != 1:
+        raise BrainVisionInputError("marker block samples must be one-dimensional")
+    if isinstance(start_index, bool) or not isinstance(start_index, int):
+        raise BrainVisionInputError(
+            "marker block start index must be a nonnegative integer"
+        )
+    if start_index < 0:
+        raise BrainVisionInputError(
+            "marker block start index must be a nonnegative integer"
+        )
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise BrainVisionInputError("marker block count must be a positive integer")
+    stop_index = start_index + count
+    if stop_index > samples.size:
+        raise BrainVisionInputError(
+            "marker block extends beyond the matched marker sequence"
+        )
+    return np.ascontiguousarray(samples[start_index:stop_index])
+
+
 def resample_markers(
     markers: Iterable[BrainVisionMarker],
     *,

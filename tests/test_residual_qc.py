@@ -6,6 +6,9 @@ from eegfmri_fastr.fastr import AcquisitionGeometry
 from eegfmri_fastr.residual_qc import (
     ResidualQcError,
     block_residual_uv,
+    evaluate_local_retry,
+    flag_spatial_channel_blocks,
+    recommend_persistent_bad_channels,
     slice_harmonics,
     volume_harmonic_spectrum,
 )
@@ -304,6 +307,28 @@ def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
     assert not flag_blocks(residuals).any()
 
 
+def test_flag_channel_blocks_reports_an_isolated_channel_failure() -> None:
+    from eegfmri_fastr.residual_qc import flag_channel_blocks
+
+    residuals = _residuals(64, 20)
+    residuals[11, 7] = 25.0
+
+    flagged = flag_channel_blocks(residuals)
+
+    assert flagged.shape == residuals.shape
+    assert flagged[11, 7]
+    assert flagged.sum() == 1
+
+
+def test_flag_channel_blocks_returns_empty_width_without_calibration() -> None:
+    from eegfmri_fastr.residual_qc import flag_channel_blocks
+
+    flagged = flag_channel_blocks(np.full((64, 2), 50.0))
+
+    assert flagged.shape == (64, 2)
+    assert not flagged.any()
+
+
 def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
     """A high but flat residual is the recording's baseline, not an event."""
     from eegfmri_fastr.residual_qc import flag_blocks
@@ -483,3 +508,266 @@ def test_sidecar_reports_the_flag_decision_and_its_settings(
     assert report["floor_uv"] == 1.0
     assert "mad_multiplier" in report
     assert "minimum_channels" in report
+
+
+def test_sidecar_reports_isolated_channel_blocks_without_spatial_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def isolated_failure(data, *, sampling_rate, harmonics, block_seconds):
+        residuals = np.full((data.shape[0], 5), 0.2)
+        residuals[1, 3] = 40.0
+        return residuals
+
+    monkeypatch.setattr(pipeline_module, "block_residual_uv", isolated_failure)
+
+    report = pipeline_module._measure_residual_qc(
+        np.zeros((3, 3000)),
+        channel_names=["EEG 001", "EEG 002", "ECG"],
+        non_eeg_indices=frozenset({2}),
+        output_rate=1000.0,
+        acquisition=_acquisition(0.9),
+        threshold_uv=1.0,
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=110.0,
+        report_channel_outliers=True,
+    )
+
+    assert report["flagged_blocks"] == [False] * 5
+    assert report["flagged_channel_blocks_by_channel"] == {"EEG 002": [3]}
+    assert report["flagged_channel_block_count"] == 1
+
+
+def test_sidecar_omits_channel_flags_when_reporting_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def isolated_failure(data, *, sampling_rate, harmonics, block_seconds):
+        residuals = np.full((data.shape[0], 5), 0.2)
+        residuals[1, 3] = 40.0
+        return residuals
+
+    monkeypatch.setattr(pipeline_module, "block_residual_uv", isolated_failure)
+
+    report = pipeline_module._measure_residual_qc(
+        np.zeros((2, 3000)),
+        channel_names=["EEG 001", "EEG 002"],
+        non_eeg_indices=frozenset(),
+        output_rate=1000.0,
+        acquisition=_acquisition(0.9),
+        threshold_uv=1.0,
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=110.0,
+        report_channel_outliers=False,
+    )
+
+    assert report["report_channel_outliers"] is False
+    assert report["flagged_channel_blocks_by_channel"] == {}
+    assert report["flagged_channel_block_count"] == 0
+
+
+def test_spatial_channel_flags_require_absolute_and_robust_excess() -> None:
+    residuals = np.full((5, 4), 0.5)
+    residuals[1, 2] = 20.0
+
+    result = flag_spatial_channel_blocks(
+        residuals,
+        eeg_channels=(0, 1, 2, 3),
+        absolute_floor_uv=5.0,
+        mad_multiplier=6.0,
+    )
+
+    np.testing.assert_array_equal(result.thresholds_uv, np.full(4, 5.0))
+    assert np.argwhere(result.flags).tolist() == [[1, 2]]
+    assert not result.flags[4].any()
+
+
+def test_uniformly_high_channels_are_not_isolated_spatial_failures() -> None:
+    residuals = np.full((4, 3), 20.0)
+
+    result = flag_spatial_channel_blocks(
+        residuals,
+        eeg_channels=(0, 1, 2, 3),
+        absolute_floor_uv=5.0,
+        mad_multiplier=6.0,
+    )
+
+    assert not result.flags.any()
+
+
+def test_spatial_flags_need_three_calibration_blocks() -> None:
+    residuals = np.full((4, 2), 20.0)
+
+    result = flag_spatial_channel_blocks(
+        residuals,
+        eeg_channels=(0, 1, 2, 3),
+        absolute_floor_uv=5.0,
+        mad_multiplier=6.0,
+    )
+
+    np.testing.assert_array_equal(result.thresholds_uv, np.full(2, 5.0))
+    assert not result.flags.any()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"eeg_channels": ()}, "at least one EEG channel"),
+        ({"eeg_channels": (0, 0, 1)}, "unique"),
+        ({"eeg_channels": (0, 9)}, "within the recording"),
+        ({"eeg_channels": (0, -1)}, "within the recording"),
+        ({"absolute_floor_uv": 0.0}, "absolute floor"),
+        ({"absolute_floor_uv": float("nan")}, "absolute floor"),
+        ({"mad_multiplier": -1.0}, "MAD multiplier"),
+    ],
+)
+def test_spatial_flags_reject_invalid_inputs(
+    kwargs: dict[str, object],
+    message: str,
+) -> None:
+    arguments: dict[str, object] = {
+        "eeg_channels": (0, 1, 2),
+        "absolute_floor_uv": 5.0,
+        "mad_multiplier": 6.0,
+    }
+    arguments.update(kwargs)
+
+    with pytest.raises(ResidualQcError, match=message):
+        flag_spatial_channel_blocks(np.zeros((4, 5)), **arguments)
+
+
+def test_spatial_flags_reject_a_non_finite_matrix() -> None:
+    residuals = np.full((4, 5), 1.0)
+    residuals[0, 0] = np.inf
+
+    with pytest.raises(ResidualQcError, match="finite"):
+        flag_spatial_channel_blocks(
+            residuals,
+            eeg_channels=(0, 1, 2, 3),
+            absolute_floor_uv=5.0,
+            mad_multiplier=6.0,
+        )
+
+
+def test_local_retry_requires_fewer_failures_and_fifteen_percent_improvement() -> None:
+    thresholds = np.full(4, 5.0)
+    wide = np.array([1.0, 20.0, 15.0, 1.0])
+    local = np.array([1.0, 3.0, 4.0, 1.0])
+
+    result = evaluate_local_retry(wide, local, thresholds)
+
+    assert result.accepted is True
+    assert result.reason == "fewer_failed_blocks_and_lower_maximum"
+    assert result.wide_failed_blocks.tolist() == [1, 2]
+    assert result.local_failed_blocks.tolist() == []
+    assert result.wide_maximum_uv == 20.0
+    assert result.local_maximum_uv == 4.0
+
+
+def test_local_retry_is_rejected_when_the_failed_block_count_is_unchanged() -> None:
+    thresholds = np.full(4, 5.0)
+    wide = np.array([1.0, 20.0, 15.0, 1.0])
+    local = np.array([1.0, 6.0, 5.5, 1.0])
+
+    result = evaluate_local_retry(wide, local, thresholds)
+
+    assert result.accepted is False
+    assert result.reason == "failed_block_count_not_reduced"
+    assert result.local_failed_blocks.tolist() == [1, 2]
+
+
+def test_local_retry_is_rejected_without_a_lower_maximum() -> None:
+    """One block fixed while the worst one barely moves is not an improvement."""
+    thresholds = np.full(4, 5.0)
+    wide = np.array([1.0, 20.0, 6.0, 1.0])
+    local = np.array([1.0, 18.0, 4.0, 1.0])
+
+    result = evaluate_local_retry(wide, local, thresholds)
+
+    assert result.accepted is False
+    assert result.reason == "maximum_residual_not_reduced_by_fifteen_percent"
+    assert result.wide_failed_blocks.tolist() == [1, 2]
+    assert result.local_failed_blocks.tolist() == [1]
+
+
+def test_local_retry_rejects_mismatched_or_non_finite_vectors() -> None:
+    with pytest.raises(ResidualQcError, match="same length"):
+        evaluate_local_retry(
+            np.zeros(4),
+            np.zeros(4),
+            np.zeros(3),
+        )
+    with pytest.raises(ResidualQcError, match="one-dimensional"):
+        evaluate_local_retry(
+            np.zeros((2, 4)),
+            np.zeros((2, 4)),
+            np.zeros(4),
+        )
+    with pytest.raises(ResidualQcError, match="finite"):
+        evaluate_local_retry(
+            np.full(4, np.nan),
+            np.zeros(4),
+            np.zeros(4),
+        )
+
+
+def test_persistent_failures_require_two_blocks_and_ten_percent() -> None:
+    flags = np.zeros((3, 20), dtype=bool)
+    flags[0, :2] = True
+    flags[1, 0] = True
+
+    recommended = recommend_persistent_bad_channels(flags)
+
+    assert recommended.tolist() == [True, False, False]
+
+
+def test_persistent_failures_scale_with_the_recording_length() -> None:
+    """Two blocks out of a hundred is a moment, not a broken electrode."""
+    flags = np.zeros((2, 100), dtype=bool)
+    flags[0, :10] = True
+    flags[1, :9] = True
+
+    recommended = recommend_persistent_bad_channels(flags)
+
+    assert recommended.tolist() == [True, False]
+
+
+def test_persistent_failures_need_three_calibration_blocks() -> None:
+    flags = np.ones((2, 2), dtype=bool)
+
+    recommended = recommend_persistent_bad_channels(flags)
+
+    assert recommended.tolist() == [False, False]
+
+
+def test_block_residual_measurement_matches_the_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = np.arange(15, dtype=float).reshape(3, 5)
+    monkeypatch.setattr(
+        pipeline_module,
+        "block_residual_uv",
+        lambda *args, **kwargs: expected,
+    )
+
+    measurement = pipeline_module._measure_block_residuals(
+        np.zeros((3, 3000)),
+        output_rate=1000.0,
+        acquisition=_acquisition(0.9),
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+    )
+
+    np.testing.assert_array_equal(measurement.residuals_uv, expected)
+    assert measurement.volumes_per_block == 33
+    assert measurement.block_seconds == pytest.approx(29.7)
+    assert measurement.harmonics_hz == slice_harmonics(
+        groups_per_volume=2,
+        repetition_time_seconds=0.9,
+        nyquist_hz=500.0,
+        mains_hz=60.0,
+        exclusion_hz=1.0,
+    )

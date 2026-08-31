@@ -68,6 +68,8 @@ def test_the_compare_example_documents_every_naming_field() -> None:
         "marker_kind: slice",
         "groups_per_volume: 18",
         "expected_repetition_time_seconds: 0.9",
+        "volume_marker_start_index: 0",
+        "volume_marker_count: 570",
     ],
 )
 def test_the_correction_example_shows_the_alternatives(

@@ -13,7 +13,9 @@ from .fastr_geometry import (
 from .fastr_processing import (
     _run_fastr,
     _run_fastr_with_edges,
+    apply_channel_adaptive_fastr_batch,
     apply_fastr_batch,
+    apply_selected_local_fastr_batch,
     fit_fastr_alignment,
     fit_residual_obs,
     obs_trigger_subset,
@@ -31,6 +33,7 @@ from .fastr_timing import (
 )
 from .fastr_types import (
     AncCorrection,
+    ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,
     FastrGeometry,
@@ -42,6 +45,7 @@ from .fastr_types import (
 __all__ = [
     "AcquisitionGeometry",
     "AncCorrection",
+    "ChannelAdaptiveFastrCorrection",
     "FastrAlignment",
     "FastrCorrection",
     "FastrGeometry",
@@ -53,7 +57,9 @@ __all__ = [
     "acquisition_group_fastr_with_edges",
     "adapt_fastr_geometry",
     "adaptive_noise_cancel",
+    "apply_channel_adaptive_fastr_batch",
     "apply_fastr_batch",
+    "apply_selected_local_fastr_batch",
     "fit_fastr_alignment",
     "fit_residual_obs",
     "fmrib_lms",

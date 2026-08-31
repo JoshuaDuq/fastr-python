@@ -10,7 +10,12 @@ validation so that acquisition geometry is never guessed from the EEG waveform.
 For each run, the pipeline:
 
 1. Reads the BrainVision header and losslessly parses its marker file.
-2. Selects markers using the exact configured marker type and description.
+2. Selects markers using the exact configured marker type and description. An
+   explicit volume-marker start index and count may then restrict the matched
+   sequence to one acquisition; the selected block still undergoes every timing
+   check and is never joined across a gap. This mode requires
+   `trim.mode: first_to_last_volume`, preventing unmatched acquisitions from
+   remaining uncorrected in the output.
 3. Resolves the acquisition geometry, by whichever of the two routes the
    configuration declares (see *Where acquisition groups come from* below).
 4. Validates that volume boundaries are contiguous at one repetition time. When
@@ -26,7 +31,17 @@ For each run, the pipeline:
    those volumes from *clean* neighbours' templates. Outlier volumes keep their
    local window. The gate is off by default, and its robust thresholds, maximum
    exclusion fraction, mains frequency, and mains exclusion width are configurable.
-   It then fits and subtracts a scaled template for every channel batch, except
+   The optional channel-adaptive mode instead scores the wide and local windows
+   independently on each EEG channel and changes only the groups meeting the
+   configured improvement ratio. It is mutually exclusive with the shared
+   reference-channel adaptive mode. Channel decisions may shorten one-sided edge
+   windows, while the established shared mode retains its protected edges.
+   For a confirmed isolated failure, `local_window_channels` instead forces the
+   short window across the full run only on named EEG channels. Explicit local
+   channels and either adaptive mode are mutually exclusive, and residual-gated
+   groups remain excluded from all local templates. It
+   then fits and subtracts a scaled template
+   for every channel batch, except
    on the channels named by `processing.non_eeg_channels`, where the template is
    subtracted unscaled. The estimate is subtracted from the unfiltered channel,
    so slow content survives correction.
@@ -40,7 +55,8 @@ For each run, the pipeline:
    configured stationary line frequencies on the EEG channels. A zero low-pass
    is valid only without decimation.
 12. Writes the corrected data, windowed markers, before/after PSD figures, and a
-   provenance sidecar.
+   provenance sidecar. Residual QC reports both spatially coherent block flags
+   and isolated channel/block flags; neither changes the corrected samples.
 
 The first and last groups whose complete artifact epochs are unavailable are left
 unchanged, recorded in the sidecar, and annotated in the output marker file as
@@ -98,6 +114,75 @@ regression, and out of the residual-QC channel ensemble. Across the 144-run
 cohort the ECG channel's per-epoch scalar varied 2.56 times as much as the median
 EEG channel and was the least stable channel of all in 58 runs, so this is the
 channel the rule exists for.
+
+## The automatic channel-failure policy
+
+`processing.channel_failure_policy` defaults to `report` and changes nothing.
+Set to `retry_local_and_recommend_bad` it adds one optional second pass after
+the first corrected output is written, and nothing else in the pipeline moves.
+
+**What it detects, and what it does not.** The automatic policy detects isolated
+scanner-gradient residuals only. It does not detect every bad-electrode
+condition, never interpolates or drops channels, and writes
+`recommended_bad_channels` solely to JSON provenance for downstream review or
+interpolation. A drifting electrode, a broken reference, a channel saturated by
+motion and a flat channel are all invisible to a measurement that only asks how
+much acquisition-locked power survived correction.
+
+**The spatial threshold, and why it is frozen.** The residual-QC annotation
+compares a channel-block against that channel's own median across the run, which
+is self-calibrating but blind to a channel that was bad from the first block to
+the last: its median moves with it. The policy compares across channels instead.
+For each block, the threshold is the median of the EEG channels in that block
+plus `quality_control.residual_mad_multiplier` robust sigma, floored at
+`quality_control.bad_channel_residual_uv`. The floor is not optional: a purely
+spatial test always has a loudest channel, and without an absolute bar it would
+nominate one from a clean recording. Conversely a block that is noisy on every
+channel raises its own threshold and nominates nobody, which is the correct
+answer — coherent gradient residual across the montage is not one bad electrode.
+
+Those thresholds are computed once, from the wide pass, and every subsequent
+comparison uses them unchanged. Recomputing them after a retry would let the
+retry move its own bar, and a channel could be declared fixed by having lowered
+the median it is measured against.
+
+**Acceptance.** For each candidate, in ascending channel order, the pipeline
+loads that one raw channel, puts it through the identical correction path with
+`local_neighbor_count`, and measures the result over the same blocks with the
+same harmonics. The retry is installed only when both conditions hold:
+
+1. it fails strictly fewer blocks against the frozen thresholds, and
+2. its worst residual is at most 85 % of the wide worst residual.
+
+Either alone is insufficient. Block counts alone accept a retry that moved a
+residual from just above the threshold to just below it. Maxima alone accept one
+that halved a single spike while leaving every failed block failed. A rejected
+retry is discarded entirely — the wide row stays, and so do that channel's
+amplitude, OBS and ANC diagnostics. An accepted retry replaces the row *and*
+all of those diagnostics, because they now describe a correction that no longer
+produced the emitted samples.
+
+**Persistence.** After installation, the final residual of every EEG channel is
+compared against the same frozen thresholds. A channel is recommended bad when
+it still fails at least two blocks and at least a tenth of them, so one bad
+block in a long recording stays advisory. When the recommended channel is the
+configured `reference_channel`, `reference_channel_recommended_bad` is set:
+trigger alignment was fitted on that channel, so the failure is not local to it.
+
+**Ordering.** The retry pass runs against the first corrected output, and the
+residual-QC report, the PSD figures and the block markers are all produced
+afterwards, from the samples actually written. The frozen thresholds and the
+retry comparisons appear only under `fastr.channel_failure_policy`, so the
+ordinary residual-QC section keeps describing the emitted recording and nothing
+else.
+
+**Incompatibilities.** The policy decides which channels get the local window,
+so it is rejected alongside `adaptive_window`, `channel_adaptive_window` and
+`local_window_channels`. It requires `quality_control.report_channel_outliers`,
+because it consumes the same per-channel measurement that setting reports, and a
+`local_neighbor_count` strictly smaller than `neighbor_count`, because otherwise
+the retry is the wide correction under another name. A recording too short to
+yield three calibration blocks produces no candidates at all.
 
 ## The output low-pass
 
@@ -259,17 +344,24 @@ affiliation or endorsement claim.
 The example YAML is the single user-facing configuration surface. Protocol and
 analysis choices include the marker convention and its timing source, the
 interpolation factor, template neighbour count,
-search radius, relative trigger position, marker-repair policy, template high-pass,
+search radius, relative trigger position, marker repair or explicit marker-block
+selection, template high-pass,
 output filter/rate, exact line-noise frequencies, non-EEG channel names, residual
-OBS rank and section duration, ANC, residual threshold, optional gate/adaptive
-settings, trim mode, residual-QC block, mains, and volume-spectrum settings, and
+OBS rank and section duration, ANC, residual threshold, optional gate/shared,
+channel-adaptive, or explicit local-channel settings, the automatic
+channel-failure policy and its absolute residual floor, trim mode, residual-QC
+block, isolated-channel
+reporting, mains and volume-spectrum settings, and
 PSD limits. Line regression deliberately removes all signal
 at each configured frequency, so the YAML requires an explicit list; `[]` disables
 it. Fixed implementation details include the interpolation kernel shape, the
 residual OBS 70 Hz high-pass design, the output low-pass window design, and the
 protected boundary volumes. The
 provenance sidecar stores the FMRIB reference commit, resolved configuration,
-marker repair counts, selected OBS ranks, ANC diagnostics, exact-bin and
+marker selection and repair counts, per-channel adaptive decisions, every
+automatic channel-failure candidate, retry comparison and bad-channel
+recommendation, selected OBS
+ranks, ANC diagnostics, exact-bin and
 local-sideband volume-harmonic spectra, effective PSD limit, FFT length, and
 residual-QC settings.
 

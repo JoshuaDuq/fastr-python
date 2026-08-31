@@ -56,13 +56,201 @@ def test_fmrib_parity_settings_have_strict_defaults(tmp_path: Path) -> None:
 
     assert config.timing.missing_volume_markers == "error"
     assert config.timing.expected_volume_count is None
+    assert config.timing.volume_marker_start_index is None
+    assert config.timing.volume_marker_count is None
     assert config.timing.marker_kind == "volume"
     assert config.timing.groups_per_volume is None
     assert config.timing.expected_repetition_time_seconds is None
     assert config.acquisition is None
     assert config.processing.pre_trigger_fraction == 0.03
+    assert config.processing.channel_adaptive_window is False
+    assert config.processing.local_window_channels == ()
     assert config.processing.residual_obs_section_seconds is None
     assert config.quality_control.volume_spectrum_max_hz == 110.0
+    assert config.quality_control.report_channel_outliers is True
+
+
+def test_volume_marker_block_is_explicitly_configurable(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"].update(
+        volume_marker_start_index=0,
+        volume_marker_count=570,
+    )
+    document["trim"] = {"mode": "first_to_last_volume"}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.timing.volume_marker_start_index == 0
+    assert config.timing.volume_marker_count == 570
+
+
+def test_volume_marker_block_requires_first_to_last_volume_trim(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"].update(
+        volume_marker_start_index=0,
+        volume_marker_count=570,
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="first_to_last_volume"):
+        load_config(config_path)
+
+
+def test_volume_marker_block_cannot_be_combined_with_marker_repair(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["timing"].update(
+        volume_marker_start_index=0,
+        volume_marker_count=570,
+        missing_volume_markers="repair",
+        expected_volume_count=570,
+    )
+    document["trim"] = {"mode": "first_to_last_volume"}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("start_index", "count"),
+    [(0, None), (None, 570), (-1, 570), (0, 0), (True, 570), (0, True)],
+)
+def test_volume_marker_block_rejects_incomplete_or_invalid_ranges(
+    tmp_path: Path,
+    start_index: object,
+    count: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    if start_index is not None:
+        document["timing"]["volume_marker_start_index"] = start_index
+    if count is not None:
+        document["timing"]["volume_marker_count"] = count
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="volume_marker"):
+        load_config(config_path)
+
+
+def test_volume_marker_block_is_rejected_for_slice_markers(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["input"].pop("fmri_metadata")
+    document["timing"].update(
+        marker_kind="slice",
+        groups_per_volume=2,
+        volume_marker_start_index=0,
+        volume_marker_count=570,
+    )
+    document["trim"] = {"mode": "first_to_last_volume"}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="volume markers"):
+        load_config(config_path)
+
+
+def test_channel_adaptive_window_can_be_enabled(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        channel_adaptive_window=True,
+        local_neighbor_count=10,
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.channel_adaptive_window is True
+
+
+def test_local_window_channels_are_explicitly_configurable(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        local_neighbor_count=10,
+        local_window_channels=["AF4", "FC6"],
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.local_window_channels == ("AF4", "FC6")
+
+
+@pytest.mark.parametrize(
+    "adaptive_field",
+    ["adaptive_window", "channel_adaptive_window"],
+)
+def test_local_window_channels_are_mutually_exclusive_with_adaptive_modes(
+    tmp_path: Path,
+    adaptive_field: str,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        local_window_channels=["AF4"],
+        **{adaptive_field: True},
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("value", [["AF4", "AF4"], [""], "AF4", [True]])
+def test_local_window_channels_reject_invalid_names(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["local_window_channels"] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="local_window_channels"):
+        load_config(config_path)
+
+
+def test_local_window_channels_reject_non_eeg_channels(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["local_window_channels"] = ["ECG"]
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="non-EEG"):
+        load_config(config_path)
+
+
+def test_adaptive_window_modes_are_mutually_exclusive(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        adaptive_window=True,
+        channel_adaptive_window=True,
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="cannot both be enabled"):
+        load_config(config_path)
+
+
+def test_channel_outlier_reporting_can_be_disabled(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["quality_control"] = {"report_channel_outliers": False}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.report_channel_outliers is False
 
 
 def test_the_volume_spectrum_limit_is_configurable(tmp_path: Path) -> None:
@@ -418,14 +606,32 @@ def test_adaptive_window_defaults_to_disabled(tmp_path: Path) -> None:
 def test_adaptive_window_can_be_enabled(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yml"
     config_path.write_text(
-        valid_document() + "  adaptive_window: true\n  local_neighbor_count: 20\n",
+        valid_document() + "  adaptive_window: true\n  local_neighbor_count: 10\n",
         encoding="utf-8",
     )
 
     config = load_config(config_path)
 
     assert config.processing.adaptive_window is True
-    assert config.processing.local_neighbor_count == 20
+    assert config.processing.local_neighbor_count == 10
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["adaptive_window", "channel_adaptive_window", "local_window_channels"],
+)
+def test_local_window_modes_require_fewer_neighbors_than_the_wide_window(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    value = ["AF4"] if mode == "local_window_channels" else True
+    document["processing"][mode] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="smaller than"):
+        load_config(config_path)
 
 
 def test_residual_gate_defaults_to_disabled(tmp_path: Path) -> None:
@@ -824,3 +1030,123 @@ def test_non_eeg_channels_reject_a_non_string_entry(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="non_eeg_channels"):
         load_config(config_path)
+
+
+def test_channel_failure_policy_has_conservative_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(valid_document(), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.channel_failure_policy == "report"
+    assert config.quality_control.bad_channel_residual_uv == 5.0
+
+
+def test_retry_channel_failure_policy_is_configurable(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        neighbor_count=60,
+        local_neighbor_count=20,
+        channel_failure_policy="retry_local_and_recommend_bad",
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.processing.channel_failure_policy == (
+        "retry_local_and_recommend_bad"
+    )
+
+
+@pytest.mark.parametrize("value", ["unknown", True, 1])
+def test_channel_failure_policy_rejects_unknown_values(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"]["channel_failure_policy"] = value
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="channel_failure_policy"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    "conflict",
+    ["adaptive_window", "channel_adaptive_window", "local_window_channels"],
+)
+def test_retry_policy_rejects_other_local_window_modes(
+    tmp_path: Path,
+    conflict: str,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        neighbor_count=60,
+        local_neighbor_count=20,
+        channel_failure_policy="retry_local_and_recommend_bad",
+    )
+    document["processing"][conflict] = (
+        ["AF4"] if conflict.endswith("channels") else True
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="cannot be combined"):
+        load_config(config_path)
+
+
+def test_retry_policy_requires_channel_outlier_reporting(tmp_path: Path) -> None:
+    """The policy reads the same per-channel measurement the report writes."""
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        neighbor_count=60,
+        local_neighbor_count=20,
+        channel_failure_policy="retry_local_and_recommend_bad",
+    )
+    document["quality_control"] = {"report_channel_outliers": False}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="report_channel_outliers"):
+        load_config(config_path)
+
+
+def test_retry_policy_requires_a_narrower_local_window(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["processing"].update(
+        neighbor_count=20,
+        local_neighbor_count=20,
+        channel_failure_policy="retry_local_and_recommend_bad",
+    )
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="smaller than"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("value", [0, -1.0, float("inf"), True, "5.0"])
+def test_bad_channel_residual_floor_rejects_invalid_values(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    document = yaml.safe_load(valid_document())
+    document["quality_control"] = {"bad_channel_residual_uv": value}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="bad_channel_residual_uv"):
+        load_config(config_path)
+
+
+def test_bad_channel_residual_floor_is_configurable(tmp_path: Path) -> None:
+    document = yaml.safe_load(valid_document())
+    document["quality_control"] = {"bad_channel_residual_uv": 8.5}
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    config = load_config(config_path)
+
+    assert config.quality_control.bad_channel_residual_uv == 8.5

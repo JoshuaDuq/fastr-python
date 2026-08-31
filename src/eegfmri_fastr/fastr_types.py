@@ -87,6 +87,28 @@ class FastrCorrection:
 
 
 @dataclass(frozen=True, slots=True, eq=False)
+class ChannelAdaptiveFastrCorrection:
+    """Per-channel adaptive correction and its channel-specific decisions."""
+
+    data: np.ndarray
+    amplitudes: np.ndarray
+    adapted_group_indices: tuple[np.ndarray, ...]
+
+    def __post_init__(self) -> None:
+        for field_name in ("data", "amplitudes"):
+            values = np.array(getattr(self, field_name), copy=True)
+            values.setflags(write=False)
+            object.__setattr__(self, field_name, values)
+        indices = tuple(
+            np.array(channel_indices, copy=True)
+            for channel_indices in self.adapted_group_indices
+        )
+        for channel_indices in indices:
+            channel_indices.setflags(write=False)
+        object.__setattr__(self, "adapted_group_indices", indices)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
 class ResidualObsCorrection:
     """Residual-OBS output and the rank fitted in each channel section."""
 

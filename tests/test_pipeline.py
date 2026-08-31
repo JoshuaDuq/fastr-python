@@ -20,24 +20,43 @@ from eegfmri_fastr.config import load_config
 from eegfmri_fastr.pipeline import PipelineInputError, run_correction
 from eegfmri_fastr.window import OutputWindow
 
+FIXTURE_OUTPUT = "pipeline_fixture_output.npy"
 
-def make_fixture(tmp_path: Path, *, gap: bool = False) -> Path:
-    data = np.zeros((3, 800), dtype=np.float64)
-    data[0, 120:140] = 1e-5
-    data[1, 120:140] = 2e-5
-    data[2, 120:140] = 3e-5
+
+def expected_fixture_output() -> np.ndarray:
+    """The samples ``make_fixture`` produced before the channel path was reused.
+
+    A golden master rather than a recomputation: the point of the extraction was
+    that no sample moved, and an expectation derived from the code under test
+    could not have shown that.
+    """
+    return np.load(Path(__file__).resolve().parent / "data" / FIXTURE_OUTPUT)
+
+
+def make_fixture(
+    tmp_path: Path,
+    *,
+    gap: bool = False,
+    channel_names: list[str] | None = None,
+    volume_count: int = 7,
+    sample_count: int = 800,
+) -> Path:
+    names = channel_names or ["EEG 001", "EEG 002", "ECG"]
+    data = np.zeros((len(names), sample_count), dtype=np.float64)
+    for index in range(len(names)):
+        data[index, 120:140] = (index + 1) * 1e-5
     write_brainvision(
         data=data,
         sfreq=1_000.0,
-        ch_names=["EEG 001", "EEG 002", "ECG"],
+        ch_names=names,
         fname_base="source",
         folder_out=tmp_path,
         unit="µV",
         events=[],
     )
-    marker_positions = [1, 101, 201, 301, 401, 501, 601]
+    marker_positions = [1 + 100 * index for index in range(volume_count)]
     if gap:
-        marker_positions[3:] = [position + 100 for position in marker_positions[3:]]
+        marker_positions[5:] = [position + 100 for position in marker_positions[5:]]
     markers = (
         BrainVisionMarker("New Segment", "", 1, 1, 0),
         *(
@@ -129,6 +148,17 @@ def test_run_correction_writes_reopenable_output_and_provenance(
     assert "Comment/preserve me" in set(raw.annotations.description)
 
 
+def test_channel_batch_helper_preserves_pipeline_samples(tmp_path: Path) -> None:
+    summary = run_correction(load_config(make_fixture(tmp_path)))
+    raw = mne.io.read_raw_brainvision(
+        summary.output_vhdr,
+        preload=True,
+        verbose="ERROR",
+    )
+
+    np.testing.assert_allclose(raw.get_data(), expected_fixture_output())
+
+
 def test_channel_batch_size_does_not_change_output(tmp_path: Path) -> None:
     first_config_path = make_fixture(tmp_path / "first")
     second_config_path = make_fixture(tmp_path / "second")
@@ -168,6 +198,30 @@ def test_run_correction_rejects_marker_gap_before_creating_output(
 
     assert not config.output.vhdr.exists()
     assert not config.output.vhdr.with_suffix(".eeg").exists()
+
+
+def test_run_correction_selects_a_volume_marker_block_before_gap_validation(
+    tmp_path: Path,
+) -> None:
+    config_path = make_fixture(tmp_path, gap=True)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["timing"].update(
+        volume_marker_start_index=0,
+        volume_marker_count=5,
+    )
+    values["trim"] = {"mode": "first_to_last_volume"}
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    summary = run_correction(load_config(config_path))
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    assert provenance["markers"]["volume_marker_selection"] == {
+        "matching_marker_count": 7,
+        "selected_marker_count": 5,
+        "start_index": 0,
+        "count": 5,
+    }
+    assert provenance["timing"]["resolved"]["volume_count"] == 5
 
 
 def test_run_correction_refuses_existing_sidecar(tmp_path: Path) -> None:
@@ -298,6 +352,7 @@ def test_pipeline_forwards_configured_fastr_robustness_settings(
         {
             "residual_gate": True,
             "adaptive_window": True,
+            "neighbor_count": 4,
             "local_neighbor_count": 2,
             "residual_gate_mad_multiplier": 6.0,
             "residual_gate_ratio": 5.0,
@@ -348,6 +403,104 @@ def test_pipeline_forwards_configured_fastr_robustness_settings(
         "sampling_rate": 1_000.0,
         "adaptive_improvement_ratio": 0.9,
     }
+
+
+def test_pipeline_applies_channel_adaptive_windows_and_reports_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"].update(
+        channel_adaptive_window=True,
+        neighbor_count=4,
+        local_neighbor_count=2,
+        adaptive_improvement_ratio=0.9,
+    )
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    calls: list[dict[str, object]] = []
+    original = pipeline_module.apply_channel_adaptive_fastr_batch
+
+    def capture_adaptive_batch(*args: object, **kwargs: object) -> object:
+        calls.append(dict(kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "apply_channel_adaptive_fastr_batch",
+        capture_adaptive_batch,
+    )
+
+    summary = run_correction(load_config(config_path))
+
+    assert len(calls) == 2
+    assert calls[0]["local_neighbor_count"] == 2
+    assert calls[0]["adaptive_improvement_ratio"] == 0.9
+    assert calls[0]["unscaled_channels"] == []
+    assert calls[1]["unscaled_channels"] == [0]
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    adaptive = provenance["fastr"]["channel_adaptive_window"]
+    assert adaptive["enabled"] is True
+    assert adaptive["local_neighbor_count"] == 2
+    decisions = adaptive["adapted_group_indices_by_channel"]
+    assert set(decisions) == {"EEG 001", "EEG 002", "ECG"}
+    assert decisions["ECG"] == []
+    assert adaptive["adapted_channel_count"] == sum(
+        bool(indices) for indices in decisions.values()
+    )
+
+
+def test_pipeline_applies_local_windows_to_named_channels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"].update(
+        neighbor_count=4,
+        local_neighbor_count=2,
+        local_window_channels=["EEG 002"],
+    )
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    calls: list[dict[str, object]] = []
+    original = pipeline_module.apply_selected_local_fastr_batch
+
+    def capture_selected_local(*args: object, **kwargs: object) -> object:
+        calls.append(dict(kwargs))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "apply_selected_local_fastr_batch",
+        capture_selected_local,
+    )
+
+    summary = run_correction(load_config(config_path))
+
+    assert len(calls) == 2
+    assert calls[0]["local_channels"] == [1]
+    assert calls[1]["local_channels"] == []
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    local = provenance["fastr"]["local_window_channels"]
+    assert local["enabled"] is True
+    assert local["channels"] == ["EEG 002"]
+    assert local["local_neighbor_count"] == 2
+    assert local["corrected_group_count"] > 0
+    assert "local_group_indices_by_channel" not in local
+
+
+def test_pipeline_rejects_an_absent_local_window_channel(tmp_path: Path) -> None:
+    config_path = make_fixture(tmp_path)
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"].update(
+        neighbor_count=4,
+        local_neighbor_count=2,
+        local_window_channels=["AF4"],
+    )
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+
+    with pytest.raises(PipelineInputError, match="AF4"):
+        run_correction(load_config(config_path))
 
 
 def test_psd_plot_preparation_assigns_standard_channel_locations() -> None:
@@ -661,3 +814,392 @@ def test_residual_qc_excludes_the_mains_harmonic(tmp_path: Path) -> None:
     assert 20.0 in qc["harmonics_hz"]
     assert 40.0 in qc["harmonics_hz"]
     assert 60.0 not in qc["harmonics_hz"]
+
+
+RETRY_CHANNELS = ["EEG 001", "EEG 002", "EEG 003", "EEG 004", "ECG"]
+
+
+def retry_policy_fixture(
+    tmp_path: Path,
+    *,
+    policy: str = "retry_local_and_recommend_bad",
+    processing: dict[str, object] | None = None,
+    volume_count: int = 7,
+    sample_count: int = 800,
+) -> Path:
+    """A five-channel fixture whose EEG rows can carry a spatial outlier.
+
+    A spatial threshold is a median plus a robust deviation across the EEG
+    channels of one block, so it needs at least three of them: with two, the
+    median sits halfway between the pair and no member can ever exceed it.
+    """
+    config_path = make_fixture(
+        tmp_path,
+        channel_names=list(RETRY_CHANNELS),
+        volume_count=volume_count,
+        sample_count=sample_count,
+    )
+    values = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    values["processing"].update(
+        neighbor_count=4,
+        local_neighbor_count=2,
+        channel_failure_policy=policy,
+    )
+    values["processing"].update(processing or {})
+    config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
+    return config_path
+
+
+def residual_measurement(rows: list[list[float]]) -> object:
+    """A stand-in measurement, so the correction itself stays real."""
+    return pipeline_module._BlockResidualMeasurement(
+        residuals_uv=np.asarray(rows, dtype=np.float64),
+        harmonics_hz=(20.0,),
+        block_seconds=30.0,
+        volumes_per_block=300,
+    )
+
+
+def quiet_rows(
+    failing: dict[int, list[float]],
+    *,
+    blocks: int = 5,
+) -> list[list[float]]:
+    rows = [[0.5] * blocks for _ in RETRY_CHANNELS]
+    rows[-1] = [0.0] * blocks
+    for index, values in failing.items():
+        rows[index] = values
+    return rows
+
+
+def serve_measurements(
+    monkeypatch: pytest.MonkeyPatch,
+    measurements: list[object],
+) -> None:
+    source = iter(measurements)
+    monkeypatch.setattr(
+        pipeline_module,
+        "_measure_block_residuals",
+        lambda *args, **kwargs: next(source),
+    )
+
+
+def policy_provenance(summary: object) -> dict[str, object]:
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    return provenance["fastr"]["channel_failure_policy"]
+
+
+def test_retry_policy_installs_a_materially_better_local_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = retry_policy_fixture(tmp_path)
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(quiet_rows({1: [0.5, 20.0, 15.0, 0.5, 0.5]})),
+            residual_measurement([[0.5, 3.0, 4.0, 0.5, 0.5]]),
+            residual_measurement(quiet_rows({1: [0.5, 3.0, 4.0, 0.5, 0.5]})),
+        ],
+    )
+
+    summary = run_correction(load_config(config_path))
+    policy = policy_provenance(summary)
+
+    assert policy["enabled"] is True
+    assert policy["candidate_channels"] == ["EEG 002"]
+    assert policy["candidate_blocks_by_channel"] == {"EEG 002": [1, 2]}
+    assert policy["accepted_local_window_channels"] == ["EEG 002"]
+    assert policy["final_failed_blocks_by_channel"] == {}
+    assert policy["recommended_bad_channels"] == []
+    assert policy["reference_channel_recommended_bad"] is False
+    retry = policy["retry_by_channel"]["EEG 002"]
+    assert retry["accepted"] is True
+    assert retry["reason"] == "fewer_failed_blocks_and_lower_maximum"
+    assert retry["wide_failed_blocks"] == [1, 2]
+    assert retry["local_failed_blocks"] == []
+    assert retry["wide_maximum_uv"] == 20.0
+    assert retry["local_maximum_uv"] == 4.0
+
+
+def test_a_rejected_retry_leaves_every_sample_as_the_wide_pass_wrote_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({1: [0.5, 20.0, 15.0, 0.5, 0.5]})
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement(wide),
+            residual_measurement([[0.5, 18.0, 14.0, 0.5, 0.5]]),
+            residual_measurement(wide),
+        ],
+    )
+    reported = run_correction(
+        load_config(retry_policy_fixture(tmp_path / "reported", policy="report"))
+    )
+    retried = run_correction(load_config(retry_policy_fixture(tmp_path / "retried")))
+
+    policy = policy_provenance(retried)
+    assert policy["candidate_channels"] == ["EEG 002"]
+    assert policy["accepted_local_window_channels"] == []
+    assert policy["retry_by_channel"]["EEG 002"]["accepted"] is False
+    assert policy["retry_by_channel"]["EEG 002"]["reason"] == (
+        "failed_block_count_not_reduced"
+    )
+    assert policy["final_failed_blocks_by_channel"] == {"EEG 002": [1, 2]}
+    assert policy["recommended_bad_channels"] == ["EEG 002"]
+
+    np.testing.assert_array_equal(
+        mne.io.read_raw_brainvision(
+            retried.output_vhdr,
+            preload=True,
+            verbose="ERROR",
+        ).get_data(),
+        mne.io.read_raw_brainvision(
+            reported.output_vhdr,
+            preload=True,
+            verbose="ERROR",
+        ).get_data(),
+    )
+
+
+def test_two_persistent_failures_across_sixteen_blocks_recommend_a_bad_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({1: [0.5] * 16}, blocks=16)
+    wide[1][3] = 20.0
+    wide[1][9] = 18.0
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement([wide[1]]),
+            residual_measurement(wide),
+        ],
+    )
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    policy = policy_provenance(summary)
+
+    assert policy["final_failed_blocks_by_channel"] == {"EEG 002": [3, 9]}
+    assert policy["recommended_bad_channels"] == ["EEG 002"]
+
+
+def test_a_single_persistent_failure_stays_advisory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({1: [0.5] * 16}, blocks=16)
+    wide[1][3] = 20.0
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement([wide[1]]),
+            residual_measurement(wide),
+        ],
+    )
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    policy = policy_provenance(summary)
+
+    assert policy["final_failed_blocks_by_channel"] == {"EEG 002": [3]}
+    assert policy["recommended_bad_channels"] == []
+
+
+def test_a_non_eeg_channel_is_never_a_retry_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ECG trace carries a QRS complex, not evidence about gradient residual."""
+    rows = quiet_rows({4: [40.0] * 5})
+    serve_measurements(
+        monkeypatch,
+        [residual_measurement(rows), residual_measurement(rows)],
+    )
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    policy = policy_provenance(summary)
+
+    assert policy["candidate_channels"] == []
+    assert policy["recommended_bad_channels"] == []
+
+
+def test_no_candidates_never_reaches_the_local_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = quiet_rows({})
+    serve_measurements(
+        monkeypatch,
+        [residual_measurement(rows), residual_measurement(rows)],
+    )
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("a clean recording must not be corrected twice")
+
+    monkeypatch.setattr(pipeline_module, "_process_local_retry_channel", forbidden)
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    policy = policy_provenance(summary)
+
+    assert policy["candidate_channels"] == []
+    assert policy["retry_by_channel"] == {}
+
+
+def test_an_accepted_retry_updates_every_channel_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({1: [0.5, 20.0, 15.0, 0.5, 0.5]})
+    local = [0.5, 3.0, 4.0, 0.5, 0.5]
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement(wide),
+            residual_measurement([local]),
+            residual_measurement(quiet_rows({1: local})),
+        ],
+    )
+    stages: dict[str, object] = {
+        "residual_obs": True,
+        "residual_obs_rank": 1,
+        "adaptive_noise_cancellation": True,
+    }
+    reported = run_correction(
+        load_config(
+            retry_policy_fixture(
+                tmp_path / "reported",
+                policy="report",
+                processing=stages,
+                volume_count=30,
+                sample_count=3_200,
+            )
+        )
+    )
+    retried = run_correction(
+        load_config(
+            retry_policy_fixture(
+                tmp_path / "retried",
+                processing=stages,
+                volume_count=30,
+                sample_count=3_200,
+            )
+        )
+    )
+
+    before = json.loads(reported.provenance_json.read_text(encoding="utf-8"))["fastr"]
+    after = json.loads(retried.provenance_json.read_text(encoding="utf-8"))["fastr"]
+    anc_before = before["adaptive_noise_cancellation"]
+    anc_after = after["adaptive_noise_cancellation"]
+
+    assert policy_provenance(retried)["accepted_local_window_channels"] == ["EEG 002"]
+    assert after["amplitude_mean_by_channel"][1] != (
+        before["amplitude_mean_by_channel"][1]
+    )
+    assert after["amplitude_rms_by_channel"][1] != (
+        before["amplitude_rms_by_channel"][1]
+    )
+    assert anc_after["reference_scales"][1] != anc_before["reference_scales"][1]
+    assert anc_after["step_sizes"][1] != anc_before["step_sizes"][1]
+    assert all(value is not None for value in anc_after["reference_scales"][:4])
+    # Every untouched channel keeps exactly the diagnostic the wide pass gave it.
+    for index in (0, 2, 3, 4):
+        assert after["amplitude_mean_by_channel"][index] == (
+            before["amplitude_mean_by_channel"][index]
+        )
+    assert len(after["residual_obs"]["selected_ranks"]) == len(RETRY_CHANNELS)
+    assert all(len(row) == 1 for row in after["residual_obs"]["selected_ranks"])
+
+
+def test_a_recommended_reference_channel_is_flagged_in_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({0: [20.0, 18.0, 0.5, 0.5, 0.5]})
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement([wide[0]]),
+            residual_measurement(wide),
+        ],
+    )
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    policy = policy_provenance(summary)
+
+    assert policy["candidate_channels"] == ["EEG 001"]
+    assert policy["recommended_bad_channels"] == ["EEG 001"]
+    assert policy["reference_channel_recommended_bad"] is True
+
+
+def test_the_retry_policy_never_drops_or_interpolates_a_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wide = quiet_rows({1: [0.5, 20.0, 15.0, 0.5, 0.5]})
+    serve_measurements(
+        monkeypatch,
+        [
+            residual_measurement(wide),
+            residual_measurement([[0.5, 3.0, 4.0, 0.5, 0.5]]),
+            residual_measurement(quiet_rows({1: [0.5, 3.0, 4.0, 0.5, 0.5]})),
+        ],
+    )
+    forbidden = ("interpolate_bads", "drop_channels")
+    for name in forbidden:
+        monkeypatch.setattr(
+            mne.io.BaseRaw,
+            name,
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("the policy must not replace or remove data")
+            ),
+        )
+
+    summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
+    data = mne.io.read_raw_brainvision(
+        summary.output_vhdr,
+        preload=True,
+        verbose="ERROR",
+    )
+
+    assert summary.channel_count == len(RETRY_CHANNELS)
+    assert data.ch_names == RETRY_CHANNELS
+    assert data.get_data().shape == (len(RETRY_CHANNELS), 400)
+    assert np.all(np.isfinite(data.get_data()))
+
+
+def test_the_report_policy_leaves_the_sidecar_and_measurement_count_alone(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reporting must stay a single measurement: the retry pass is opt-in."""
+    calls: list[int] = []
+    original = pipeline_module._measure_block_residuals
+
+    def count_measurements(*args: object, **kwargs: object) -> object:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "_measure_block_residuals",
+        count_measurements,
+    )
+
+    summary = run_correction(
+        load_config(retry_policy_fixture(tmp_path, policy="report"))
+    )
+    policy = policy_provenance(summary)
+
+    assert len(calls) == 1
+    assert policy["policy"] == "report"
+    assert policy["enabled"] is False
+    assert policy["candidate_channels"] == []
+    assert policy["retry_by_channel"] == {}
+    assert policy["recommended_bad_channels"] == []

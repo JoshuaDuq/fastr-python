@@ -14,6 +14,10 @@ from eegfmri_fastr.fastr import (
     make_group_trigger_samples,
     prepare_fastr_geometry,
 )
+from eegfmri_fastr.fastr_geometry import (
+    adapt_channel_fastr_geometry,
+    prepare_local_fastr_geometry,
+)
 
 
 def make_timing() -> FmriAcquisitionTiming:
@@ -124,6 +128,74 @@ def test_outlier_volumes_keep_their_local_neighbour_window() -> None:
     )
 
     np.testing.assert_array_equal(gated.window.indices[local], original)
+
+
+def test_channel_adaptation_preserves_residual_gate_exclusions() -> None:
+    contaminated = 20
+    data, _volume_starts, _timing, triggers = make_stationary_artifact(
+        contamination_volume=contaminated,
+    )
+    for volume in range(18, 26):
+        for group_offset in (0, 25):
+            start = volume * 50 + group_offset
+            data[0, start : start + 12] -= 1000.0
+            data[0, start + 8 : start + 20] += 1000.0
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+    gated = gate_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        sampling_rate=1_000.0,
+    )
+
+    adapted = adapt_channel_fastr_geometry(
+        gated,
+        alignment,
+        data[0],
+        local_neighbor_count=4,
+        sampling_rate=1_000.0,
+    )
+
+    assert adapted.adapted_group_indices.size > 0
+    excluded = set(gated.excluded_group_indices.tolist())
+    excluded_targets = set(
+        np.flatnonzero(
+            np.isin(adapted.group_indices, adapted.excluded_group_indices)
+        ).tolist()
+    )
+    for target, members in enumerate(adapted.window.indices):
+        if target in excluded_targets:
+            continue
+        valid_members = members[members >= 0]
+        original_groups = set(adapted.group_indices[valid_members].tolist())
+        assert not excluded & original_groups
+
+
+def test_local_windows_replace_residual_gated_neighbours() -> None:
+    contaminated = 20
+    data, _volume_starts, _timing, triggers = make_stationary_artifact(
+        contamination_volume=contaminated,
+    )
+    geometry = _geometry(data, triggers)
+    alignment = fit_fastr_alignment(data[0], geometry)
+    gated = gate_fastr_geometry(
+        geometry,
+        alignment,
+        data[0],
+        sampling_rate=1_000.0,
+    )
+
+    local = prepare_local_fastr_geometry(
+        gated,
+        local_neighbor_count=4,
+    )
+
+    excluded = set(local.excluded_group_indices.tolist())
+    assert np.all((local.window.indices >= 0).sum(axis=1) == 4)
+    for members in local.window.indices:
+        original_groups = set(local.group_indices[members].tolist())
+        assert not excluded & original_groups
 
 
 def test_gated_templates_stop_motion_leaking_into_neighbouring_volumes() -> None:

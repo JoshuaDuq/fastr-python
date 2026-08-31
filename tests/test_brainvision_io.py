@@ -14,6 +14,7 @@ from eegfmri_fastr.brainvision_io import (
     BrainVisionInputError,
     read_brainvision_recording,
     resample_markers,
+    select_marker_sample_block,
     select_marker_samples,
     write_brainvision_recording,
 )
@@ -129,6 +130,30 @@ def test_select_marker_samples_rejects_missing_or_duplicate_positions() -> None:
             marker_type="Volume",
             marker_description="missing",
             sample_count=1_000,
+        )
+
+
+def test_select_marker_sample_block_returns_the_requested_range() -> None:
+    samples = np.arange(688, dtype=np.int64) * 4_500
+
+    selected = select_marker_sample_block(samples, start_index=0, count=570)
+
+    np.testing.assert_array_equal(selected, samples[:570])
+
+
+@pytest.mark.parametrize(
+    ("start_index", "count"),
+    [(-1, 2), (0, 0), (0, 5), (True, 2), (0, True)],
+)
+def test_select_marker_sample_block_rejects_invalid_ranges(
+    start_index: object,
+    count: object,
+) -> None:
+    with pytest.raises(BrainVisionInputError, match="marker block"):
+        select_marker_sample_block(
+            np.array([0, 100, 200], dtype=np.int64),
+            start_index=start_index,
+            count=count,
         )
 
 
