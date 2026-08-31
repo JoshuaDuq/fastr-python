@@ -87,8 +87,9 @@ markers, non-EEG channels, and advisory recommendations. See the
 
 Start with the [documentation index](docs/README.md). The method follows
 [Niazy et al. (2005)](docs/references.md#niazy-et-al-2005); MNE-Python provides
-supported I/O and diagnostics. Cite the software and references in
-[`CITATION.cff`](CITATION.cff). Record the installed version with:
+supported I/O and diagnostics. For method and dependency citations, see
+[`CITATION.cff`](CITATION.cff). For reproducibility, record the installed
+FASTR-Python version with:
 
 ```text
 fastr-python --version

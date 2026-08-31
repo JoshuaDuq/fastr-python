@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use FASTR-Python, please cite it and the references below."
+message: "If you use the FASTR method, please cite the original FASTR paper and the references below. For reproducibility, report the FASTR-Python version used."
 title: "FASTR-Python"
 type: software
 authors:
