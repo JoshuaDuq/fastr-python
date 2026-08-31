@@ -1,408 +1,172 @@
 # Algorithm
 
-The EEG-fMRI FASTR project implements an acquisition-slot scanner-gradient
-correction pipeline.
-The implementation is designed around explicit timing metadata and exact marker
-validation so that acquisition geometry is never guessed from the EEG waveform.
+## Scope and assumptions
+
+FASTR removes scanner-gradient artifact from simultaneous EEG-fMRI EEG. It
+requires a BrainVision recording with an exact scanner-marker stream and a
+declared acquisition-timing interpretation. It does not identify BCG artifact,
+bad electrodes, motion, or other physiological signal. Use the
+[validation checklist](validation.md) for protocol-specific evidence.
 
 ## Processing model
 
-For each run, the pipeline:
+For one configured run, the pipeline:
 
-1. Reads the BrainVision header and losslessly parses its marker file.
-2. Selects markers using the exact configured marker type and description. An
-   explicit volume-marker start index and count may then restrict the matched
-   sequence to one acquisition; the selected block still undergoes every timing
-   check and is never joined across a gap. This mode requires
-   `trim.mode: first_to_last_volume`, preventing unmatched acquisitions from
-   remaining uncorrected in the output.
-3. Resolves the acquisition geometry, by whichever of the two routes the
-   configuration declares (see *Where acquisition groups come from* below).
-4. Validates that volume boundaries are contiguous at one repetition time. When
-   explicit repair is enabled on volume markers, it inserts only uniquely located
-   interior markers and checks the resulting count.
-5. Interpolates the data onto a finer temporal grid for sub-sample alignment.
-6. For each acquisition-time slot, constructs a target-excluding template from the
-   configured number of neighboring volumes, estimated from a high-passed copy of
-   the channel.
-7. Fits group shifts once from the same high-passed copy of the configured
-   reference channel. Optional `residual_gate` then flags volumes whose
-   first-pass leftover at the slice harmonics is an extreme outlier and drops
-   those volumes from *clean* neighbours' templates. Outlier volumes keep their
-   local window. The gate is off by default, and its robust thresholds, maximum
-   exclusion fraction, mains frequency, and mains exclusion width are configurable.
-   The optional channel-adaptive mode instead scores the wide and local windows
-   independently on each EEG channel and changes only the groups meeting the
-   configured improvement ratio. It is mutually exclusive with the shared
-   reference-channel adaptive mode. Channel decisions may shorten one-sided edge
-   windows, while the established shared mode retains its protected edges.
-   For a confirmed isolated failure, `local_window_channels` instead forces the
-   short window across the full run only on named EEG channels. Explicit local
-   channels and either adaptive mode are mutually exclusive, and residual-gated
-   groups remain excluded from all local templates. It
-   then fits and subtracts a scaled template
-   for every channel batch, except
-   on the channels named by `processing.non_eeg_channels`, where the template is
-   subtracted unscaled. The estimate is subtracted from the unfiltered channel,
-   so slow content survives correction.
-8. Optionally fits a fixed or automatically selected residual optimal basis, in
-   one or more sections, over whole-volume epochs.
-9. Applies the zero-phase low-pass filter when requested, to the corrected data
-   and, when the canceller runs, to the artifact estimate as well.
-10. Optionally applies FMRIB's scaled-reference normalized LMS adaptive noise
-   cancellation to EEG channels, against that low-passed reference.
-11. Takes the output window and decimates, then regresses any explicitly
-   configured stationary line frequencies on the EEG channels. A zero low-pass
-   is valid only without decimation.
-12. Writes the corrected data, windowed markers, before/after PSD figures, and a
-   provenance sidecar. Residual QC reports both spatially coherent block flags
-   and isolated channel/block flags; neither changes the corrected samples.
+1. Reads the BrainVision header, data, and marker files without overwriting
+   them.
+2. Selects the exact configured marker type and description. An optional
+   contiguous volume-marker block is selected before timing validation.
+3. Resolves one acquisition geometry from declared volume timing or measured
+   acquisition-group markers.
+4. Validates volume spacing, marker ordering, and complete acquisition epochs.
+5. Interpolates the signal for sub-sample alignment.
+6. Estimates target-excluding, acquisition-slot templates from neighboring
+   volumes and fits an amplitude for each channel.
+7. Applies optional residual gating and adaptive/local-window policies.
+8. Applies optional residual optimal-basis subtraction over whole-volume epochs.
+9. Applies optional normalized LMS adaptive noise cancellation.
+10. Low-passes and decimates the corrected signal when configured, then applies
+    explicit stationary line-noise regression to EEG channels.
+11. Resamples markers into the emitted output window and annotates skipped
+    gradient spans and advisory residual-QC blocks.
+12. Writes BrainVision output, before/after PSD figures, and JSON provenance.
 
-The first and last groups whose complete artifact epochs are unavailable are left
-unchanged, recorded in the sidecar, and annotated in the output marker file as
-`Bad Interval, Bad_Gradient`, so a corrected file never carries raw gradient
-artifact without saying so.
+Correction and filtering run over the available input context before the output
+window is sliced. Boundary groups that lack a complete epoch remain
+uncorrected, are recorded in provenance, and receive a `Bad_Gradient` marker.
 
 ## Trimming and boundary margin
 
-A recording trimmed to exactly its first and last volume markers has no margin at
-either end, and a boundary volume then loses all of its groups because a volume is
-dropped when any one of its groups lacks a complete epoch. For a 0.9 s TR with 18
-acquisition slots the epochs need 10.5 input samples before the first volume marker
-and 4503 (0.9006 s) after a volume marker to keep that volume, so a first-to-last
-trim costs the first volume and the last two.
+`trim.mode: none` emits the full corrected recording. With
+`first_to_last_volume`, the first and last selected volume markers define the
+zero-based, half-open output span. The pipeline still corrects and filters the
+untrimmed input first, preserving the context required by boundary epochs.
 
-Setting `trim.mode` to `first_to_last_volume` moves the trim inside the pipeline:
-the input is the untrimmed recording, correction and filtering run over all of it,
-and the emitted span is sliced during decimation. The decimation phase is anchored
-to the window start rather than to input sample zero, so the output sample grid is
-unchanged. Filtering before slicing also keeps the zero-phase filter's edge
-transient outside the emitted span.
+The final volume is not synthesized when the recording ends before its complete
+artifact epoch. A marker gap is an error by default; explicit repair can fill
+only uniquely located interior volume markers when an expected count is given.
+See the [configuration reference](configuration.md#trim) for the exact rules.
 
-The final volume is still dropped where the recording stops before that volume
-finished acquiring, which no amount of margin can recover.
+## Template estimation and alignment
 
-## The stage-2 template high-pass
+The moving template and least-squares amplitude follow the FASTR method of
+[Niazy et al. (2005)](references.md#niazy-et-al-2005). For each acquisition
+slot, neighboring volumes are averaged while excluding the target volume. A
+configurable high-pass copy is used for template estimation and shared
+alignment; the fitted estimate is subtracted from the original signal so slow
+content is retained.
 
-[Niazy et al. (2005)](https://pubmed.ncbi.nlm.nih.gov/16150610/) build the
-moving-average template, and fit the least-squares
-scalar, on a 1 Hz high-passed copy of the interpolated signal so that segments
-entering the average share a baseline, then subtract the estimate from the original
-signal. The released `fmrib_fastr.m` does not apply that high-pass; it high-passes
-at 70 Hz only when building the residual matrix for the optimal basis set.
+The alignment search is performed on the configured reference channel and then
+applied consistently to the channel batches. `neighbor_count` must be even;
+local modes use a smaller even `local_neighbor_count`. Adaptive choices are
+explicitly recorded in provenance.
 
-`processing.template_high_pass_hz` follows the paper, defaulting to 1.0 Hz. The
-pipeline applies the same filter to the reference channel before alignment, so
-the shifts and the template are estimated on one signal. On this
-cohort, estimating the template from the unfiltered signal let baseline drift leak
-into both the template and the scalar: on nine channel-runs from three subjects the
-residual line artifact fell from 1.1--20.9 uV to 0.00--0.43 uV, against Analyzer's
-0.02--1.16 uV, and broadband amplitude recovered to within 0.2 % of Analyzer in
-every motion block. On drift-free synthetic data the high-passed template costs
-about 7 % more neighbour noise. Set it to 0.0 to restore the unfiltered estimate.
+## Acquisition timing and geometry
+
+With `marker_kind: volume`, one marker starts each volume. Group positions are
+expanded from `RepetitionTime`, `SliceTiming`, and
+`MultibandAccelerationFactor`, read from one BIDS JSON sidecar or the equivalent
+inline `acquisition` section. These fields follow the
+[BIDS MRI specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html).
+
+With `marker_kind: slice`, every acquisition group is marked. The marker
+positions provide group offsets; `groups_per_volume` declares how many groups
+make a volume. The pipeline measures repetition time and checks that volume
+spacing and within-volume offsets repeat. It does not infer the group count.
+
+The two sources are intentionally not merged or prioritized. A configuration
+must select exactly one valid interpretation so provenance can distinguish
+declared from measured timing.
 
 ## Non-EEG channels
 
-`fmrib_fastr.m` forces the least-squares scalar to one on the channels it is told
-to exclude, and its changelog names the reason: an ECG channel's QRS complex has
-no counterpart in the moving-average template, so a scalar fitted through it is
-biased and spreads that bias over the whole epoch.
-
-`processing.non_eeg_channels` reproduces that rule and defaults to `[ECG]`. The
-same names are kept out of the residual basis set, out of the line-noise
-regression, and out of the residual-QC channel ensemble. Across the 144-run
-cohort the ECG channel's per-epoch scalar varied 2.56 times as much as the median
-EEG channel and was the least stable channel of all in 58 runs, so this is the
-channel the rule exists for.
-
-## The automatic channel-failure policy
-
-`processing.channel_failure_policy` defaults to `report` and changes nothing.
-Set to `retry_local_and_recommend_bad` it adds one optional second pass after
-the first corrected output is written, and nothing else in the pipeline moves.
-
-**What it detects, and what it does not.** The automatic policy detects isolated
-scanner-gradient residuals only. It does not detect every bad-electrode
-condition, never interpolates or drops channels, and writes
-`recommended_bad_channels` solely to JSON provenance for downstream review or
-interpolation. A drifting electrode, a broken reference, a channel saturated by
-motion and a flat channel are all invisible to a measurement that only asks how
-much acquisition-locked power survived correction.
-
-**The spatial threshold, and why it is frozen.** The residual-QC annotation
-compares a channel-block against that channel's own median across the run, which
-is self-calibrating but blind to a channel that was bad from the first block to
-the last: its median moves with it. The policy compares across channels instead.
-For each block, the threshold is the median of the EEG channels in that block
-plus `quality_control.residual_mad_multiplier` robust sigma, floored at
-`quality_control.bad_channel_residual_uv`. The floor is not optional: a purely
-spatial test always has a loudest channel, and without an absolute bar it would
-nominate one from a clean recording. Conversely a block that is noisy on every
-channel raises its own threshold and nominates nobody, which is the correct
-answer — coherent gradient residual across the montage is not one bad electrode.
-
-Those thresholds are computed once, from the wide pass, and every subsequent
-comparison uses them unchanged. Recomputing them after a retry would let the
-retry move its own bar, and a channel could be declared fixed by having lowered
-the median it is measured against.
-
-**Acceptance.** For each candidate, in ascending channel order, the pipeline
-loads that one raw channel, puts it through the identical correction path with
-`local_neighbor_count`, and measures the result over the same blocks with the
-same harmonics. The retry is installed only when both conditions hold:
-
-1. it fails strictly fewer blocks against the frozen thresholds, and
-2. its worst residual is at most 85 % of the wide worst residual.
-
-Either alone is insufficient. Block counts alone accept a retry that moved a
-residual from just above the threshold to just below it. Maxima alone accept one
-that halved a single spike while leaving every failed block failed. A rejected
-retry is discarded entirely — the wide row stays, and so do that channel's
-amplitude, OBS and ANC diagnostics. An accepted retry replaces the row *and*
-all of those diagnostics, because they now describe a correction that no longer
-produced the emitted samples.
-
-**Persistence.** After installation, the final residual of every EEG channel is
-compared against the same frozen thresholds. A channel is recommended bad when
-it still fails at least two blocks and at least a tenth of them, so one bad
-block in a long recording stays advisory. When the recommended channel is the
-configured `reference_channel`, `reference_channel_recommended_bad` is set:
-trigger alignment was fitted on that channel, so the failure is not local to it.
-
-**Ordering.** The retry pass runs against the first corrected output, and the
-residual-QC report, the PSD figures and the block markers are all produced
-afterwards, from the samples actually written. The frozen thresholds and the
-retry comparisons appear only under `fastr.channel_failure_policy`, so the
-ordinary residual-QC section keeps describing the emitted recording and nothing
-else.
-
-**Incompatibilities.** The policy decides which channels get the local window,
-so it is rejected alongside `adaptive_window`, `channel_adaptive_window` and
-`local_window_channels`. It requires `quality_control.report_channel_outliers`,
-because it consumes the same per-channel measurement that setting reports, and a
-`local_neighbor_count` strictly smaller than `neighbor_count`, because otherwise
-the retry is the wide correction under another name. A recording too short to
-yield three calibration blocks produces no candidates at all.
-
-## The output low-pass
-
-`fmrib_fastr.m` designs the output filter with `firls` over a 15 % transition band
-and applies it with `filtfilt`. Running a linear-phase FIR twice squares its
-response, which doubles the passband ripple in decibels; at a 100 Hz cutoff and
-5 kHz input that design ripples by 2.1 dB between 1 and 85 Hz.
-
-This pipeline designs the filter with MNE's `create_filter` — a Hamming-windowed
-linear-phase FIR — and applies it once, compensating the group delay with a
-`same`-mode convolution. The passband is then flat to 0.03 dB up to the configured
-cutoff, and the worst response anywhere above the output Nyquist frequency is
-−79 dB, so `lowpass_hz` describes what the output actually keeps. Filtering still
-happens before the output window is sliced, so the edge transient stays outside
-the emitted span.
-Set `processing.lowpass_hz` to `0.0` to leave the output unfiltered. This is
-accepted only when `output_sampling_rate_hz` equals the input sampling rate;
-decimation without an anti-alias filter is rejected.
+Channels listed in `processing.non_eeg_channels` default to `ECG`. Their
+template subtraction uses an unscaled estimate, and they are excluded from
+residual OBS, ANC, line-noise regression, and residual-QC channel statistics.
+This prevents physiological channel structure from biasing scanner-artifact
+fits. Exclusion does not remove or alter those channels' recorded signal beyond
+the configured template subtraction.
 
 ## Residual OBS and adaptive noise cancellation
 
-FASTR as published has four stages. Trigger alignment and moving-average template
-subtraction always run. Residual optimal-basis subtraction and adaptive noise
-cancellation are separate opt-in stages, so enabling one never changes an existing
-configuration silently.
+Residual optimal-basis subtraction is optional. When enabled, the pipeline
+fits the configured fixed or automatic rank over complete whole-volume epochs;
+`residual_obs_section_seconds` can refit by sections. Automatic selection
+rejects an unstable rank rather than silently choosing one.
 
-The published canceller is ported from `fmrib_fastr.m` and `fastranc.c`. Its sample
-update matches a MATLAB-generated fixture at `1e-13` tolerance. It was previously
-measured on `sub-0001` run 1 (63 EEG channels, 443 uV artifact
-RMS). It cut the volume-harmonic residual by 13 to 15 dB — 41.078 Hz fell from
--4.3 dB to -18.0 dB — while injected tones near those harmonics did not survive:
-61.15 Hz kept 9.2 % of its amplitude, 82.15 Hz kept 13.4 %, 41.156 Hz kept 30.6 %.
-An off-comb 7 Hz tone was untouched at 105 %. The slice-style 15 Hz high-pass and
-the volume-style 2 Hz high-pass behaved the same way. The LMS reference is the
-artifact estimate itself, whose spectrum is a dense comb, so the filter adapts to
-cancel any narrowband EEG sitting near a tooth. That is the 1/TR limitation below
-with an adaptive filter attached, and no residual-line improvement justifies it.
-Cancellation runs after the output low-pass, on a low-passed reference, as
-`fmrib_fastr.m` does. Ordering matters more than it appears. Measured on this
-cohort with the two orderings differing in nothing else, cancelling before the
-low-pass leaves the reference carrying artifact out to the input Nyquist, which
-shrinks the `0.05/(N*var(refs))` step size until the filter barely adapts: the
-in-passband slice-harmonic residual fell only 20 % on `sub-0001` run 1 and 2 % on
-`sub-0000` run 6. With the reference band-limited the filter adapts as intended
-and those become 63 % and 36 %.
+Normalized LMS adaptive noise cancellation is also optional and follows the
+[FMRIB `fmrib_fastr.m` implementation](references.md#fmrib-fastr-implementation).
+The reference is the low-passed artifact estimate. ANC can remove genuine
+narrowband EEG near scanner harmonics, so residual suppression must be assessed
+together with signal transfer. Zero-variance and divergent states raise an
+error.
 
-That extra suppression is not a better correction. The same runs show what it
-costs. On-comb probes retained 2.0 to 6.6 % of their amplitude, against 10.6 to
-19.5 % under the weaker ordering. The damage is not confined to the comb either:
-off-comb probes at 33.7 Hz and 70.3 Hz retained 83.2 % and 80.5 %, where the
-mis-ordered canceller left them at about 103 %. Band-limiting the reference
-concentrates the filter's taps inside the EEG band, so it fits and subtracts EEG.
-Only a 7 Hz probe was untouched at 104 %.
+## Output filtering and decimation
 
-The residual improvement and the signal loss are one mechanism seen from two
-sides: the canceller removes narrowband content near the comb without regard to
-its origin, so a lower residual line is not evidence that it removed artifact.
-`processing.adaptive_noise_cancellation` therefore defaults to false, and a
-residual measurement alone must not be used to justify enabling it.
+The output low-pass is a zero-phase FIR designed through MNE-Python and is
+applied before integer decimation. The cutoff must be below both input and
+output Nyquist frequencies. A zero cutoff is allowed only when the output rate
+equals the input rate, because decimation without anti-alias filtering is
+rejected. See [MNE filtering documentation](references.md#mne-python).
 
-Because the reference has to be band-limited to mean anything, enabling the
-canceller with `processing.lowpass_hz: 0.0` is rejected. `fmrib_fastr.m` silently
-forces a 70 Hz cutoff in that case; overriding a cutoff the configuration states
-is worse than refusing the pair.
-Zero-variance references, non-finite states, and divergence raise an error; the
-pipeline does not silently skip a failed EEG channel. Excluded and flat channels
-bypass the stage.
+Stationary frequencies in `line_noise_frequencies_hz` are regressed from EEG
+channels after filtering and decimation. An empty list disables that step.
 
-`processing.residual_obs` enables the optimal basis set and defaults to off, so
-the stage never changes an existing configuration silently.
-`processing.residual_obs_rank` sets a positive fixed rank or `auto` and defaults
-to 4. `processing.residual_obs_section_seconds` controls section duration; null
-uses one basis for the run. The residual API also takes `section_seconds`, which
-re-estimates the basis over consecutive stretches the way `fmrib_fastr.m` does
-once per 60 s section. Shortening the sections costs signal monotonically. On a
-synthetic run of 84 volume epochs, broadband 75--200 Hz content retained 0.73 under one basis for the
-whole recording, 0.62 with four-second sections, 0.55 with two and 0.36 with one:
-each extra section spends another `rank` degrees of freedom. Sections are split
-into balanced runs rather than cut at a fixed length, because a run holding
-barely more epochs than the rank spans nearly everything in that stretch — an
-earlier fixed-length split left a five-epoch remainder that destroyed 95 % of the
-same probe. The stage runs over whole volumes rather than acquisition groups.
-What it removes is the volume-to-volume variability the template stage leaves
-behind: on `sub-0001` run 1 the stationary volume-locked mean carries 0.03 % of
-the residual comb's tooth power between 10 and 110 Hz, so averaging cannot reach
-it, while a rank-4 basis over volume epochs cut the comb by 1.4 dB at 0.9994
-injected-signal retention. The same basis estimated over acquisition-group
-epochs made the comb worse, because a 50-sample epoch cannot represent a pattern
-that spans a volume. Boundary volumes whose epochs would read past either end of
-the recording are left uncorrected, the same treatment template subtraction gives
-them, and the sidecar records how many epochs the stage actually corrected. Neither absence is hidden by the sidecar, which records exactly
-what ran. PSD figures use the same interval containing
-only complete corrected epochs, so uncorrected boundary data cannot dominate the
-diagnostic. They use the configured PSD frequency limit, capped at the output
-Nyquist, and use standard MNE spatial channel colors when channel positions can be
-identified. A marker gap or more than one native sample of timing inconsistency is
-a hard error by default. Explicit repair requires `expected_volume_count` and
-fills only integer-multiple interior gaps; missing boundary markers remain an
-error. A single sample (0.2 ms at 5 kHz) is treated as clock quantization inside
-the alignment search.
+## Quality control and provenance
 
-## Where acquisition groups come from
+Residual QC measures scanner-locked harmonic excess in microvolts over complete
+blocks. Robust temporal flags identify coherent multi-channel blocks; optional
+spatial flags identify isolated channel-block outliers. The automatic failure
+policy may retry a candidate with a local window and recommend a persistent bad
+channel, but it never drops or interpolates channels.
 
-Correction needs one trigger per acquisition group, and the number of groups in a
-volume. A recording supplies these one of two ways, declared by
-`timing.marker_kind`, and exactly one source of truth is accepted in each case.
-
-**Volume markers** (`marker_kind: volume`) locate only the volume. Where each
-group fires inside it is derived from declared slice timing: `RepetitionTime`,
-`SliceTiming`, and `MultibandAccelerationFactor`, read either from a BIDS sidecar
-at `input.fmri_metadata` or from an `acquisition:` section in the YAML. The two
-carry identical fields through identical validation, so an inline declaration is
-not a weaker one -- it exists because real sidecars often omit `SliceTiming` or
-`MultibandAccelerationFactor`, and hand-editing a JSON file to satisfy a tool is
-worse provenance than declaring the timing where the run is configured.
-
-**Acquisition-group markers** (`marker_kind: slice`) record the group positions
-directly, as a slice-triggered recording does. Nothing in a marker series says
-where a volume begins, so `timing.groups_per_volume` is declared; the repetition
-time and the within-volume offsets are then measured from the markers. Declared
-slice timing is rejected in this mode, since it could only contradict what the
-recording says. Three properties are checked, each catching a distinct failure:
-the marker count must divide into whole volumes; the derived volume starts must
-be one repetition time apart, because one missing or extra group marker moves
-every later boundary; and each slot's offset must repeat across volumes, because
-slot matching averages one acquisition time and drifting offsets would mix
-different slots.
-
-A `groups_per_volume` that is wrong but still divides the marker count is
-self-consistent: counting two volumes' worth of groups measures twice the
-repetition time and offsets that repeat just as well. The markers cannot refute
-that reading, which is why the count must be declared rather than inferred, and
-why `timing.expected_repetition_time_seconds` exists to check it. The likeliest
-mistake it catches is counting slices where the scanner marks excitations.
-
-Neither route infers acquisition geometry from the EEG waveform. The sidecar
-records which route ran, the timing declared to it, and the geometry resolved
-from it, so a measured offset can be told from a derived one after the fact.
-
-## Why acquisition slots matter
-
-In multiband acquisitions, adjacent groups can represent different acquisition-time
-slots. Matching templates by the unique values in `SliceTiming` prevents those
-different temporal positions from being averaged together. The number of repeated
-slice groups is derived from the metadata and checked against the multiband factor.
-
-## Relationship to the FMRIB implementation
-
-The official FMRIB FASTR plug-in is a MATLAB/EEGLAB implementation. This project
-shares the FASTR method's trigger alignment and moving-template subtraction stages,
-but it is a separately organized Python implementation with a different input
-contract and processing boundary. In particular, its acquisition-group geometry is
-derived from BIDS multiband timing, while the FMRIB plug-in accepts EEGLAB slice or
-volume events. This project is not the official FMRIB plug-in and makes no
-affiliation or endorsement claim.
-
-## Configuration and provenance
-
-The example YAML is the single user-facing configuration surface. Protocol and
-analysis choices include the marker convention and its timing source, the
-interpolation factor, template neighbour count,
-search radius, relative trigger position, marker repair or explicit marker-block
-selection, template high-pass,
-output filter/rate, exact line-noise frequencies, non-EEG channel names, residual
-OBS rank and section duration, ANC, residual threshold, optional gate/shared,
-channel-adaptive, or explicit local-channel settings, the automatic
-channel-failure policy and its absolute residual floor, trim mode, residual-QC
-block, isolated-channel
-reporting, mains and volume-spectrum settings, and
-PSD limits. Line regression deliberately removes all signal
-at each configured frequency, so the YAML requires an explicit list; `[]` disables
-it. Fixed implementation details include the interpolation kernel shape, the
-residual OBS 70 Hz high-pass design, the output low-pass window design, and the
-protected boundary volumes. The
-provenance sidecar stores the FMRIB reference commit, resolved configuration,
-marker selection and repair counts, per-channel adaptive decisions, every
-automatic channel-failure candidate, retry comparison and bad-channel
-recommendation, selected OBS
-ranks, ANC diagnostics, exact-bin and
-local-sideband volume-harmonic spectra, effective PSD limit, FFT length, and
-residual-QC settings.
+The JSON sidecar records input SHA-256 hashes, resolved timing, geometry,
+configuration, output window, alignment, correction counts, PSD interval,
+residual measurements, channel decisions, and runtime. Treat it as part of the
+scientific output and preserve it with the corrected recording.
 
 ## The 1/TR limitation
 
-An acquisition-locked signal at the volume repetition frequency, or at one of its
-harmonics, is indistinguishable from a scanner artifact when both are represented by
-the same volume-locked reference. Subtracting a template therefore can reduce a
-genuine neural component at exactly `1 / RepetitionTime` as well as scanner energy.
-No blind post-hoc notch can restore information that was removed during subtraction.
+The scanner-gradient artifact is strongly locked to the acquisition period, so
+its fundamental and harmonics occur at `1 / RepetitionTime` and integer
+multiples. Neural or physiological activity at those frequencies is not
+distinguishable from scanner artifact by frequency alone. Template, OBS, and
+ANC stages can therefore reduce signal as well as residual artifact. Report
+both suppression and independent signal-transfer measurements.
 
-The template window is consequently a scientific parameter, not merely a speed
-setting. On this cohort, 60 neighbouring volumes cut leave-one-out transfer
-inflation from 4.4% (N=20) to 1.1% without increasing residual slice-harmonic
-amplitude. That value must be revalidated when the scanner sequence, electrode
-montage, marker timing, or recording protocol changes.
+## Known limitations
+
+- Marker errors, timing gaps, and incompatible timing sources are not repaired
+  implicitly.
+- Boundary groups without complete epochs are left uncorrected.
+- A fixed artifact model does not account for every motion or scanner-state
+  change; inspect block-level residuals.
+- Residual QC is advisory and does not establish that a channel is unusable.
+- BCG correction and general bad-channel handling are outside this package.
+- The Python implementation is scientifically compared with, but is not a
+  drop-in replacement for, the FMRIB EEGLAB interface.
 
 ## Trying the pipeline without a recording
 
-`eegfmri-fastr demo --output-dir DIR` writes a BrainVision recording carrying a
-simulated multiband gradient artifact, marked both per volume and per
-acquisition group, alongside a BIDS sidecar and a commented configuration. It
-exists so that an installation can be exercised end to end, and so that the two
-marker conventions can be compared on one recording. Its 10.5 Hz probe tone sits
-off the volume-harmonic comb of its 0.9 s repetition time; a 10.0 Hz tone would
-land on the ninth harmonic and be removed with the artifact, which is the 1/TR
-limitation below rather than a defect. Simulated numbers are evidence about the
-implementation, never about an acquisition.
+Generate and correct the deterministic synthetic demo:
+
+```text
+eegfmri-fastr demo --output-dir /path/to/demo
+eegfmri-fastr run --config /path/to/demo/demo.yml
+```
+
+The demo validates the software path and an injected off-comb signal. It is not
+a substitute for protocol-specific validation on real data.
 
 ## Inputs and units
 
-The implementation expects voltage-valued BrainVision channels, sample positions in
-the BrainVision marker convention, and BIDS timing in seconds. Internally, marker
-positions are converted to zero-based input samples, correction is performed on the
-original sample grid, and marker positions are mapped through the exact integer
-decimation factor.
+The input and output formats are BrainVision Core Data Format files. Signal
+arrays follow MNE's convention of volts. BIDS timing fields and configuration
+durations use seconds; frequencies use hertz; residual reports use microvolts;
+internal sample indices are zero-based; BrainVision marker positions on disk are
+one-based.
 
 ## External references
 
-- [MNE-Python BrainVision reader](https://mne.tools/stable/generated/mne.io.read_raw_brainvision.html)
-- [BIDS MRI data acquisition specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html)
-- [Niazy et al. (2005), “Removal of FMRI environment artifacts from EEG data using optimal basis sets”](https://pubmed.ncbi.nlm.nih.gov/16150610/)
-- [FMRIB fMRIb FASTR implementation (`fmrib_fastr.m`)](https://github.com/sccn/fMRIb/blob/master/fmrib_fastr.m)
-- [FMRIB fMRIb repository](https://github.com/sccn/fMRIb)
+See the [references](references.md) for the FASTR paper, BIDS specification,
+MNE-Python, BrainVision format, SciPy diagnostics, and the FMRIB source audit.

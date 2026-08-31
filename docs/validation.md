@@ -1,89 +1,91 @@
 # Validation checklist
 
-The EEG-fMRI FASTR implementation is intended to be validated at two levels:
-deterministic software
-checks and protocol-specific signal checks.
+FASTR validation has two parts: deterministic software checks and
+protocol-specific signal evidence. Passing the test suite establishes software
+contracts; it does not establish that a correction is appropriate for every
+scanner, acquisition, montage, or downstream analysis.
 
 ## Software checks
 
-Run the complete automated suite and static checks from the repository root:
+Run these commands from the repository root:
 
 ```text
 uv run pytest
 uv run ruff check src tests validation
 git diff --check
+uv build
 ```
 
-The tests cover:
+The suite covers configuration and cross-field validation, strict BrainVision
+marker I/O, BIDS and acquisition-group timing, geometry, channel-batch
+invariance, template/OBS/ANC stages, output filtering, provenance, examples,
+folder comparison, and deterministic synthetic data. The comparison and
+validation helpers are not runtime dependencies of the production correction
+path.
 
-- strict YAML structure and scalar validation;
-- exact BrainVision marker selection and lossless marker round trips;
-- BIDS timing, TR-sample, marker-gap, boundary, and explicit repair validation;
-- one source of acquisition timing, whichever route declares it;
-- measuring geometry from acquisition-group markers, and the equivalence of the
-  two marker conventions over one recording;
-- shared FASTR alignment and channel-batch invariance;
-- fixed and automatic sectioned OBS, FMRIB LMS ANC, and stage ordering;
-- output-rate, filter, and output-collision checks;
-- safe disabled-low-pass behavior without decimation;
-- pairing two folders under a declared naming convention;
-- correcting the generated demo dataset end to end, checking that the artifact
-  falls and the off-comb probe tone survives;
-- reopening the generated BrainVision recording with MNE; and
-- generation of before/after MNE PSD figures.
+## Protocol-specific signal checks
 
-`eegfmri-fastr demo --output-dir DIR` reproduces that end-to-end check by hand,
-on a dataset that needs no recording of your own.
+Before a study run, use a representative recording from the intended scanner,
+marker convention, sampling rate, montage, and task. Confirm:
 
-The BCG-Correction package (AAS/PCA-OBS) additionally verifies that the FASTR input contains no
-pre-existing `Pulse Artifact,R` markers, detects R samples from ECG only, preserves the
-source marker collection while appending detector markers, preserves ECG and all samples
-outside bounded correction windows, and compares methods with held-out cardiac residuals
-and circular-shift nulls. Analyzer marker agreement is an audit measure, not detector
-ground truth. Production correction also rejects degraded ECG trains and any
-heartbeat-locked after/before RMS ratio above `maximum_residual_ratio` before
-writing output.
+- the configured marker type and description select the intended events;
+- the timing source agrees with the acquisition protocol;
+- volume spacing and within-volume offsets are stable;
+- the output rate and filter preserve the frequency range needed downstream;
+- non-EEG channels are explicitly identified; and
+- any marker repair or explicit marker block selection has a documented reason.
+
+Run `validate-timing` before correction when timing has not already been
+audited. The command does not infer timing from the EEG waveform.
 
 ## Run-level checks
 
-Before interpreting a corrected run:
+For every corrected run:
 
-1. Confirm the provenance sidecar hashes and resolved configuration identify the
-   intended input files.
-2. Confirm that the declared volume-marker series has no gaps or unexplained timing
-   changes.
-3. Inspect raw, corrected, and independently corrected reference data in both time
-   and frequency domains.
-4. Quantify scanner-locked residuals at `1 / RepetitionTime` and its relevant
-   harmonics using absolute amplitude or power as well as relative band ratios.
-5. Quantify signal transfer using synthetic injected tones, known physiological
-   features, or another reference that is not used to construct the correction
-   template.
-6. Review skipped boundary groups and fitted alignment correlations in the sidecar.
-
-Do not treat a lower residual line as sufficient evidence of a better correction:
-an algorithm can lower a line by removing neural signal at the same frequency. The
-most informative comparison reports both residual artifact suppression and signal
-preservation.
+1. Confirm the provenance sidecar identifies the intended input paths and
+   hashes.
+2. Confirm resolved timing, marker counts, output window, and skipped boundary
+   groups match the protocol.
+3. Inspect raw and corrected signals in time and frequency domains.
+4. Measure scanner-locked residual amplitude or power at `1 / RepetitionTime`
+   and relevant harmonics, with mains collisions treated explicitly.
+5. Measure signal transfer using injected tones, known physiological features,
+   or an independent reference not used to construct the template.
+6. Review alignment values, residual-QC blocks, and advisory channel
+   recommendations before downstream rejection or interpolation.
 
 ## Comparison to another correction implementation
 
-An independent implementation may be used as a benchmark oracle, but it should not
-become a runtime dependency or a hidden default. Compare identical input channels,
-sample ranges, marker definitions, filters, output rates, and quality metrics. Keep
-private recordings and generated outputs outside the tracked public package. The
-reusable oracle runners and aggregate evidence are documented in
-[`fmrib-parity-validation.md`](fmrib-parity-validation.md).
-For the cardiac/BCG comparison, use the FASTR gradient-corrected recording derived from
-the raw unmarked stage as the own-method input. Do not use an Analyzer pulse-marked or
-BrainVision Analyzer-corrected file as that input. Supply Analyzer's pre-BCG input and
-post-BCG output separately so each correction arm is scored against its own pre-correction
-baseline. Verify the paired recordings have the same channel order, compatible sampling
-rate and sample geometry, and high interior ECG correlation before interpreting method
-differences. Analyzer marker agreement is not ground truth when Analyzer is known to miss
-beats.
+Use the [FMRIB parity audit](fmrib-parity-validation.md) and its runners when a
+reference implementation is available. Compare the same channels, sample
+range, markers, timing, filter, output rate, and metrics. Keep private
+recordings and generated outputs outside the tracked repository.
 
-BCG/ECG detection and correction are outside this package. The EEG-fMRI FASTR
-implementation retains cardiac validation metrics and deterministic simulation
-helpers so those downstream checks can be run without making BCG-Correction a
-runtime dependency.
+The top-level runners retain their current names:
+`run_python_reference.py`, `run_python_bids_reference.py`, and
+`compare_fmrib_reference.py`. They require explicit paths and refuse to
+overwrite outputs.
+
+## Interpreting residual suppression and signal transfer
+
+A lower scanner line is not sufficient evidence of a better correction. Neural
+signal at the same frequency can be removed by template subtraction, OBS, or
+ANC. Report residual suppression together with signal-transfer measurements;
+inspect off-comb and on-comb probes separately. Treat the automatic channel
+failure policy as an advisory recommendation, not as an automatic channel
+deletion or interpolation decision.
+
+## Reproducibility record
+
+Keep the following with each result:
+
+- installed `eegfmri-fastr --version` output;
+- the exact YAML configuration;
+- the provenance JSON sidecar and input hashes;
+- scanner, sequence, sampling-rate, montage, and marker details;
+- timing-validation output; and
+- the residual and signal-transfer measures used for interpretation.
+
+The detailed [FMRIB parity validation](fmrib-parity-validation.md) labels
+project-generated evidence with its dataset scope. It is not a general
+performance guarantee.

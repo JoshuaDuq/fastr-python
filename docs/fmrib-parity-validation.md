@@ -2,7 +2,7 @@
 
 ## Reference audited
 
-The audit used `sccn/fMRIb` commit
+The audit used [`sccn/fMRIb`](https://github.com/sccn/fMRIb) commit
 `2aa522bc5ec4215f42b3ba8efdb2b84d2a312935` (2024-08-02). The complete
 `fmrib_fastr.m`, its EEGLAB wrapper and GUI, `trigcorrect.m`, `decimate2.m`,
 `pca_calc.m`, `fastranc.c`/`.m`, and `prcorr2.c`/`.m` were reviewed. The GitHub
@@ -33,7 +33,7 @@ MATLAB was R2026a Update 3 (`26.1.0.3276743`) with EEGLAB and FMRIB 2.1.
 | Slice timing supplied without a BIDS sidecar | `acquisition:` section carrying the same three fields through the same validation | Beyond the reference, which reads timing from EEGLAB events only |
 | EEGLAB GUI, `EEG.history`, and positional MATLAB call signature | YAML/CLI, BrainVision, and JSON provenance | Intentional interface difference |
 
-The production filter remains MNE's delay-compensated FIR. It does not copy
+The production filter remains [MNE's delay-compensated FIR](references.md#mne-python). It does not copy
 MATLAB's twice-applied least-squares response: filtering is an implementation
 choice, whereas selecting or disabling the low-pass is the user-facing FMRIB
 capability. Python also fails on invalid or unstable inputs where the MATLAB
@@ -41,7 +41,9 @@ code changes a value, warns and skips, or enters `keyboard` from a broad catch.
 
 ## Algorithm audit
 
-The original function performs these scientifically relevant operations:
+The original function performs these scientifically relevant operations,
+following [Niazy et al. (2005)](references.md#niazy-et-al-2005) and the
+[FMRIB implementation](references.md#fmrib-fastr-implementation):
 
 1. validate or repair triggers and derive the artifact epoch around each event;
 2. interpolate, high-pass the template-estimation signal, align artifacts by
@@ -55,7 +57,8 @@ The original function performs these scientifically relevant operations:
 
 Those operations map respectively to `fastr_timing.py`, `fastr_geometry.py`,
 `fastr_processing.py`, `fastr_anc.py`, and `pipeline_io.py`. Python derives
-actual multiband acquisition slots from BIDS rather than treating the entire
+actual multiband acquisition slots from the
+[BIDS MRI specification](references.md#bids) rather than treating the entire
 0.9-second volume as a single repeated waveform.
 
 The automatic-rank criteria are the three FMRIB rules: four consecutive
@@ -69,6 +72,13 @@ both the FMRIB error and noise vectors to absolute and relative tolerance
 `1e-13`.
 
 ## Representative real-recording comparison
+
+### Evidence scope
+
+The numerical values below are project-generated validation evidence from the
+recording and parameter set described in this document. They are not a general
+performance guarantee across scanners, protocols, marker streams, or electrode
+montages.
 
 No subject data or generated MAT files are tracked. The reproducible runners
 used the run-1 BrainVision recording for one representative subject, channels
