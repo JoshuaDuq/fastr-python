@@ -106,9 +106,3 @@ uv build
 
 See the [development guide](docs/development.md) and
 [FMRIB parity audit](docs/fmrib-parity-validation.md).
-
-## Related pipelines
-
-BCG correction is separate: see [BCG-Correction](https://github.com/JoshuaDuq/BCG-Correction)
-and [BCGNet-Python](https://github.com/JoshuaDuq/BCGNet-Python). FASTR removes
-scanner-gradient artifact only.
