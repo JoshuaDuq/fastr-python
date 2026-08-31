@@ -7,7 +7,6 @@ renamed or removed without the example following.
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from eegfmri_fastr.compare.config import load_compare_config
