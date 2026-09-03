@@ -41,7 +41,10 @@ def residual_qc_markers(
     flagged = np.asarray(residual_qc["flagged_blocks"], dtype=bool)
     if flagged.size == 0:
         return ()
-    block_samples = round(float(residual_qc["block_seconds"]) * output_rate)
+    block_seconds = residual_qc["block_seconds"]
+    if not isinstance(block_seconds, int | float) or isinstance(block_seconds, bool):
+        raise TypeError("residual QC block_seconds must be numeric")
+    block_samples = round(float(block_seconds) * output_rate)
     markers = []
     for block in np.flatnonzero(flagged):
         position = int(block) * block_samples + 1

@@ -155,9 +155,7 @@ def test_channel_adaptive_correction_selects_windows_per_eeg_channel() -> None:
     burst_start = int(triggers[22 * 2])
     burst_stop = burst_start + 25
     wide_leftover = np.max(np.abs(wide.data[0, burst_start:burst_stop]))
-    adaptive_leftover = np.max(
-        np.abs(correction.data[0, burst_start:burst_stop])
-    )
+    adaptive_leftover = np.max(np.abs(correction.data[0, burst_start:burst_stop]))
     assert adaptive_leftover < 0.5 * wide_leftover
     np.testing.assert_allclose(correction.data[1:], wide.data[1:])
 

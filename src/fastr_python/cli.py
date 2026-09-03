@@ -8,6 +8,7 @@ import math
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 import mne
 
@@ -172,9 +173,7 @@ def _validate_timing(arguments: argparse.Namespace) -> None:
         "group_triggers": acquisition.group_triggers.tolist(),
     }
     if arguments.output.exists():
-        raise FileExistsError(
-            f"validation output already exists: {arguments.output}"
-        )
+        raise FileExistsError(f"validation output already exists: {arguments.output}")
     with arguments.output.open("x", encoding="utf-8") as output:
         json.dump(result, output, indent=2)
         output.write("\n")
@@ -210,7 +209,7 @@ def _validate_timing_arguments(arguments: argparse.Namespace) -> None:
 
 def _read_marker_samples(arguments: argparse.Namespace) -> list[int]:
     if arguments.volume_starts is not None:
-        return arguments.volume_starts
+        return cast(list[int], arguments.volume_starts)
     if arguments.marker_type is None or arguments.marker_description is None:
         raise BrainVisionInputError(
             "--marker-type and --marker-description are required with --vhdr"

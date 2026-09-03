@@ -41,13 +41,17 @@ Repository = "https://github.com/JoshuaDuq/fastr-python"
 
 [dependency-groups]
 dev = [
+    "mypy>=2.3.1",
     "pytest==9.1.1",
     "ruff==0.16.3",
+    "types-pyyaml>=6.0.12.20260815",
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --strict-config --strict-markers"
+filterwarnings = ["error"]
 testpaths = ["tests"]
+xfail_strict = true
 
 [tool.ruff]
 line-length = 88
@@ -60,6 +64,17 @@ extend-select = ["C90", "N", "D101", "D102", "D103", "D401"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["D101", "D102", "D103", "D401"]
 "validation/**/*.py" = ["D101", "D102", "D103", "D401"]
+
+[tool.mypy]
+files = ["src/fastr_python"]
+python_version = "3.12"
+strict = true
+warn_return_any = false
+warn_unreachable = false
+
+[[tool.mypy.overrides]]
+module = ["mne", "mne.*", "pybv", "scipy", "scipy.*"]
+ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fastr_python"]

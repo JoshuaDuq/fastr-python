@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -109,7 +110,7 @@ def load_compare_config(path: str | Path) -> CompareConfig:
             output_root=_path(paths, "output_root", base),
         ),
         plot=PlotSettings(
-            psd_max_hz=float(plot["psd_max_hz"]),
+            psd_max_hz=float(cast(float, plot["psd_max_hz"])),
         ),
         include=_string_list(subjects, "include"),
         exclude=_string_list(subjects, "exclude"),
@@ -124,9 +125,7 @@ def _naming_config(document: Mapping[str, object]) -> NamingConfig:
     values = _mapping(document["naming"], "naming")
     unknown = sorted(str(key) for key in values if key not in _NAMING_KEYS)
     if unknown:
-        raise ConfigurationError(
-            f"unknown field(s) in naming: {', '.join(unknown)}"
-        )
+        raise ConfigurationError(f"unknown field(s) in naming: {', '.join(unknown)}")
     defaults = NamingConfig()
     return NamingConfig(
         corrected_suffixes=_optional_string_list(
@@ -168,9 +167,7 @@ def _require_keys(
 ) -> None:
     unknown = sorted(str(key) for key in values if key not in expected)
     if unknown:
-        raise ConfigurationError(
-            f"unknown field(s) in {field}: {', '.join(unknown)}"
-        )
+        raise ConfigurationError(f"unknown field(s) in {field}: {', '.join(unknown)}")
     for key in sorted(expected):
         if key not in values:
             raise ConfigurationError(f"missing required field: {field}.{key}")
@@ -221,7 +218,5 @@ def _optional_string_list(
         return default
     entries = _string_list(values, name)
     if any(not entry for entry in entries):
-        raise ConfigurationError(
-            f"naming.{name} must not contain empty strings"
-        )
+        raise ConfigurationError(f"naming.{name} must not contain empty strings")
     return entries

@@ -7,6 +7,7 @@ from dataclasses import replace
 from numbers import Real
 
 import numpy as np
+import numpy.typing as npt
 
 from .templates import (
     _extract_epochs,
@@ -42,7 +43,7 @@ _MIN_EDGE_ADAPTATION_ENERGY_RATIO = 1e-3
 
 
 def prepare_fastr_geometry(
-    group_triggers: np.ndarray,
+    group_triggers: npt.ArrayLike,
     *,
     sample_count: int,
     interpolation_factor: int = 10,
@@ -348,8 +349,7 @@ def prepare_local_fastr_geometry(
     wide_count = geometry.window.indices.shape[1]
     if local_neighbor_count >= wide_count:
         raise FastrInputError(
-            "local neighbour count must be smaller than the configured "
-            "neighbour count"
+            "local neighbour count must be smaller than the configured neighbour count"
         )
     local_indices = _local_neighbor_indices(geometry, local_neighbor_count)
     return replace(
@@ -421,12 +421,8 @@ def _build_fastr_geometry(
     )
     search_radius = search_radius_samples * interpolation_factor
     sample_count_interpolated = sample_count * interpolation_factor
-    bounds_valid = (
-        (fine_triggers - epoch.samples_before - search_radius >= 0)
-        & (
-            fine_triggers + epoch.samples_after + search_radius
-            < sample_count_interpolated
-        )
+    bounds_valid = (fine_triggers - epoch.samples_before - search_radius >= 0) & (
+        fine_triggers + epoch.samples_after + search_radius < sample_count_interpolated
     )
 
     if allow_edges:
@@ -520,9 +516,7 @@ def _validate_pre_trigger_fraction(value: object) -> float:
         raise FastrInputError("pre-trigger fraction must be a finite number")
     fraction = float(value)
     if not math.isfinite(fraction) or not 0.0 <= fraction <= 1.0:
-        raise FastrInputError(
-            "pre-trigger fraction must lie between zero and one"
-        )
+        raise FastrInputError("pre-trigger fraction must lie between zero and one")
     return fraction
 
 
@@ -683,9 +677,7 @@ def _slice_harmonic_energy(
         frequency = slice_rate * order
         if frequency >= nyquist:
             break
-        if (
-            abs(frequency - mains_frequency_hz) > mains_exclusion_hz
-        ):
+        if abs(frequency - mains_frequency_hz) > mains_exclusion_hz:
             mask |= np.abs(freqs - frequency) <= half_width
         order += 1
     if not np.any(mask):

@@ -331,9 +331,7 @@ def make_dual_marked_recording(tmp_path: Path) -> None:
     for sample in group_markers():
         position = int(sample) + 1
         if sample % SAMPLES_PER_VOLUME == 0:
-            markers.append(
-                BrainVisionMarker("Volume", "volume-start", position, 1, 0)
-            )
+            markers.append(BrainVisionMarker("Volume", "volume-start", position, 1, 0))
         markers.append(BrainVisionMarker("Slice", "slice-start", position, 1, 0))
     marker_path = tmp_path / "source.vmrk"
     marker_path.unlink()

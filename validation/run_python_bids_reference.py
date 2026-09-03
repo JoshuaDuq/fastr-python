@@ -42,8 +42,7 @@ def run_bids_stages(
     sampling_rate = float(reference["sampling_rate"])
     interpolation_factor = int(parameters["interpolation_factor"])
     excluded = tuple(
-        int(index - 1)
-        for index in np.atleast_1d(parameters["excluded_channels"])
+        int(index - 1) for index in np.atleast_1d(parameters["excluded_channels"])
     )
 
     timing = load_bids_fmri_timing(bids_metadata)
@@ -102,14 +101,11 @@ def run_bids_stages(
         sample_slice = slice(
             max(
                 0,
-                int(geometry.triggers[0])
-                - math.ceil(1.25 * artifact_samples),
+                int(geometry.triggers[0]) - math.ceil(1.25 * artifact_samples),
             ),
             min(
                 raw_data.shape[1],
-                int(geometry.triggers[-1])
-                + math.ceil(2.25 * artifact_samples)
-                + 1,
+                int(geometry.triggers[-1]) + math.ceil(2.25 * artifact_samples) + 1,
             ),
         )
         anc = adaptive_noise_cancel(

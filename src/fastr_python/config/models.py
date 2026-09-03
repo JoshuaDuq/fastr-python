@@ -4,11 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from ..correction.timing import FmriAcquisitionTiming
 from ..quality.residuals import ResidualQcDefaults
 
 _TRIM_MODES = frozenset({"none", "first_to_last_volume"})
+DEFAULT_NON_EEG_CHANNELS = ("ECG",)
+DEFAULT_TEMPLATE_HIGH_PASS_HZ = 1.0
+DEFAULT_RESIDUAL_THRESHOLD_UV = 1.0
+DEFAULT_RESIDUAL_OBS_RANK = 4
+DEFAULT_LOCAL_NEIGHBOR_COUNT = 20
+DEFAULT_CHANNEL_FAILURE_POLICY: Literal["report"] = "report"
+DEFAULT_VOLUME_SPECTRUM_MAX_HZ = 110.0
+DEFAULT_REPORT_CHANNEL_OUTLIERS = True
+DEFAULT_BAD_CHANNEL_RESIDUAL_UV = 5.0
+
 
 class ConfigurationError(ValueError):
     """Raised when a YAML configuration does not describe a valid run."""
@@ -69,24 +80,26 @@ class ProcessingConfig:
     channel_batch_size: int
     reference_channel: str | int
     line_noise_frequencies_hz: tuple[float, ...]
-    non_eeg_channels: tuple[str, ...] = ("ECG",)
-    template_high_pass_hz: float = 1.0
-    residual_threshold_uv: float = 1.0
+    non_eeg_channels: tuple[str, ...] = DEFAULT_NON_EEG_CHANNELS
+    template_high_pass_hz: float = DEFAULT_TEMPLATE_HIGH_PASS_HZ
+    residual_threshold_uv: float = DEFAULT_RESIDUAL_THRESHOLD_UV
     residual_gate: bool = False
     residual_obs: bool = False
-    residual_obs_rank: int | str = 4
+    residual_obs_rank: int | Literal["auto"] = DEFAULT_RESIDUAL_OBS_RANK
     residual_obs_section_seconds: float | None = None
     pre_trigger_fraction: float = 0.03
     adaptive_noise_cancellation: bool = False
     adaptive_window: bool = False
     channel_adaptive_window: bool = False
-    local_neighbor_count: int = 20
+    local_neighbor_count: int = DEFAULT_LOCAL_NEIGHBOR_COUNT
     local_window_channels: tuple[str, ...] = ()
     residual_gate_mad_multiplier: float = 8.0
     residual_gate_ratio: float = 8.0
     residual_gate_max_fraction: float = 0.02
     adaptive_improvement_ratio: float = 0.85
-    channel_failure_policy: str = "report"
+    channel_failure_policy: Literal["report", "retry_local_and_recommend_bad"] = (
+        DEFAULT_CHANNEL_FAILURE_POLICY
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,9 +110,7 @@ class TrimConfig:
 
     def __post_init__(self) -> None:
         if self.mode not in _TRIM_MODES:
-            raise ConfigurationError(
-                f"trim.mode must be one of {sorted(_TRIM_MODES)}"
-            )
+            raise ConfigurationError(f"trim.mode must be one of {sorted(_TRIM_MODES)}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,13 +125,13 @@ class QualityControlConfig:
     residual_mad_multiplier: float = ResidualQcDefaults.MAD_MULTIPLIER
     residual_minimum_channels: int = ResidualQcDefaults.MINIMUM_CHANNELS
     # Highest volume harmonic reported, capped at the output Nyquist frequency.
-    volume_spectrum_max_hz: float = 110.0
-    report_channel_outliers: bool = True
+    volume_spectrum_max_hz: float = DEFAULT_VOLUME_SPECTRUM_MAX_HZ
+    report_channel_outliers: bool = DEFAULT_REPORT_CHANNEL_OUTLIERS
     # Absolute floor a channel-block residual must clear before the automatic
     # policy may call it a failure. Unlike residual_threshold_uv this one is
     # never relative: a spatial comparison alone cannot separate a broken
     # electrode from a quiet recording. See residual_qc.
-    bad_channel_residual_uv: float = 5.0
+    bad_channel_residual_uv: float = DEFAULT_BAD_CHANNEL_RESIDUAL_UV
 
 
 @dataclass(frozen=True, slots=True)

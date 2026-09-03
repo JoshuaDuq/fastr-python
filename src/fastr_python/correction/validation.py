@@ -14,7 +14,7 @@ from .types import FastrInputError
 
 def validate_recording(data: npt.ArrayLike) -> np.ndarray:
     """Validate a finite ``(channels, samples)`` recording matrix."""
-    recording = np.asarray(data)
+    recording: np.ndarray = np.asarray(data)
     if recording.ndim != 2 or recording.shape[0] == 0 or recording.shape[1] == 0:
         raise FastrInputError("data must have shape (channels, samples)")
     if np.issubdtype(recording.dtype, np.bool_) or not np.issubdtype(
@@ -31,7 +31,7 @@ def validate_reference_channel(
     sample_count: int,
 ) -> np.ndarray:
     """Validate a finite reference vector with the expected sample count."""
-    reference = np.asarray(data)
+    reference: np.ndarray = np.asarray(data)
     if reference.ndim != 1 or reference.size != sample_count:
         raise FastrInputError(
             "reference channel must be one-dimensional with the geometry sample count"

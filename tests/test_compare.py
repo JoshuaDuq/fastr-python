@@ -159,7 +159,7 @@ def test_runs_are_ordered_by_the_declared_token(tmp_path: Path) -> None:
 
 
 def test_an_unknown_naming_field_is_rejected(tmp_path: Path) -> None:
-    config_path = write_compare_yaml(tmp_path, "naming:\n  suffix: \"_fastr\"\n")
+    config_path = write_compare_yaml(tmp_path, 'naming:\n  suffix: "_fastr"\n')
 
     with pytest.raises(ConfigurationError, match="unknown field"):
         load_compare_config(config_path)

@@ -145,9 +145,7 @@ def _scanner_harmonic_rms(
         block_seconds=duration,
     )
     if residual.shape[1] != 1:
-        raise ComparisonError(
-            "recording is too short for scanner-harmonic measurement"
-        )
+        raise ComparisonError("recording is too short for scanner-harmonic measurement")
     return float(np.median(residual[:, 0]))
 
 
@@ -199,9 +197,7 @@ def _ecg_correlation(
 ) -> float:
     """Correlate the physiological ECG band outside scanner-locked bins."""
     frequencies = np.fft.rfftfreq(raw.size, 1.0 / sampling_rate)
-    keep = (frequencies >= 0.5) & (
-        frequencies <= min(40.0, 0.45 * sampling_rate)
-    )
+    keep = (frequencies >= 0.5) & (frequencies <= min(40.0, 0.45 * sampling_rate))
     fundamental = 1.0 / repetition_time_seconds
     for order in range(1, math.floor(40.0 / fundamental) + 1):
         keep &= np.abs(frequencies - order * fundamental) > 0.5

@@ -87,9 +87,7 @@ def select_marker_samples(
     if not isinstance(marker_type, str) or not marker_type:
         raise BrainVisionInputError("marker_type must be a nonempty string")
     if not isinstance(marker_description, str) or not marker_description:
-        raise BrainVisionInputError(
-            "marker_description must be a nonempty string"
-        )
+        raise BrainVisionInputError("marker_description must be a nonempty string")
     if isinstance(sample_count, bool) or not isinstance(sample_count, Integral):
         raise BrainVisionInputError("sample_count must be a positive integer")
     sample_count = int(sample_count)
@@ -206,16 +204,13 @@ def write_brainvision_recording(
     _validate_output_data(recording, sampling_rate, channel_names)
     marker_values = tuple(markers)
     if any(not isinstance(marker, BrainVisionMarker) for marker in marker_values):
-        raise BrainVisionInputError(
-            "markers must contain BrainVisionMarker instances"
-        )
+        raise BrainVisionInputError("markers must contain BrainVisionMarker instances")
 
     header_path = Path(output_vhdr).expanduser().resolve()
     if header_path.suffix.lower() != ".vhdr":
         raise BrainVisionInputError("output_vhdr must have a .vhdr suffix")
     output_paths = tuple(
-        header_path.with_suffix(suffix)
-        for suffix in (".eeg", ".vmrk", ".vhdr")
+        header_path.with_suffix(suffix) for suffix in (".eeg", ".vmrk", ".vhdr")
     )
     if any(path.exists() for path in output_paths):
         raise FileExistsError(
@@ -297,8 +292,10 @@ def _resolve_local_reference(
     reference: str,
     field_name: str,
 ) -> Path:
-    if not reference or reference in (".", "..") or any(
-        separator in reference for separator in ("/", "\\")
+    if (
+        not reference
+        or reference in (".", "..")
+        or any(separator in reference for separator in ("/", "\\"))
     ):
         raise BrainVisionInputError(
             f"BrainVision {field_name} must be a same-directory filename"

@@ -44,10 +44,14 @@ def make_acquisition_slot_timing() -> FmriAcquisitionTiming:
 
 
 def make_multiband_volume_starts() -> np.ndarray:
-    return np.int64(FIRST_TRIGGER_SAMPLE) + np.arange(
-        VOLUME_COUNT,
-        dtype=np.int64,
-    ) * VOLUME_SAMPLES
+    return (
+        np.int64(FIRST_TRIGGER_SAMPLE)
+        + np.arange(
+            VOLUME_COUNT,
+            dtype=np.int64,
+        )
+        * VOLUME_SAMPLES
+    )
 
 
 def constant_amplitudes(*channel_scales: float) -> np.ndarray:
@@ -71,17 +75,18 @@ def make_gradient_artifact(
     samples = np.arange(int(group_triggers[-1]) + 60, dtype=np.float64)
     owners = np.searchsorted(group_triggers, samples, side="right") - 1
     owners = np.clip(owners, 0, None)
-    delays = (
-        np.zeros(group_triggers.size) if group_delays is None else group_delays
-    )
+    delays = np.zeros(group_triggers.size) if group_delays is None else group_delays
     phases = (
         samples - group_triggers[owners] - delays[owners]
     ) / GROUP_INTERVAL_SAMPLES
     harmonics = np.arange(1, 9)[:, np.newaxis]
-    shape = np.sum(
-        np.sin(2 * np.pi * harmonics * phases + harmonics) / harmonics,
-        axis=0,
-    ) * np.sin(np.pi * np.clip(phases, 0.0, 1.0)) ** 2
+    shape = (
+        np.sum(
+            np.sin(2 * np.pi * harmonics * phases + harmonics) / harmonics,
+            axis=0,
+        )
+        * np.sin(np.pi * np.clip(phases, 0.0, 1.0)) ** 2
+    )
     return np.where(
         (phases >= 0.0) & (phases < 1.0),
         group_amplitudes[:, owners] * shape,
@@ -103,9 +108,7 @@ def volume_dead_time(
     reach_before = (
         provenance.samples_before_trigger + provenance.search_radius
     ) / factor
-    reach_after = (
-        provenance.samples_after_trigger + provenance.search_radius
-    ) / factor
+    reach_after = (provenance.samples_after_trigger + provenance.search_radius) / factor
     return slice(
         math.ceil(triggers[GROUPS_PER_VOLUME - 1] + reach_after),
         math.ceil(triggers[GROUPS_PER_VOLUME] - reach_before),

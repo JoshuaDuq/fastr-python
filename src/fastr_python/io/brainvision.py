@@ -12,9 +12,7 @@ _MARKER_FILE_IDENTIFIERS = frozenset(
         "BrainVision Data Exchange Marker File Version 2.0",
     }
 )
-_WRITTEN_MARKER_FILE_IDENTIFIER = (
-    "BrainVision Data Exchange Marker File Version 1.0"
-)
+_WRITTEN_MARKER_FILE_IDENTIFIER = "BrainVision Data Exchange Marker File Version 1.0"
 _WRITTEN_MARKER_FILE_IDENTIFIER_WITH_USER_INFOS = (
     "BrainVision Data Exchange Marker File Version 2.0"
 )
@@ -178,9 +176,7 @@ def _validate_data_file_name(data_file_name: str) -> None:
     if data_file_name in (".", "..") or any(
         separator in data_file_name for separator in ("/", "\\")
     ):
-        raise BrainVisionMarkerError(
-            "data_file_name must be a same-directory filename"
-        )
+        raise BrainVisionMarkerError("data_file_name must be a same-directory filename")
 
 
 def _parse_marker_file_sections(
@@ -305,9 +301,7 @@ def _attach_user_infos(
     user_infos_by_marker: dict[int, list[tuple[str, ...]]] = {}
     for _, marker_index, user_info in user_info_records:
         if marker_index not in marker_indices:
-            raise BrainVisionMarkerError(
-                "marker user info refers to an unknown marker"
-            )
+            raise BrainVisionMarkerError("marker user info refers to an unknown marker")
         user_infos_by_marker.setdefault(marker_index, []).append(user_info)
     return tuple(
         replace(
@@ -369,9 +363,7 @@ def write_brainvision_markers(
                 encoded_fields = ",".join(
                     field.replace(",", r"\1") for field in user_info
                 )
-                lines.append(
-                    f"Prop{property_index}=Mk{marker_index},{encoded_fields}"
-                )
+                lines.append(f"Prop{property_index}=Mk{marker_index},{encoded_fields}")
                 property_index += 1
     content = "\n".join(lines) + "\n"
     with Path(path).open("x", encoding="utf-8", newline="\n") as marker_file:

@@ -162,9 +162,7 @@ def _acquisition(
 ) -> AcquisitionGeometry:
     """An evenly spaced geometry with the timing the measurement reads."""
     samples_per_volume = round(repetition_time * sampling_rate)
-    offsets = np.arange(groups_per_volume) * (
-        samples_per_volume // groups_per_volume
-    )
+    offsets = np.arange(groups_per_volume) * (samples_per_volume // groups_per_volume)
     volume_starts = np.arange(volume_count, dtype=np.int64) * samples_per_volume
     triggers = (volume_starts[:, np.newaxis] + offsets).reshape(-1)
     return AcquisitionGeometry(
@@ -447,7 +445,6 @@ def test_the_volume_spectrum_limit_is_forwarded(
     )
 
     assert seen["maximum_frequency_hz"] == 45.0
-
 
 
 def test_blocks_are_rounded_to_whole_volumes(

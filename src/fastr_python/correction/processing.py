@@ -162,7 +162,7 @@ def apply_fastr_batch(
             geometry.window,
             geometry.epoch,
         )
-        corrected[index] -= noise[::geometry.interpolation_factor]
+        corrected[index] -= noise[:: geometry.interpolation_factor]
 
     return FastrCorrection(
         data=corrected,
@@ -390,9 +390,7 @@ def obs_trigger_subset(
     )
     kept = triggers[keep]
     if kept.size < 2:
-        raise FastrInputError(
-            "no residual epochs fit inside the recording"
-        )
+        raise FastrInputError("no residual epochs fit inside the recording")
     return kept
 
 
@@ -530,9 +528,7 @@ def select_obs_rank(explained_variance_percent: npt.ArrayLike) -> int:
 
     cumulative_rank = int(cumulative[0]) + 1
     variance_rank = max(int(below_five[0]), 1)
-    selected = int(
-        np.floor(np.mean((slope_rank, cumulative_rank, variance_rank)))
-    )
+    selected = int(np.floor(np.mean((slope_rank, cumulative_rank, variance_rank))))
     return min(max(selected, 1), values.size)
 
 
@@ -543,9 +539,7 @@ def _validate_obs_rank(
     if rank == "auto":
         return "auto"
     if isinstance(rank, bool) or not isinstance(rank, int):
-        raise FastrInputError(
-            "basis rank must be a positive integer or 'auto'"
-        )
+        raise FastrInputError("basis rank must be a positive integer or 'auto'")
     validate_basis_rank(rank, group_count)
     return rank
 
@@ -579,9 +573,12 @@ def _residual_sections(
             "the residual basis section holds too few epochs for the requested "
             "rank; lengthen the section or lower the rank"
         )
-    edges = [0, *np.cumsum([part.size for part in np.array_split(
-        np.arange(fine_triggers.size), count
-    )])]
+    edges = [
+        0,
+        *np.cumsum(
+            [part.size for part in np.array_split(np.arange(fine_triggers.size), count)]
+        ),
+    ]
     return tuple(slice(int(start), int(stop)) for start, stop in pairwise(edges))
 
 
@@ -648,9 +645,7 @@ def _fit_residual_basis(
             selected_rank = rank
         validate_basis_rank(selected_rank, block.shape[0])
         if selected_rank > vectors.shape[1]:
-            raise FastrInputError(
-                "basis rank exceeds the residual epoch dimension"
-            )
+            raise FastrInputError("basis rank exceeds the residual epoch dimension")
         basis = vectors[:, :selected_rank]
         fitted[section] = block @ basis @ basis.T
         selected_ranks[section_index] = selected_rank

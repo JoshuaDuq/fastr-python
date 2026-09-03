@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -538,14 +539,19 @@ def test_psd_plot_requests_spatial_colors(
     raw = mne.io.RawArray(np.zeros((2, 100)), info, verbose="ERROR")
     seen: dict[str, object] = {}
 
-    def capture_plot(*args: object, **kwargs: object) -> object:
+    class Spectrum:
+        def plot(self, **kwargs: object) -> object:
+            seen.update(kwargs)
+            return plt.figure()
+
+    def capture_psd(*args: object, **kwargs: object) -> object:
         seen.update(kwargs)
-        return plt.figure()
+        return Spectrum()
 
     monkeypatch.setattr(
-        pipeline_module.mne.viz,
-        "plot_raw_psd",
-        capture_plot,
+        mne.io.BaseRaw,
+        "compute_psd",
+        capture_psd,
     )
     pipeline_module._save_psd_plot(
         raw,
@@ -558,7 +564,8 @@ def test_psd_plot_requests_spatial_colors(
 
     assert seen["spatial_colors"] is True
     assert seen["fmax"] == 100.0
-    assert "n_fft" not in seen
+    assert seen["n_fft"] == 100
+    assert seen["n_per_seg"] == 100
 
 
 def test_psd_plot_forwards_a_configured_fft_length(
@@ -569,14 +576,18 @@ def test_psd_plot_forwards_a_configured_fft_length(
     raw = mne.io.RawArray(np.zeros((2, 100)), info, verbose="ERROR")
     seen: dict[str, object] = {}
 
-    def capture_plot(*args: object, **kwargs: object) -> object:
+    class Spectrum:
+        def plot(self, **kwargs: object) -> object:
+            return plt.figure()
+
+    def capture_psd(*args: object, **kwargs: object) -> object:
         seen.update(kwargs)
-        return plt.figure()
+        return Spectrum()
 
     monkeypatch.setattr(
-        pipeline_module.mne.viz,
-        "plot_raw_psd",
-        capture_plot,
+        mne.io.BaseRaw,
+        "compute_psd",
+        capture_psd,
     )
     pipeline_module._save_psd_plot(
         raw,
@@ -589,6 +600,32 @@ def test_psd_plot_forwards_a_configured_fft_length(
     )
 
     assert seen["n_fft"] == 128
+    assert seen["n_per_seg"] == 100
+
+
+def test_psd_plot_bounds_welch_segments_to_uninterrupted_data(
+    tmp_path: Path,
+) -> None:
+    info = mne.create_info(["Fp1", "Fp2"], sfreq=1_000.0, ch_types="eeg")
+    raw = mne.io.RawArray(np.zeros((2, 301)), info, verbose="ERROR")
+    raw.set_annotations(
+        mne.Annotations(
+            onset=[0.1],
+            duration=[0.002],
+            description=["BAD boundary"],
+        )
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        pipeline_module._save_psd_plot(
+            raw,
+            tmp_path / "psd.png",
+            fmax=100.0,
+            title="test",
+            tmin=0.0,
+            tmax=0.3,
+        )
 
 
 def _reference_low_pass(data: np.ndarray, taps: np.ndarray) -> np.ndarray:
@@ -790,9 +827,7 @@ def test_a_fully_corrected_run_carries_no_bad_gradient_annotation(
 
     assert summary.skipped_group_count == 0
     _, markers = read_brainvision_markers(summary.output_vmrk)
-    assert not [
-        marker for marker in markers if marker.description == "Bad_Gradient"
-    ]
+    assert not [marker for marker in markers if marker.description == "Bad_Gradient"]
 
 
 def test_residual_qc_is_reported_in_the_sidecar(tmp_path: Path) -> None:
@@ -1115,19 +1150,21 @@ def test_an_accepted_retry_updates_every_channel_diagnostic(
     anc_after = after["adaptive_noise_cancellation"]
 
     assert policy_provenance(retried)["accepted_local_window_channels"] == ["EEG 002"]
-    assert after["amplitude_mean_by_channel"][1] != (
-        before["amplitude_mean_by_channel"][1]
+    assert (
+        after["amplitude_mean_by_channel"][1]
+        != (before["amplitude_mean_by_channel"][1])
     )
-    assert after["amplitude_rms_by_channel"][1] != (
-        before["amplitude_rms_by_channel"][1]
+    assert (
+        after["amplitude_rms_by_channel"][1] != (before["amplitude_rms_by_channel"][1])
     )
     assert anc_after["reference_scales"][1] != anc_before["reference_scales"][1]
     assert anc_after["step_sizes"][1] != anc_before["step_sizes"][1]
     assert all(value is not None for value in anc_after["reference_scales"][:4])
     # Every untouched channel keeps exactly the diagnostic the wide pass gave it.
     for index in (0, 2, 3, 4):
-        assert after["amplitude_mean_by_channel"][index] == (
-            before["amplitude_mean_by_channel"][index]
+        assert (
+            after["amplitude_mean_by_channel"][index]
+            == (before["amplitude_mean_by_channel"][index])
         )
     assert len(after["residual_obs"]["selected_ranks"]) == len(RETRY_CHANNELS)
     assert all(len(row) == 1 for row in after["residual_obs"]["selected_ranks"])

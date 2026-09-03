@@ -19,6 +19,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run pytest
       - run: uv run ruff check src tests validation
+      - run: uv run ruff format --check src tests validation
+      - run: uv run mypy
+      - run: uv run pytest
       - run: uv build

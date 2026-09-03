@@ -62,9 +62,7 @@ def test_the_correction_example_documents_every_quality_control_field() -> None:
 
 
 def test_the_compare_example_documents_every_naming_field() -> None:
-    document = yaml.safe_load(
-        (EXAMPLES / "compare.yaml").read_text(encoding="utf-8")
-    )
+    document = yaml.safe_load((EXAMPLES / "compare.yaml").read_text(encoding="utf-8"))
     from fastr_python.compare.config import _NAMING_KEYS
 
     assert set(document["naming"]) == set(_NAMING_KEYS)

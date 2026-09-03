@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import matplotlib
+import mne
 
 matplotlib.use("Agg")
 
@@ -21,10 +22,10 @@ from .plots import (
 )
 
 
-def run_comparison(config: CompareConfig) -> list[dict]:
+def run_comparison(config: CompareConfig) -> list[dict[str, object]]:
     """Compare paired uncorrected and FASTR recordings and write summaries."""
     pairs = pair_recordings(config)
-    rows: list[dict] = []
+    rows: list[dict[str, object]] = []
     fig_root = config.paths.output_root / "figures"
     for pair in pairs:
         traces = _load_traces(pair)
@@ -45,8 +46,8 @@ def run_comparison(config: CompareConfig) -> list[dict]:
     return rows
 
 
-def _load_traces(pair: RecordingPair) -> dict[str, object]:
-    traces: dict[str, object] = {}
+def _load_traces(pair: RecordingPair) -> dict[str, mne.io.BaseRaw]:
+    traces: dict[str, mne.io.BaseRaw] = {}
     try:
         fastr = load_vhdr(pair.fastr_vhdr)
     except (OSError, RuntimeError, ValueError) as error:
@@ -74,7 +75,7 @@ def _load_traces(pair: RecordingPair) -> dict[str, object]:
     return traces
 
 
-def _write_summary(output_root: Path, rows: list[dict]) -> None:
+def _write_summary(output_root: Path, rows: list[dict[str, object]]) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     json_path = output_root / "compare_summary.json"
     csv_path = output_root / "compare_summary.csv"

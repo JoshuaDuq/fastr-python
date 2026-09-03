@@ -64,9 +64,7 @@ def test_the_demo_corrects_the_artifact_and_keeps_the_probe(
 
     summary = run_correction(load_config(paths.config))
 
-    before = mne.io.read_raw_brainvision(
-        paths.raw_vhdr, preload=True, verbose="ERROR"
-    )
+    before = mne.io.read_raw_brainvision(paths.raw_vhdr, preload=True, verbose="ERROR")
     after = mne.io.read_raw_brainvision(
         summary.output_vhdr, preload=True, verbose="ERROR"
     )

@@ -206,10 +206,7 @@ def test_read_brainvision_markers_rejects_noncontiguous_indices(
             "[Marker Infos]\n[Marker Infos]"
         ),
         "[Common Infos]\nDataFile=recording.eeg\n[Marker Infos]",
-        (
-            "[Common Infos]\nCodepage=ANSI\nDataFile=recording.eeg\n"
-            "[Marker Infos]"
-        ),
+        ("[Common Infos]\nCodepage=ANSI\nDataFile=recording.eeg\n[Marker Infos]"),
         (
             "[Common Infos]\nCodepage=UTF-8\nDataFile=recording.eeg\n"
             "Extra=unsupported\n[Marker Infos]"
@@ -226,7 +223,7 @@ def test_read_brainvision_markers_rejects_ambiguous_structure(
 ) -> None:
     marker_path = tmp_path / "recording.vmrk"
     marker_path.write_text(
-        "BrainVision Data Exchange Marker File Version 1.0\n" f"{body}\n",
+        f"BrainVision Data Exchange Marker File Version 1.0\n{body}\n",
         encoding="utf-8",
     )
 

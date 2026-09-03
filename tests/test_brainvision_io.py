@@ -119,7 +119,8 @@ def test_select_marker_samples_requires_exact_configured_match() -> None:
 
 
 def test_select_marker_samples_rejects_missing_or_duplicate_positions() -> None:
-    markers = (*make_markers(),
+    markers = (
+        *make_markers(),
         BrainVisionMarker("Volume", "volume-start", 1, 1, 0),
     )
 

@@ -23,46 +23,52 @@ def test_validate_timing_reads_configured_brainvision_markers(
 ) -> None:
     make_fixture(tmp_path)
 
-    assert main(
-        [
-            "validate-timing",
-            "--metadata",
-            str(tmp_path / "bold.json"),
-            "--sampling-rate",
-            "1000",
-            "--vhdr",
-            str(tmp_path / "source.vhdr"),
-            "--marker-type",
-            "Volume",
-            "--marker-description",
-            "volume-start",
-            "--output",
-            str(tmp_path / "timing.json"),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-timing",
+                "--metadata",
+                str(tmp_path / "bold.json"),
+                "--sampling-rate",
+                "1000",
+                "--vhdr",
+                str(tmp_path / "source.vhdr"),
+                "--marker-type",
+                "Volume",
+                "--marker-description",
+                "volume-start",
+                "--output",
+                str(tmp_path / "timing.json"),
+            ]
+        )
+        == 0
+    )
 
 
 def test_validate_timing_reports_the_resolved_geometry(tmp_path: Path) -> None:
     make_fixture(tmp_path)
     output = tmp_path / "timing.json"
 
-    assert main(
-        [
-            "validate-timing",
-            "--metadata",
-            str(tmp_path / "bold.json"),
-            "--sampling-rate",
-            "1000",
-            "--vhdr",
-            str(tmp_path / "source.vhdr"),
-            "--marker-type",
-            "Volume",
-            "--marker-description",
-            "volume-start",
-            "--output",
-            str(output),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-timing",
+                "--metadata",
+                str(tmp_path / "bold.json"),
+                "--sampling-rate",
+                "1000",
+                "--vhdr",
+                str(tmp_path / "source.vhdr"),
+                "--marker-type",
+                "Volume",
+                "--marker-description",
+                "volume-start",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
 
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["marker_kind"] == "volume"
@@ -77,26 +83,29 @@ def test_validate_timing_accepts_acquisition_group_markers(
     make_fixture(tmp_path)
     output = tmp_path / "timing.json"
 
-    assert main(
-        [
-            "validate-timing",
-            "--marker-kind",
-            "slice",
-            "--groups-per-volume",
-            "2",
-            "--expected-repetition-time-seconds",
-            "0.2",
-            "--sampling-rate",
-            "1000",
-            "--volume-starts",
-            "0",
-            "100",
-            "200",
-            "300",
-            "--output",
-            str(output),
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "validate-timing",
+                "--marker-kind",
+                "slice",
+                "--groups-per-volume",
+                "2",
+                "--expected-repetition-time-seconds",
+                "0.2",
+                "--sampling-rate",
+                "1000",
+                "--volume-starts",
+                "0",
+                "100",
+                "200",
+                "300",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
 
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["marker_kind"] == "slice"
@@ -112,24 +121,27 @@ def test_validate_timing_rejects_two_timing_sources(
 ) -> None:
     make_fixture(tmp_path)
 
-    assert main(
-        [
-            "validate-timing",
-            "--marker-kind",
-            "slice",
-            "--groups-per-volume",
-            "2",
-            "--metadata",
-            str(tmp_path / "bold.json"),
-            "--sampling-rate",
-            "1000",
-            "--volume-starts",
-            "0",
-            "100",
-            "--output",
-            str(tmp_path / "timing.json"),
-        ]
-    ) == 1
+    assert (
+        main(
+            [
+                "validate-timing",
+                "--marker-kind",
+                "slice",
+                "--groups-per-volume",
+                "2",
+                "--metadata",
+                str(tmp_path / "bold.json"),
+                "--sampling-rate",
+                "1000",
+                "--volume-starts",
+                "0",
+                "100",
+                "--output",
+                str(tmp_path / "timing.json"),
+            ]
+        )
+        == 1
+    )
     assert "drop --metadata" in capsys.readouterr().err
 
 
@@ -137,18 +149,21 @@ def test_validate_timing_requires_metadata_for_volume_markers(
     tmp_path: Path,
     capsys,
 ) -> None:
-    assert main(
-        [
-            "validate-timing",
-            "--sampling-rate",
-            "1000",
-            "--volume-starts",
-            "0",
-            "100",
-            "--output",
-            str(tmp_path / "timing.json"),
-        ]
-    ) == 1
+    assert (
+        main(
+            [
+                "validate-timing",
+                "--sampling-rate",
+                "1000",
+                "--volume-starts",
+                "0",
+                "100",
+                "--output",
+                str(tmp_path / "timing.json"),
+            ]
+        )
+        == 1
+    )
     assert "--metadata is required" in capsys.readouterr().err
 
 

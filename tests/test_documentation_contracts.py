@@ -27,9 +27,7 @@ def test_citation_file_contains_version_license_and_required_references() -> Non
     assert citation["title"] == "FASTR-Python"
     assert citation["version"] == "0.1.0"
     assert citation["license"] == "GPL-2.0-only"
-    reference_titles = {
-        reference["title"] for reference in citation["references"]
-    }
+    reference_titles = {reference["title"] for reference in citation["references"]}
     assert (
         "Removal of FMRI environment artifacts from EEG data using optimal basis sets"
         in reference_titles

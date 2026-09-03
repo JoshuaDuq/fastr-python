@@ -84,9 +84,7 @@ def align_to_fastr(
 def _eeg_indices(raw: mne.io.BaseRaw) -> np.ndarray:
     names = raw.ch_names
     if "ECG" in names:
-        return np.array(
-            [index for index, name in enumerate(names) if name != "ECG"]
-        )
+        return np.array([index for index, name in enumerate(names) if name != "ECG"])
     return np.arange(len(names))
 
 
@@ -155,9 +153,7 @@ def metrics_row(
         "key": pair.key,
         "idx_run": pair.idx_run,
     }
-    psds = {
-        name: mean_eeg_psd(raw, max_hz=max_hz) for name, raw in traces.items()
-    }
+    psds = {name: mean_eeg_psd(raw, max_hz=max_hz) for name, raw in traces.items()}
     uncorr_f, uncorr_p = psds["Uncorrected"]
     row["rms_uncorrected"] = eeg_rms(traces["Uncorrected"])
     if "FASTR" in traces:
@@ -177,7 +173,5 @@ def metrics_row(
         freqs, pxx = psds["FASTR"]
         value = band_power(freqs, pxx, low, high)
         row[f"{band}_fastr"] = value
-        row[f"{band}_fastr_ratio"] = (
-            value / uncorr_band if uncorr_band else None
-        )
+        row[f"{band}_fastr_ratio"] = value / uncorr_band if uncorr_band else None
     return row

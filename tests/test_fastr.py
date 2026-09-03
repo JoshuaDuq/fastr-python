@@ -35,9 +35,7 @@ GROUP_OFFSETS_SECONDS = (
 
 def make_real_acquisition_timing() -> FmriAcquisitionTiming:
     slice_timing = tuple(
-        offset
-        for _multiband_slice in range(3)
-        for offset in GROUP_OFFSETS_SECONDS
+        offset for _multiband_slice in range(3) for offset in GROUP_OFFSETS_SECONDS
     )
     return FmriAcquisitionTiming(
         repetition_time_seconds=0.9,
@@ -160,9 +158,7 @@ def test_load_bids_fmri_timing_chains_io_errors(tmp_path) -> None:
         },
     ],
 )
-def test_load_bids_fmri_timing_chains_type_errors(
-    tmp_path, metadata: object
-) -> None:
+def test_load_bids_fmri_timing_chains_type_errors(tmp_path, metadata: object) -> None:
     metadata_path = tmp_path / "metadata.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -138,9 +139,12 @@ def _acquisition_config(
         )
     try:
         return FmriAcquisitionTiming(
-            repetition_time_seconds=values["repetition_time_seconds"],
-            slice_timing_seconds=tuple(slice_timing),
-            multiband_acceleration_factor=values["multiband_acceleration_factor"],
+            repetition_time_seconds=cast(float, values["repetition_time_seconds"]),
+            slice_timing_seconds=cast(tuple[float, ...], tuple(slice_timing)),
+            multiband_acceleration_factor=cast(
+                int,
+                values["multiband_acceleration_factor"],
+            ),
         )
     except FastrInputError as error:
         raise ConfigurationError(f"invalid acquisition section: {error}") from error

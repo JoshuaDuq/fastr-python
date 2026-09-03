@@ -48,9 +48,7 @@ def resolve_output_window(
     Correction still runs over the whole recording, so the volumes at either end
     of this span keep the neighbours and the complete epochs they need.
     """
-    if isinstance(input_sample_count, bool) or not isinstance(
-        input_sample_count, int
-    ):
+    if isinstance(input_sample_count, bool) or not isinstance(input_sample_count, int):
         raise WindowError("input sample count must be a positive integer")
     if input_sample_count < 1:
         raise WindowError("input sample count must be a positive integer")

@@ -122,20 +122,13 @@ def channel_failure_policy_provenance(
     return {
         "policy": config.processing.channel_failure_policy,
         "enabled": (
-            config.processing.channel_failure_policy
-            == "retry_local_and_recommend_bad"
+            config.processing.channel_failure_policy == "retry_local_and_recommend_bad"
         ),
-        "absolute_floor_uv": float(
-            config.quality_control.bad_channel_residual_uv
-        ),
-        "spatial_mad_multiplier": float(
-            config.quality_control.residual_mad_multiplier
-        ),
+        "absolute_floor_uv": float(config.quality_control.bad_channel_residual_uv),
+        "spatial_mad_multiplier": float(config.quality_control.residual_mad_multiplier),
         "local_neighbor_count": config.processing.local_neighbor_count,
         "candidate_channels": named(result.candidate_blocks_by_channel),
-        "candidate_blocks_by_channel": named_blocks(
-            result.candidate_blocks_by_channel
-        ),
+        "candidate_blocks_by_channel": named_blocks(result.candidate_blocks_by_channel),
         "retry_by_channel": {
             channel_names[index]: {
                 "accepted": bool(evaluation.accepted),
@@ -196,6 +189,15 @@ def make_provenance(
     runtime_seconds: float,
 ) -> dict[str, object]:
     """Assemble the JSON-serializable provenance record for one run."""
+    repaired_volume_count = 0
+    used_volume_count = detected_volume_count
+    if config.timing.missing_volume_markers == "repair":
+        expected_volume_count = config.timing.expected_volume_count
+        if expected_volume_count is None:
+            raise RuntimeError("volume-marker repair requires expected_volume_count")
+        repaired_volume_count = expected_volume_count - detected_volume_count
+        used_volume_count = expected_volume_count
+
     return {
         "package_version": __version__,
         "method": config.processing.method,
@@ -260,16 +262,8 @@ def make_provenance(
             "volume_marker_repair": {
                 "mode": config.timing.missing_volume_markers,
                 "detected_volume_count": detected_volume_count,
-                "repaired_volume_count": (
-                    config.timing.expected_volume_count - detected_volume_count
-                    if config.timing.missing_volume_markers == "repair"
-                    else 0
-                ),
-                "used_volume_count": (
-                    config.timing.expected_volume_count
-                    if config.timing.missing_volume_markers == "repair"
-                    else detected_volume_count
-                ),
+                "repaired_volume_count": repaired_volume_count,
+                "used_volume_count": used_volume_count,
             },
         },
         "fastr": {
@@ -297,9 +291,7 @@ def make_provenance(
                 "enabled": config.processing.residual_obs,
                 "rank_mode": config.processing.residual_obs_rank,
                 "selected_ranks": selected_obs_ranks.tolist(),
-                "section_seconds": (
-                    config.processing.residual_obs_section_seconds
-                ),
+                "section_seconds": (config.processing.residual_obs_section_seconds),
                 "granularity": "volume",
                 "corrected_epoch_count": obs_epoch_count,
             },
@@ -327,8 +319,7 @@ def make_provenance(
                     )
                 },
                 "adapted_channel_count": sum(
-                    indices.size > 0
-                    for indices in adapted_group_indices_by_channel
+                    indices.size > 0 for indices in adapted_group_indices_by_channel
                 ),
             },
             "channel_failure_policy": channel_failure_policy_provenance(
@@ -354,7 +345,10 @@ def make_provenance(
 
 def jsonable_config(config: CorrectionConfig) -> dict[str, object]:
     """Convert a correction configuration to JSON-compatible values."""
-    return stringify_paths(asdict(config))
+    converted = stringify_paths(asdict(config))
+    if not isinstance(converted, dict):
+        raise TypeError("serialized configuration must be a dictionary")
+    return converted
 
 
 def stringify_paths(value: object) -> object:

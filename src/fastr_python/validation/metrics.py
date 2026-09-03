@@ -63,9 +63,7 @@ def regress_out_reference(
     recording = _validate_recording(data)
     ref = np.asarray(reference)
     if ref.ndim != 1 or ref.size != recording.shape[1]:
-        raise MetricInputError(
-            "reference must have one sample per recording column"
-        )
+        raise MetricInputError("reference must have one sample per recording column")
     if np.issubdtype(ref.dtype, np.bool_) or not np.issubdtype(ref.dtype, np.number):
         raise MetricInputError("reference must contain finite numeric values")
     ref = ref.astype(np.float64, copy=False)
@@ -397,9 +395,7 @@ def cardiac_locked_rms(
     )
     peaks = _validate_delay_peaks(peak_samples, recording.shape[1])
     starts = peaks + rel_start
-    complete = (starts >= 0) & (
-        starts + epoch_samples <= recording.shape[1]
-    )
+    complete = (starts >= 0) & (starts + epoch_samples <= recording.shape[1])
     starts = starts[complete]
     if starts.size < 2:
         raise MetricInputError(
@@ -441,11 +437,7 @@ def circular_shifted_cardiac_null(
         or surrogate_count < 1
     ):
         raise MetricInputError("surrogate_count must be a positive integer")
-    if (
-        isinstance(seed, bool)
-        or not isinstance(seed, int)
-        or seed < 0
-    ):
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise MetricInputError("seed must be a nonnegative integer")
     generator = np.random.default_rng(seed)
     null_values = np.empty(
@@ -582,14 +574,10 @@ def _validate_cardiac_epoch_positions(
         )
         or window_seconds[0] >= window_seconds[1]
     ):
-        raise MetricInputError(
-            "window_seconds must be a finite increasing pair"
-        )
+        raise MetricInputError("window_seconds must be a finite increasing pair")
     peaks = np.asarray(peak_samples)
     if peaks.ndim != 1 or peaks.size == 0:
-        raise MetricInputError(
-            "peak_samples must be a nonempty one-dimensional array"
-        )
+        raise MetricInputError("peak_samples must be a nonempty one-dimensional array")
     if np.issubdtype(peaks.dtype, np.bool_) or not np.issubdtype(
         peaks.dtype,
         np.integer,
@@ -597,9 +585,7 @@ def _validate_cardiac_epoch_positions(
         raise MetricInputError("peak_samples must contain integer samples")
     peaks = peaks.astype(np.int64, copy=False)
     if np.any(peaks < 0) or np.any(peaks >= recording.shape[1]):
-        raise MetricInputError(
-            "peak_samples must stay inside the recording"
-        )
+        raise MetricInputError("peak_samples must stay inside the recording")
     if np.any(np.diff(peaks) <= 0):
         raise MetricInputError("peak_samples must be strictly increasing")
     window_start = round(window_seconds[0] * sampling_rate_hz)
@@ -618,7 +604,7 @@ def _validate_cardiac_epoch_positions(
 def _validate_delay_grid(delays_seconds: tuple[float, ...]) -> tuple[float, ...]:
     if not isinstance(delays_seconds, tuple) or not delays_seconds:
         raise MetricInputError("delays_seconds must be a nonempty tuple")
-    delays = []
+    delays: list[float] = []
     for delay in delays_seconds:
         if (
             isinstance(delay, bool)

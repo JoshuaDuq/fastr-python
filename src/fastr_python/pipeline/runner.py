@@ -86,6 +86,8 @@ def _run_correction(
     )
     marker_samples = matching_marker_samples
     if config.timing.volume_marker_start_index is not None:
+        if config.timing.volume_marker_count is None:
+            raise RuntimeError("marker block selection requires a count")
         marker_samples = select_marker_sample_block(
             matching_marker_samples,
             start_index=config.timing.volume_marker_start_index,
@@ -265,9 +267,7 @@ def _run_correction(
             corrected_output[index] = retried.data[0]
             amplitude_means[index] = retried.amplitude_means[0]
             amplitude_rms[index] = retried.amplitude_rms[0]
-            adapted_group_indices_by_channel[index] = (
-                retried.adapted_group_indices[0]
-            )
+            adapted_group_indices_by_channel[index] = retried.adapted_group_indices[0]
             if config.processing.residual_obs:
                 selected_obs_ranks = _record_obs_ranks(
                     selected_obs_ranks,
@@ -294,26 +294,28 @@ def _run_correction(
             volume_spectrum_max_hz=config.quality_control.volume_spectrum_max_hz,
             mad_multiplier=config.quality_control.residual_mad_multiplier,
             minimum_channels=config.quality_control.residual_minimum_channels,
-            report_channel_outliers=(
-                config.quality_control.report_channel_outliers
-            ),
+            report_channel_outliers=(config.quality_control.report_channel_outliers),
         )
-        transformed_markers = resample_markers(
-            recording.markers,
-            factor=decimation,
-            window=window,
-        ) + pipeline_markers.bad_gradient_markers(
-            pipeline_markers.skipped_group_spans(
-                acquisition.group_triggers,
-                geometry,
-            ),
-            window=window,
-            decimation=decimation,
-            output_sample_count=output_sample_count,
-        ) + pipeline_markers.residual_qc_markers(
-            residual_qc,
-            output_rate=output_rate,
-            output_sample_count=output_sample_count,
+        transformed_markers = (
+            resample_markers(
+                recording.markers,
+                factor=decimation,
+                window=window,
+            )
+            + pipeline_markers.bad_gradient_markers(
+                pipeline_markers.skipped_group_spans(
+                    acquisition.group_triggers,
+                    geometry,
+                ),
+                window=window,
+                decimation=decimation,
+                output_sample_count=output_sample_count,
+            )
+            + pipeline_markers.residual_qc_markers(
+                residual_qc,
+                output_rate=output_rate,
+                output_sample_count=output_sample_count,
+            )
         )
         pipeline_markers.validate_marker_output_positions(
             transformed_markers,
@@ -474,18 +476,13 @@ def _corrected_input_span(
     sample_count: int,
 ) -> slice:
     """Bound ANC to the span whose fitted artifact estimate is complete."""
-    artifact_samples = math.ceil(
-        geometry.epoch.length / geometry.interpolation_factor
-    )
+    artifact_samples = math.ceil(geometry.epoch.length / geometry.interpolation_factor)
     start = max(
         0,
         int(geometry.triggers[0]) - math.ceil(1.25 * artifact_samples),
     )
     stop = min(
         sample_count,
-        int(geometry.triggers[-1])
-        + math.ceil(2.25 * artifact_samples)
-        + 1,
+        int(geometry.triggers[-1]) + math.ceil(2.25 * artifact_samples) + 1,
     )
     return slice(start, stop)
-

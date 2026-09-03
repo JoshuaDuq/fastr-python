@@ -46,6 +46,8 @@ def _resolve_acquisition(
     has to know which convention the recording used.
     """
     if config.timing.marker_kind == "slice":
+        if config.timing.groups_per_volume is None:
+            raise RuntimeError("slice-marker timing requires groups_per_volume")
         geometry = slice_marker_geometry(
             marker_samples,
             sampling_rate=sampling_rate,
@@ -60,10 +62,18 @@ def _resolve_acquisition(
             detected_volume_count=geometry.volume_count,
         )
 
-    timing = config.acquisition or load_bids_fmri_timing(config.input.fmri_metadata)
+    if config.acquisition is not None:
+        timing = config.acquisition
+    else:
+        metadata_path = config.input.fmri_metadata
+        if metadata_path is None:
+            raise RuntimeError("volume-marker timing requires acquisition metadata")
+        timing = load_bids_fmri_timing(metadata_path)
     volume_starts = marker_samples
     detected_volume_count = int(volume_starts.size)
     if config.timing.missing_volume_markers == "repair":
+        if config.timing.expected_volume_count is None:
+            raise RuntimeError("volume-marker repair requires expected_volume_count")
         volume_starts = repair_volume_starts(
             volume_starts,
             samples_per_volume=math.floor(

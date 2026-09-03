@@ -351,10 +351,11 @@ def _validated_retry_vectors(
     local_residuals_uv: npt.ArrayLike,
     thresholds_uv: npt.ArrayLike,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    vectors = tuple(
+    wide_residuals, local_residuals, thresholds = (
         np.asarray(values, dtype=np.float64)
         for values in (wide_residuals_uv, local_residuals_uv, thresholds_uv)
     )
+    vectors = (wide_residuals, local_residuals, thresholds)
     if any(values.ndim != 1 for values in vectors):
         raise ResidualQcError("retry residuals must be one-dimensional (blocks,)")
     if len({values.shape[0] for values in vectors}) != 1:
@@ -363,7 +364,7 @@ def _validated_retry_vectors(
         )
     if any(not np.all(np.isfinite(values)) for values in vectors):
         raise ResidualQcError("retry residuals and thresholds must be finite")
-    return vectors
+    return wide_residuals, local_residuals, thresholds
 
 
 def _validated_boolean_matrix(flags: npt.ArrayLike) -> np.ndarray:
@@ -469,9 +470,7 @@ def volume_harmonic_spectrum(
         rel_tol=0.0,
         abs_tol=1e-9,
     ):
-        raise ResidualQcError(
-            "repetition time must span an integer number of samples"
-        )
+        raise ResidualQcError("repetition time must span an integer number of samples")
     available_volumes = recording.shape[1] // samples_per_volume
     target_volumes = max(
         2,
@@ -479,9 +478,7 @@ def volume_harmonic_spectrum(
     )
     segment_volumes = min(available_volumes, target_volumes)
     if segment_volumes < 2:
-        raise ResidualQcError(
-            "recording must contain at least two complete volumes"
-        )
+        raise ResidualQcError("recording must contain at least two complete volumes")
     segment_samples = segment_volumes * samples_per_volume
     frequencies, power = welch(
         recording,
@@ -501,9 +498,7 @@ def volume_harmonic_spectrum(
         local_indices = np.flatnonzero(
             np.abs(frequencies - frequency_hz) <= _LOCAL_PEAK_HALF_WIDTH_HZ
         )
-        peak_index = int(
-            local_indices[np.argmax(median_power[local_indices])]
-        )
+        peak_index = int(local_indices[np.argmax(median_power[local_indices])])
         nearest_mains = round(frequency_hz / mains_frequency_hz) * mains_frequency_hz
         profile.append(
             VolumeHarmonicSpectrum(

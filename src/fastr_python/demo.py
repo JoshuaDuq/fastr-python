@@ -68,9 +68,9 @@ def write_demo_dataset(directory: str | Path) -> DemoDataset:
     _reject_existing_files(output_directory, paths)
 
     volume_starts, group_triggers = _acquisition_samples()
-    sample_count = int(volume_starts[-1] + round(
-        _REPETITION_TIME_SECONDS * _INPUT_SAMPLING_RATE_HZ
-    ))
+    sample_count = int(
+        volume_starts[-1] + round(_REPETITION_TIME_SECONDS * _INPUT_SAMPLING_RATE_HZ)
+    )
     data = _simulate_recording(group_triggers, sample_count)
 
     write_brainvision(
@@ -102,9 +102,7 @@ def _acquisition_samples() -> tuple[np.ndarray, np.ndarray]:
     """Volume starts and acquisition-group triggers, in input samples."""
     samples_per_volume = round(_REPETITION_TIME_SECONDS * _INPUT_SAMPLING_RATE_HZ)
     group_stride = samples_per_volume // _GROUPS_PER_VOLUME
-    volume_starts = (
-        np.arange(_VOLUME_COUNT, dtype=np.int64) * samples_per_volume
-    )
+    volume_starts = np.arange(_VOLUME_COUNT, dtype=np.int64) * samples_per_volume
     offsets = np.arange(_GROUPS_PER_VOLUME, dtype=np.int64) * group_stride
     return volume_starts, (volume_starts[:, np.newaxis] + offsets).reshape(-1)
 
@@ -146,9 +144,7 @@ def _markers(
     for sample in group_triggers:
         position = int(sample) + 1
         if int(sample) in volume_samples:
-            markers.append(
-                BrainVisionMarker("Volume", "volume-start", position, 1, 0)
-            )
+            markers.append(BrainVisionMarker("Volume", "volume-start", position, 1, 0))
         markers.append(BrainVisionMarker("Slice", "slice-start", position, 1, 0))
     return tuple(markers)
 

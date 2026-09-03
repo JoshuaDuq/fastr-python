@@ -182,6 +182,8 @@ def _finish_channel_batch(
     row_count = corrected.shape[0]
     selected_obs_ranks = np.empty((row_count, 0), dtype=np.int64)
     if processing.residual_obs:
+        if context.obs_triggers is None:
+            raise RuntimeError("residual OBS requires acquisition triggers")
         obs_result = fit_residual_obs(
             corrected,
             context.obs_triggers,
@@ -206,6 +208,8 @@ def _finish_channel_batch(
     anc_reference_scales = np.full(row_count, np.nan, dtype=np.float64)
     anc_step_sizes = np.full(row_count, np.nan, dtype=np.float64)
     if processing.adaptive_noise_cancellation:
+        if context.anc_filter_order is None:
+            raise RuntimeError("adaptive noise cancellation requires a filter order")
         artifact_estimate = pipeline_io.apply_output_low_pass(
             original - corrected,
             sampling_rate=context.input_rate,
@@ -360,8 +364,6 @@ def _record_obs_ranks(
             dtype=np.int64,
         )
     if batch_ranks.shape[1] != selected_obs_ranks.shape[1]:
-        raise PipelineInputError(
-            "OBS section count changed between channel batches"
-        )
+        raise PipelineInputError("OBS section count changed between channel batches")
     selected_obs_ranks[rows] = batch_ranks
     return selected_obs_ranks

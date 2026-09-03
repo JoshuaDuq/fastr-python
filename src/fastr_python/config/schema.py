@@ -6,6 +6,7 @@ import math
 from collections.abc import Mapping
 from numbers import Real
 from pathlib import Path
+from typing import Literal
 
 from .models import ConfigurationError
 
@@ -21,9 +22,7 @@ def _section(
     _reject_unknown_keys(values, expected_keys, name)
     for field_name in sorted(expected_keys - optional_keys):
         if field_name not in values:
-            raise ConfigurationError(
-                f"missing required field: {name}.{field_name}"
-            )
+            raise ConfigurationError(f"missing required field: {name}.{field_name}")
     return values
 
 
@@ -77,17 +76,15 @@ def _optional_obs_rank(
     values: Mapping[str, object],
     name: str,
     *,
-    default: int | str,
-) -> int | str:
+    default: int | Literal["auto"],
+) -> int | Literal["auto"]:
     if name not in values:
         return default
     value = values[name]
     if value == "auto":
         return value
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ConfigurationError(
-            f"{name} must be a positive integer or 'auto'"
-        )
+        raise ConfigurationError(f"{name} must be a positive integer or 'auto'")
     return value
 
 

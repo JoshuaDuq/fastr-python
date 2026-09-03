@@ -89,9 +89,7 @@ def resolve_reference_channel(
     """Resolve a reference channel name or index to its integer position."""
     if isinstance(reference, str):
         if reference not in channel_names:
-            raise PipelineInputError(
-                f"reference channel is not present: {reference!r}"
-            )
+            raise PipelineInputError(f"reference channel is not present: {reference!r}")
         return channel_names.index(reference)
     if isinstance(reference, bool) or not isinstance(reference, int):
         raise PipelineInputError("reference channel must be a name or index")

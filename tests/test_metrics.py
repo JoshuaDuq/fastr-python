@@ -177,9 +177,7 @@ def test_cardiac_residual_ratio_is_per_channel() -> None:
     data = np.zeros((2, 1_000), dtype=np.float64)
     artifact = np.sin(2.0 * np.pi * np.arange(40) / 40.0)
     for index, peak in enumerate(peaks):
-        beat = artifact + 0.1 * np.sin(
-            2.0 * np.pi * (index + 1) * np.arange(40) / 40.0
-        )
+        beat = artifact + 0.1 * np.sin(2.0 * np.pi * (index + 1) * np.arange(40) / 40.0)
         data[0, peak : peak + artifact.size] = beat
         data[1, peak : peak + artifact.size] = 2.0 * beat
     corrected = 0.5 * data
@@ -244,28 +242,61 @@ def test_circular_shifted_cardiac_null_is_deterministic_and_unlocked() -> None:
 @pytest.mark.parametrize(
     ("call", "message"),
     [
-        (lambda: tone_transfer(np.zeros((2, 10)), np.zeros((2, 10)),
-                               frequency=1.0, sampling_rate=SAMPLING_RATE),
-         "one-dimensional"),
-        (lambda: tone_transfer(np.zeros(10), np.zeros(11),
-                               frequency=1.0, sampling_rate=SAMPLING_RATE),
-         "same length"),
-        (lambda: tone_transfer(np.zeros(100), np.zeros(100),
-                               frequency=600.0, sampling_rate=SAMPLING_RATE),
-         "below the Nyquist"),
-        (lambda: band_rms_ratio(np.zeros(100), np.zeros(100),
-                                low=50.0, high=10.0, sampling_rate=SAMPLING_RATE),
-         "band"),
-        (lambda: trigger_locked_rms(np.zeros((2, 100)), np.array([10.0]),
-                                    epoch_samples=0),
-         "epoch"),
-        (lambda: trigger_locked_rms(np.zeros((2, 100)), np.array([10.0, 95.0]),
-                                    epoch_samples=50),
-         "beyond the recording"),
-        (lambda: held_out_cardiac_rms(
-            np.zeros((2, 100)), np.array([10, 20, 30]),
-            sampling_rate_hz=SAMPLING_RATE, window_seconds=(0.0, 0.01)),
-         "at least four"),
+        (
+            lambda: tone_transfer(
+                np.zeros((2, 10)),
+                np.zeros((2, 10)),
+                frequency=1.0,
+                sampling_rate=SAMPLING_RATE,
+            ),
+            "one-dimensional",
+        ),
+        (
+            lambda: tone_transfer(
+                np.zeros(10), np.zeros(11), frequency=1.0, sampling_rate=SAMPLING_RATE
+            ),
+            "same length",
+        ),
+        (
+            lambda: tone_transfer(
+                np.zeros(100),
+                np.zeros(100),
+                frequency=600.0,
+                sampling_rate=SAMPLING_RATE,
+            ),
+            "below the Nyquist",
+        ),
+        (
+            lambda: band_rms_ratio(
+                np.zeros(100),
+                np.zeros(100),
+                low=50.0,
+                high=10.0,
+                sampling_rate=SAMPLING_RATE,
+            ),
+            "band",
+        ),
+        (
+            lambda: trigger_locked_rms(
+                np.zeros((2, 100)), np.array([10.0]), epoch_samples=0
+            ),
+            "epoch",
+        ),
+        (
+            lambda: trigger_locked_rms(
+                np.zeros((2, 100)), np.array([10.0, 95.0]), epoch_samples=50
+            ),
+            "beyond the recording",
+        ),
+        (
+            lambda: held_out_cardiac_rms(
+                np.zeros((2, 100)),
+                np.array([10, 20, 30]),
+                sampling_rate_hz=SAMPLING_RATE,
+                window_seconds=(0.0, 0.01),
+            ),
+            "at least four",
+        ),
     ],
 )
 def test_metrics_reject_invalid_inputs(call, message: str) -> None:
@@ -301,9 +332,10 @@ def test_bcg_delay_scan_peaks_at_the_injected_latency() -> None:
     assert scan.median_locked_rms[delays.index(0.21)] == pytest.approx(
         max(scan.median_locked_rms)
     )
-    assert scan.median_locked_rms[delays.index(0.21)] > 2.0 * scan.median_locked_rms[
-        delays.index(0.0)
-    ]
+    assert (
+        scan.median_locked_rms[delays.index(0.21)]
+        > 2.0 * scan.median_locked_rms[delays.index(0.0)]
+    )
 
 
 def test_posterior_channel_classifier_excludes_frontal_and_ecg() -> None:

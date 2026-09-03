@@ -509,9 +509,7 @@ def test_config_rejects_invalid_processing_values(
         if isinstance(default_value, bool)
         else str(default_value)
     )
-    replacement_text = (
-        str(value).lower() if isinstance(value, bool) else str(value)
-    )
+    replacement_text = str(value).lower() if isinstance(value, bool) else str(value)
     document = valid_document().replace(
         f"  {field}: {default_text}\n",
         f"  {field}: {replacement_text}\n",
@@ -730,12 +728,15 @@ def test_optional_diagnostics_defaults_preserve_current_output(
 
 
 def test_optional_sections_default_each_missing_field(tmp_path: Path) -> None:
-    document = valid_document() + """
+    document = (
+        valid_document()
+        + """
 quality_control:
   block_seconds: 15.0
 diagnostics:
   psd_n_fft: 4096
 """
+    )
     config_path = tmp_path / "config.yml"
     config_path.write_text(document, encoding="utf-8")
 
@@ -751,7 +752,9 @@ diagnostics:
 def test_custom_quality_control_and_diagnostic_values_are_loaded(
     tmp_path: Path,
 ) -> None:
-    document = valid_document() + """
+    document = (
+        valid_document()
+        + """
 quality_control:
   block_seconds: 15.0
   mains_frequency_hz: 50.0
@@ -760,6 +763,7 @@ diagnostics:
   psd_max_frequency_hz: 80.0
   psd_n_fft: 4096
 """
+    )
     config_path = tmp_path / "config.yml"
     config_path.write_text(document, encoding="utf-8")
 
@@ -918,11 +922,14 @@ def test_residual_flag_settings_default_to_the_qc_module_values(
 
 
 def test_residual_flag_settings_are_configurable(tmp_path: Path) -> None:
-    document = valid_document() + """
+    document = (
+        valid_document()
+        + """
 quality_control:
   residual_mad_multiplier: 4.5
   residual_minimum_channels: 8
 """
+    )
     config_path = tmp_path / "config.yml"
     config_path.write_text(document, encoding="utf-8")
 
@@ -933,10 +940,13 @@ quality_control:
 
 
 def test_residual_minimum_channels_must_be_at_least_one(tmp_path: Path) -> None:
-    document = valid_document() + """
+    document = (
+        valid_document()
+        + """
 quality_control:
   residual_minimum_channels: 0
 """
+    )
     config_path = tmp_path / "config.yml"
     config_path.write_text(document, encoding="utf-8")
 
@@ -1062,9 +1072,7 @@ def test_retry_channel_failure_policy_is_configurable(tmp_path: Path) -> None:
 
     config = load_config(config_path)
 
-    assert config.processing.channel_failure_policy == (
-        "retry_local_and_recommend_bad"
-    )
+    assert config.processing.channel_failure_policy == ("retry_local_and_recommend_bad")
 
 
 @pytest.mark.parametrize("value", ["unknown", True, 1])

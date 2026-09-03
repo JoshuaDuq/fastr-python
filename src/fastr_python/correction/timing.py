@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from numbers import Integral, Real
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 
@@ -98,9 +99,7 @@ def load_bids_fmri_timing(path: str | Path) -> FmriAcquisitionTiming:
     """Load validated acquisition timing from a BIDS JSON sidecar."""
     metadata_path = _coerce_path(path)
     metadata = _read_json_object(metadata_path)
-    repetition_time, slice_timing, multiband_factor = _extract_timing_fields(
-        metadata
-    )
+    repetition_time, slice_timing, multiband_factor = _extract_timing_fields(metadata)
     return FmriAcquisitionTiming(
         repetition_time_seconds=repetition_time,
         slice_timing_seconds=slice_timing,
@@ -221,8 +220,7 @@ def make_group_trigger_samples(
         abs_tol=1e-9,
     ):
         raise FastrInputError(
-            "repetition time times sampling rate must be an integer number "
-            "of samples"
+            "repetition time times sampling rate must be an integer number of samples"
         )
 
     _validate_contiguous_starts(starts, rounded_samples_per_volume)
@@ -262,9 +260,7 @@ def repair_volume_starts(
                 "volume marker interval is not an integer multiple of the "
                 "repetition time"
             )
-        repaired.extend(
-            int(left + step * period) for step in range(1, multiple)
-        )
+        repaired.extend(int(left + step * period) for step in range(1, multiple))
         repaired.append(int(right))
 
     if len(repaired) != expected:
@@ -327,9 +323,7 @@ def _validate_grouping(
         raise FastrInputError(
             "slice count must be divisible by the multiband acceleration factor"
         )
-    group_counts = {
-        offset: slice_timing.count(offset) for offset in set(slice_timing)
-    }
+    group_counts = {offset: slice_timing.count(offset) for offset in set(slice_timing)}
     if any(count != multiband_factor for count in group_counts.values()):
         raise FastrInputError(
             "each unique slice group time must occur exactly the multiband "
@@ -356,8 +350,8 @@ def _read_json_object(path: Path) -> dict[str, object]:
         raise FastrInputError("fMRI metadata must contain valid JSON") from error
 
     if not isinstance(metadata, dict):
-        error = TypeError("top-level JSON value is not an object")
-        raise FastrInputError("fMRI metadata must be a JSON object") from error
+        cause = TypeError("top-level JSON value is not an object")
+        raise FastrInputError("fMRI metadata must be a JSON object") from cause
     return metadata
 
 
@@ -388,9 +382,9 @@ def _extract_timing_fields(
         ) from type_error
 
     return (
-        float(repetition_time),
-        tuple(float(value) for value in slice_timing),
-        int(multiband_factor),
+        float(cast(Real, repetition_time)),
+        tuple(float(value) for value in cast(list[Real], slice_timing)),
+        int(cast(Integral, multiband_factor)),
     )
 
 
@@ -404,8 +398,7 @@ def _find_field_type_error(
     if not isinstance(slice_timing, list):
         return TypeError("SliceTiming must be a JSON array")
     invalid_slice_value = any(
-        isinstance(value, bool) or not isinstance(value, Real)
-        for value in slice_timing
+        isinstance(value, bool) or not isinstance(value, Real) for value in slice_timing
     )
     if invalid_slice_value:
         return TypeError("SliceTiming must contain only JSON numbers")

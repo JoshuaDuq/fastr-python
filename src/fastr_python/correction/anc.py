@@ -35,9 +35,7 @@ def fmrib_lms(
     refs = _validate_vector(reference, "reference")
     target = _validate_vector(desired, "desired")
     if refs.shape != target.shape:
-        raise FastrInputError(
-            "reference and desired signals must have equal length"
-        )
+        raise FastrInputError("reference and desired signals must have equal length")
     order = _validate_filter_order(filter_order, refs.size)
     step = validate_positive_finite(step_size, name="ANC step size")
 
@@ -176,9 +174,7 @@ def _make_high_pass(sampling_rate: float) -> np.ndarray:
     stop_frequency = _HIGH_PASS_HZ * (1.0 - _TRANSITION_FRACTION)
     if _HIGH_PASS_HZ >= nyquist:
         raise FastrInputError("sampling rate is too low for the ANC high-pass")
-    order = math.floor(
-        _FILTER_ORDER_FACTOR * sampling_rate / stop_frequency + 0.5
-    )
+    order = math.floor(_FILTER_ORDER_FACTOR * sampling_rate / stop_frequency + 0.5)
     order += order % 2
     return firls(
         order + 1,

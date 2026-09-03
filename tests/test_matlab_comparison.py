@@ -34,9 +34,10 @@ def test_comparison_reports_residual_transfer_and_ecg_metrics() -> None:
         "broadband_transfer",
         "ecg_correlation",
     }
-    assert report["scanner_harmonic_rms"]["python_uv"] < report[
-        "scanner_harmonic_rms"
-    ]["raw_uv"]
+    assert (
+        report["scanner_harmonic_rms"]["python_uv"]
+        < report["scanner_harmonic_rms"]["raw_uv"]
+    )
     assert report["ecg_correlation"]["matlab"] > 0.99
     assert report["ecg_correlation"]["python"] > 0.99
 

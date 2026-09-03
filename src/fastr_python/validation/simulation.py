@@ -80,9 +80,7 @@ def simulate_gradient_artifact(
 
     channel_scales = _make_channel_scales(channel_count)
     return (
-        amplitude_microvolts
-        * channel_scales[:, np.newaxis]
-        * (drift[owners] * burst)
+        amplitude_microvolts * channel_scales[:, np.newaxis] * (drift[owners] * burst)
     )
 
 
@@ -106,8 +104,6 @@ def simulate_pulse_artifact(
     shape = -(offsets / width) * np.exp(-0.5 * (offsets / width) ** 2)
     channel_scales = _make_channel_scales(channel_count)
     return amplitude_microvolts * channel_scales[:, np.newaxis] * shape
-
-
 
 
 def _readout_burst(

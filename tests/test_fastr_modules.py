@@ -41,8 +41,7 @@ def test_fastr_facade_reexports_extracted_implementations() -> None:
     assert fastr.apply_fastr_batch is apply_fastr_batch
     assert fastr.apply_selected_local_fastr_batch is apply_selected_local_fastr_batch
     assert (
-        fastr.apply_channel_adaptive_fastr_batch
-        is apply_channel_adaptive_fastr_batch
+        fastr.apply_channel_adaptive_fastr_batch is apply_channel_adaptive_fastr_batch
     )
     assert fastr.fit_fastr_alignment is fit_fastr_alignment
     assert fastr.residual_obs is residual_obs

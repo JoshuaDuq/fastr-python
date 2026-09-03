@@ -71,9 +71,7 @@ def test_gate_is_a_no_op_on_a_stationary_artifact() -> None:
     geometry = _geometry(data, triggers)
     alignment = fit_fastr_alignment(data[0], geometry)
 
-    gated = gate_fastr_geometry(
-        geometry, alignment, data[0], sampling_rate=1_000.0
-    )
+    gated = gate_fastr_geometry(geometry, alignment, data[0], sampling_rate=1_000.0)
 
     assert gated is geometry
     np.testing.assert_array_equal(
@@ -90,9 +88,7 @@ def test_gate_drops_a_contaminated_volume_from_neighbour_windows() -> None:
     geometry = _geometry(data, triggers)
     alignment = fit_fastr_alignment(data[0], geometry)
 
-    gated = gate_fastr_geometry(
-        geometry, alignment, data[0], sampling_rate=1_000.0
-    )
+    gated = gate_fastr_geometry(geometry, alignment, data[0], sampling_rate=1_000.0)
 
     original_groups = {
         contaminated * timing.groups_per_volume,
@@ -123,9 +119,7 @@ def test_outlier_volumes_keep_their_local_neighbour_window() -> None:
     local = int(np.flatnonzero(geometry.group_indices == contaminated * 2)[0])
     original = np.array(geometry.window.indices[local], copy=True)
 
-    gated = gate_fastr_geometry(
-        geometry, alignment, data[0], sampling_rate=1_000.0
-    )
+    gated = gate_fastr_geometry(geometry, alignment, data[0], sampling_rate=1_000.0)
 
     np.testing.assert_array_equal(gated.window.indices[local], original)
 
@@ -208,9 +202,7 @@ def test_gated_templates_stop_motion_leaking_into_neighbouring_volumes() -> None
     ungated = apply_fastr_batch(data, geometry, alignment)
     gated = apply_fastr_batch(
         data,
-        gate_fastr_geometry(
-            geometry, alignment, data[0], sampling_rate=1_000.0
-        ),
+        gate_fastr_geometry(geometry, alignment, data[0], sampling_rate=1_000.0),
         alignment,
     )
 
@@ -236,9 +228,7 @@ def test_clean_volumes_far_from_the_spike_stay_unchanged() -> None:
     ungated = apply_fastr_batch(data, geometry, alignment)
     gated = apply_fastr_batch(
         data,
-        gate_fastr_geometry(
-            geometry, alignment, data[0], sampling_rate=1_000.0
-        ),
+        gate_fastr_geometry(geometry, alignment, data[0], sampling_rate=1_000.0),
         alignment,
     )
 

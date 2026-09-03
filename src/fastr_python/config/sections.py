@@ -5,9 +5,19 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from numbers import Real
+from typing import Literal, cast
 
 from ..quality.residuals import ResidualQcDefaults
 from .models import (
+    DEFAULT_BAD_CHANNEL_RESIDUAL_UV,
+    DEFAULT_CHANNEL_FAILURE_POLICY,
+    DEFAULT_LOCAL_NEIGHBOR_COUNT,
+    DEFAULT_NON_EEG_CHANNELS,
+    DEFAULT_REPORT_CHANNEL_OUTLIERS,
+    DEFAULT_RESIDUAL_OBS_RANK,
+    DEFAULT_RESIDUAL_THRESHOLD_UV,
+    DEFAULT_TEMPLATE_HIGH_PASS_HZ,
+    DEFAULT_VOLUME_SPECTRUM_MAX_HZ,
     ConfigurationError,
     DiagnosticsConfig,
     ProcessingConfig,
@@ -147,17 +157,14 @@ _OPTIONAL_PROCESSING_KEYS = frozenset(
     }
 )
 _SUPPORTED_METHODS = frozenset({"acquisition_group_fastr"})
-_CHANNEL_FAILURE_POLICIES = frozenset(
-    {"report", "retry_local_and_recommend_bad"}
-)
+_CHANNEL_FAILURE_POLICIES = frozenset({"report", "retry_local_and_recommend_bad"})
+
 
 def _timing_marker_settings(
     values: Mapping[str, object],
 ) -> tuple[str, int | None, float | None]:
     marker_kind = (
-        _string_value(values, "marker_kind")
-        if "marker_kind" in values
-        else "volume"
+        _string_value(values, "marker_kind") if "marker_kind" in values else "volume"
     )
     if marker_kind not in MARKER_KINDS:
         raise ConfigurationError(
@@ -261,8 +268,8 @@ def _timing_volume_selection(
 
 
 def _timing_config(values: Mapping[str, object]) -> TimingConfig:
-    marker_kind, groups_per_volume, expected_repetition_time = (
-        _timing_marker_settings(values)
+    marker_kind, groups_per_volume, expected_repetition_time = _timing_marker_settings(
+        values
     )
     policy, expected_count = _timing_missing_marker_settings(
         values,
@@ -337,24 +344,18 @@ def _quality_control_config(
         volume_spectrum_max_hz=_optional_finite_number(
             values,
             "volume_spectrum_max_hz",
-            default=QualityControlConfig.__dataclass_fields__[
-                "volume_spectrum_max_hz"
-            ].default,
+            default=DEFAULT_VOLUME_SPECTRUM_MAX_HZ,
             minimum=0.0,
         ),
         report_channel_outliers=(
             _boolean_value(values, "report_channel_outliers")
             if "report_channel_outliers" in values
-            else QualityControlConfig.__dataclass_fields__[
-                "report_channel_outliers"
-            ].default
+            else DEFAULT_REPORT_CHANNEL_OUTLIERS
         ),
         bad_channel_residual_uv=_optional_finite_number(
             values,
             "bad_channel_residual_uv",
-            default=QualityControlConfig.__dataclass_fields__[
-                "bad_channel_residual_uv"
-            ].default,
+            default=DEFAULT_BAD_CHANNEL_RESIDUAL_UV,
             minimum=0.0,
         ),
     )
@@ -391,7 +392,6 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     if neighbor_count % 2:
         raise ConfigurationError("processing.neighbor_count must be even")
 
-    defaults = ProcessingConfig.__dataclass_fields__["template_high_pass_hz"].default
     template_high_pass_hz = (
         _finite_number(
             values,
@@ -400,7 +400,7 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
             inclusive=True,
         )
         if "template_high_pass_hz" in values
-        else defaults
+        else DEFAULT_TEMPLATE_HIGH_PASS_HZ
     )
 
     residual_threshold_uv = (
@@ -411,22 +411,18 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
             inclusive=True,
         )
         if "residual_threshold_uv" in values
-        else ProcessingConfig.__dataclass_fields__["residual_threshold_uv"].default
+        else DEFAULT_RESIDUAL_THRESHOLD_UV
     )
     residual_gate = (
-        _boolean_value(values, "residual_gate")
-        if "residual_gate" in values
-        else ProcessingConfig.__dataclass_fields__["residual_gate"].default
+        _boolean_value(values, "residual_gate") if "residual_gate" in values else False
     )
     residual_obs = (
-        _boolean_value(values, "residual_obs")
-        if "residual_obs" in values
-        else ProcessingConfig.__dataclass_fields__["residual_obs"].default
+        _boolean_value(values, "residual_obs") if "residual_obs" in values else False
     )
     residual_obs_rank = _optional_obs_rank(
         values,
         "residual_obs_rank",
-        default=ProcessingConfig.__dataclass_fields__["residual_obs_rank"].default,
+        default=DEFAULT_RESIDUAL_OBS_RANK,
     )
     residual_obs_section_seconds = _optional_positive_number_or_none(
         values,
@@ -459,14 +455,12 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     adaptive_window = (
         _boolean_value(values, "adaptive_window")
         if "adaptive_window" in values
-        else ProcessingConfig.__dataclass_fields__["adaptive_window"].default
+        else False
     )
     channel_adaptive_window = (
         _boolean_value(values, "channel_adaptive_window")
         if "channel_adaptive_window" in values
-        else ProcessingConfig.__dataclass_fields__[
-            "channel_adaptive_window"
-        ].default
+        else False
     )
     if adaptive_window and channel_adaptive_window:
         raise ConfigurationError(
@@ -494,7 +488,7 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     local_neighbor_count = (
         _integer_value(values, "local_neighbor_count", minimum=2)
         if "local_neighbor_count" in values
-        else ProcessingConfig.__dataclass_fields__["local_neighbor_count"].default
+        else DEFAULT_LOCAL_NEIGHBOR_COUNT
     )
     if local_neighbor_count % 2:
         raise ConfigurationError("processing.local_neighbor_count must be even")
@@ -509,9 +503,7 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
     channel_failure_policy = (
         _string_value(values, "channel_failure_policy")
         if "channel_failure_policy" in values
-        else ProcessingConfig.__dataclass_fields__[
-            "channel_failure_policy"
-        ].default
+        else DEFAULT_CHANNEL_FAILURE_POLICY
     )
     if channel_failure_policy not in _CHANNEL_FAILURE_POLICIES:
         supported = ", ".join(sorted(_CHANNEL_FAILURE_POLICIES))
@@ -573,7 +565,10 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
         residual_gate_ratio=residual_gate_ratio,
         residual_gate_max_fraction=residual_gate_max_fraction,
         adaptive_improvement_ratio=adaptive_improvement_ratio,
-        channel_failure_policy=channel_failure_policy,
+        channel_failure_policy=cast(
+            Literal["report", "retry_local_and_recommend_bad"],
+            channel_failure_policy,
+        ),
         interpolation_factor=interpolation_factor,
         neighbor_count=neighbor_count,
         template_high_pass_hz=template_high_pass_hz,
@@ -597,8 +592,11 @@ def _processing_config(values: Mapping[str, object]) -> ProcessingConfig:
 
 def _non_eeg_channels(values: Mapping[str, object]) -> tuple[str, ...]:
     """Names of channels the correction must not fit a scalar or a basis to."""
-    default = ProcessingConfig.__dataclass_fields__["non_eeg_channels"].default
-    return _channel_names(values, "non_eeg_channels", default=default)
+    return _channel_names(
+        values,
+        "non_eeg_channels",
+        default=DEFAULT_NON_EEG_CHANNELS,
+    )
 
 
 def _channel_names(
@@ -611,8 +609,7 @@ def _channel_names(
         return default
     names = values[name]
     if not isinstance(names, list) or any(
-        not isinstance(channel_name, str) or not channel_name
-        for channel_name in names
+        not isinstance(channel_name, str) or not channel_name for channel_name in names
     ):
         raise ConfigurationError(
             f"processing.{name} must be a list of nonempty channel names"
@@ -634,9 +631,7 @@ def _reference_channel(values: Mapping[str, object]) -> str | int:
     if isinstance(value, str) and not value:
         raise ConfigurationError("processing.reference_channel cannot be empty")
     if isinstance(value, int) and value < 0:
-        raise ConfigurationError(
-            "processing.reference_channel must be nonnegative"
-        )
+        raise ConfigurationError("processing.reference_channel must be nonnegative")
     return value
 
 
@@ -647,9 +642,7 @@ def _line_noise_frequencies(
 ) -> tuple[float, ...]:
     value = values.get("line_noise_frequencies_hz")
     if not isinstance(value, list):
-        raise ConfigurationError(
-            "processing.line_noise_frequencies_hz must be a list"
-        )
+        raise ConfigurationError("processing.line_noise_frequencies_hz must be a list")
     frequencies: list[float] = []
     for frequency in value:
         if isinstance(frequency, bool) or not isinstance(frequency, Real):

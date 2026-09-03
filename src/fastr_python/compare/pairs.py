@@ -39,9 +39,7 @@ def recording_key(stem: str, naming: NamingConfig) -> str:
 
 def index_uncorrected(root: Path, naming: NamingConfig) -> dict[str, Path]:
     """Index uncorrected recordings by key, flat or in subject directories."""
-    indexed = {
-        recording_key(path.stem, naming): path for path in _list_vhdrs(root)
-    }
+    indexed = {recording_key(path.stem, naming): path for path in _list_vhdrs(root)}
     if indexed:
         return indexed
     for subject_dir in _subject_directories(root, naming):
