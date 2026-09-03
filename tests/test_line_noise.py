@@ -1,6 +1,6 @@
 import numpy as np
 
-from fastr_python import pipeline_io
+from fastr_python.pipeline import io as pipeline_io
 from fastr_python.validation.metrics import tone_transfer
 
 

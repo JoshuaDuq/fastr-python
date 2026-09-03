@@ -10,17 +10,17 @@ from pathlib import Path
 import mne
 import numpy as np
 
-from . import __version__
-from .config import CorrectionConfig
-from .fastr import (
+from .. import __version__
+from ..config import CorrectionConfig
+from ..fastr import (
     AcquisitionGeometry,
     FastrAlignment,
     FastrGeometry,
     FmriAcquisitionTiming,
 )
-from .io.recording import BrainVisionRecording
-from .pipeline_types import ChannelFailurePolicyResult
-from .window import OutputWindow
+from ..io.recording import BrainVisionRecording
+from ..window import OutputWindow
+from .models import ChannelFailurePolicyResult
 
 FMRIB_REFERENCE_COMMIT = "2aa522bc5ec4215f42b3ba8efdb2b84d2a312935"
 

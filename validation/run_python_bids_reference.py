@@ -19,7 +19,7 @@ from fastr_python.fastr import (
     obs_trigger_subset,
     prepare_fastr_geometry,
 )
-from fastr_python.pipeline_io import lowpass_and_decimate
+from fastr_python.pipeline.io import lowpass_and_decimate
 from fastr_python.window import OutputWindow
 
 

@@ -6,7 +6,9 @@ import pytest
 import yaml
 from test_pipeline import make_fixture
 
-import fastr_python.pipeline as pipeline_module
+import fastr_python.pipeline.acquisition as acquisition_module
+import fastr_python.pipeline.channels as channels_module
+import fastr_python.pipeline.runner as pipeline_module
 from fastr_python.config import ConfigurationError, load_config
 from fastr_python.fastr import AncCorrection, ResidualObsCorrection
 from fastr_python.pipeline import run_correction
@@ -49,12 +51,12 @@ def test_default_pipeline_does_not_run_marker_repair_or_anc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        pipeline_module,
+        acquisition_module,
         "repair_volume_starts",
         lambda *args, **kwargs: pytest.fail("marker repair ran under defaults"),
     )
     monkeypatch.setattr(
-        pipeline_module,
+        channels_module,
         "adaptive_noise_cancel",
         lambda *args, **kwargs: pytest.fail("ANC ran under defaults"),
     )
@@ -131,8 +133,8 @@ def test_pipeline_runs_obs_before_anc_and_records_diagnostics(
             filter_order=kwargs["filter_order"],
         )
 
-    monkeypatch.setattr(pipeline_module, "fit_residual_obs", fit_obs)
-    monkeypatch.setattr(pipeline_module, "adaptive_noise_cancel", fit_anc)
+    monkeypatch.setattr(channels_module, "fit_residual_obs", fit_obs)
+    monkeypatch.setattr(channels_module, "adaptive_noise_cancel", fit_anc)
 
     summary = run_correction(load_config(config_path))
 
@@ -201,7 +203,7 @@ def test_anc_cancels_against_a_low_passed_reference(
             filter_order=kwargs["filter_order"],
         )
 
-    monkeypatch.setattr(pipeline_module, "adaptive_noise_cancel", capture)
+    monkeypatch.setattr(channels_module, "adaptive_noise_cancel", capture)
     config = load_config(config_path)
     run_correction(config)
 

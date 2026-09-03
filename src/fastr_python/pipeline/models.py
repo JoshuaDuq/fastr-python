@@ -1,16 +1,38 @@
-"""Shared types for the configuration-driven correction pipeline."""
+"""Data models for the configuration-driven correction pipeline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
-from .quality.residuals import LocalRetryEvaluation
+from ..quality.residuals import LocalRetryEvaluation
 
 
 class PipelineInputError(ValueError):
     """Raised when a configured correction run cannot be performed."""
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionSummary:
+    """Stable summary of one completed correction run."""
+
+    output_vhdr: Path
+    output_eeg: Path
+    output_vmrk: Path
+    provenance_json: Path
+    psd_before: Path
+    psd_after: Path
+    method: str
+    input_sampling_rate_hz: float
+    output_sampling_rate_hz: float
+    channel_count: int
+    input_sample_count: int
+    output_sample_count: int
+    marker_count: int
+    processed_group_count: int
+    skipped_group_count: int
 
 
 @dataclass(frozen=True, slots=True)

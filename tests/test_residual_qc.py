@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-import fastr_python.pipeline as pipeline_module
+import fastr_python.pipeline.quality as pipeline_quality
 from fastr_python.fastr import AcquisitionGeometry
 from fastr_python.quality.residuals import (
     ResidualQcError,
@@ -188,12 +188,12 @@ def test_pipeline_volume_harmonic_spectrum_excludes_ecg(
         return ()
 
     monkeypatch.setattr(
-        pipeline_module,
+        pipeline_quality,
         "volume_harmonic_spectrum",
         capture_volume_spectrum,
     )
 
-    pipeline_module._measure_residual_qc(
+    pipeline_quality._measure_residual_qc(
         np.zeros((3, 200)),
         channel_names=["EEG 001", "EEG 002", "ECG"],
         non_eeg_indices=frozenset({2}),
@@ -245,10 +245,10 @@ def test_pipeline_residual_qc_forwards_configured_measurement_settings(
         seen["harmonics"] = harmonics
         return np.empty((data.shape[0], 0), dtype=np.float64)
 
-    monkeypatch.setattr(pipeline_module, "slice_harmonics", capture_harmonics)
-    monkeypatch.setattr(pipeline_module, "block_residual_uv", capture_residuals)
+    monkeypatch.setattr(pipeline_quality, "slice_harmonics", capture_harmonics)
+    monkeypatch.setattr(pipeline_quality, "block_residual_uv", capture_residuals)
 
-    report = pipeline_module._measure_residual_qc(
+    report = pipeline_quality._measure_residual_qc(
         np.zeros((2, 200)),
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
@@ -376,7 +376,7 @@ def _qc_report(flagged: list[bool]) -> dict[str, object]:
 
 def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
     """MNE drops any annotation whose "type/description" starts with "bad"."""
-    from fastr_python.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline.markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -390,7 +390,7 @@ def test_residual_qc_marker_is_not_rejected_by_mne_as_bad_data() -> None:
 
 
 def test_residual_qc_marker_spans_the_flagged_block() -> None:
-    from fastr_python.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline.markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([False, True, False]),
@@ -403,7 +403,7 @@ def test_residual_qc_marker_spans_the_flagged_block() -> None:
 
 
 def test_residual_qc_markers_follow_the_precomputed_flags() -> None:
-    from fastr_python.pipeline_markers import residual_qc_markers
+    from fastr_python.pipeline.markers import residual_qc_markers
 
     markers = residual_qc_markers(
         _qc_report([True, False, True]),
@@ -428,12 +428,12 @@ def test_the_volume_spectrum_limit_is_forwarded(
         return ()
 
     monkeypatch.setattr(
-        pipeline_module,
+        pipeline_quality,
         "volume_harmonic_spectrum",
         capture_volume_spectrum,
     )
 
-    pipeline_module._measure_residual_qc(
+    pipeline_quality._measure_residual_qc(
         np.zeros((2, 3000)),
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
@@ -460,9 +460,9 @@ def test_blocks_are_rounded_to_whole_volumes(
         seen["block_seconds"] = block_seconds
         return np.empty((data.shape[0], 0), dtype=np.float64)
 
-    monkeypatch.setattr(pipeline_module, "block_residual_uv", capture_residuals)
+    monkeypatch.setattr(pipeline_quality, "block_residual_uv", capture_residuals)
 
-    pipeline_module._measure_residual_qc(
+    pipeline_quality._measure_residual_qc(
         np.zeros((2, 3000)),
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
@@ -488,9 +488,9 @@ def test_sidecar_reports_the_flag_decision_and_its_settings(
         residuals[:, 3] = 40.0
         return residuals
 
-    monkeypatch.setattr(pipeline_module, "block_residual_uv", two_flagged_blocks)
+    monkeypatch.setattr(pipeline_quality, "block_residual_uv", two_flagged_blocks)
 
-    report = pipeline_module._measure_residual_qc(
+    report = pipeline_quality._measure_residual_qc(
         np.zeros((8, 3000)),
         channel_names=[f"EEG {index:03d}" for index in range(8)],
         non_eeg_indices=frozenset(),
@@ -518,9 +518,9 @@ def test_sidecar_reports_isolated_channel_blocks_without_spatial_flag(
         residuals[1, 3] = 40.0
         return residuals
 
-    monkeypatch.setattr(pipeline_module, "block_residual_uv", isolated_failure)
+    monkeypatch.setattr(pipeline_quality, "block_residual_uv", isolated_failure)
 
-    report = pipeline_module._measure_residual_qc(
+    report = pipeline_quality._measure_residual_qc(
         np.zeros((3, 3000)),
         channel_names=["EEG 001", "EEG 002", "ECG"],
         non_eeg_indices=frozenset({2}),
@@ -547,9 +547,9 @@ def test_sidecar_omits_channel_flags_when_reporting_is_disabled(
         residuals[1, 3] = 40.0
         return residuals
 
-    monkeypatch.setattr(pipeline_module, "block_residual_uv", isolated_failure)
+    monkeypatch.setattr(pipeline_quality, "block_residual_uv", isolated_failure)
 
-    report = pipeline_module._measure_residual_qc(
+    report = pipeline_quality._measure_residual_qc(
         np.zeros((2, 3000)),
         channel_names=["EEG 001", "EEG 002"],
         non_eeg_indices=frozenset(),
@@ -747,12 +747,12 @@ def test_block_residual_measurement_matches_the_sidecar(
 ) -> None:
     expected = np.arange(15, dtype=float).reshape(3, 5)
     monkeypatch.setattr(
-        pipeline_module,
+        pipeline_quality,
         "block_residual_uv",
         lambda *args, **kwargs: expected,
     )
 
-    measurement = pipeline_module._measure_block_residuals(
+    measurement = pipeline_quality._measure_block_residuals(
         np.zeros((3, 3000)),
         output_rate=1000.0,
         acquisition=_acquisition(0.9),

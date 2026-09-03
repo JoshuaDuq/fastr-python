@@ -9,8 +9,10 @@ import yaml
 from pybv import write_brainvision
 from scipy.signal import oaconvolve
 
-import fastr_python.pipeline as pipeline_module
-from fastr_python import pipeline_io
+import fastr_python.pipeline.channels as channels_module
+import fastr_python.pipeline.io as pipeline_io
+import fastr_python.pipeline.quality as pipeline_quality
+import fastr_python.pipeline.runner as pipeline_module
 from fastr_python.config import load_config
 from fastr_python.io.brainvision import (
     BrainVisionMarker,
@@ -18,6 +20,7 @@ from fastr_python.io.brainvision import (
     write_brainvision_markers,
 )
 from fastr_python.pipeline import PipelineInputError, run_correction
+from fastr_python.quality.psd import prepare_psd_raw
 from fastr_python.window import OutputWindow
 
 FIXTURE_OUTPUT = "pipeline_fixture_output.npy"
@@ -428,14 +431,14 @@ def test_pipeline_applies_channel_adaptive_windows_and_reports_provenance(
     )
     config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
     calls: list[dict[str, object]] = []
-    original = pipeline_module.apply_channel_adaptive_fastr_batch
+    original = channels_module.apply_channel_adaptive_fastr_batch
 
     def capture_adaptive_batch(*args: object, **kwargs: object) -> object:
         calls.append(dict(kwargs))
         return original(*args, **kwargs)
 
     monkeypatch.setattr(
-        pipeline_module,
+        channels_module,
         "apply_channel_adaptive_fastr_batch",
         capture_adaptive_batch,
     )
@@ -472,14 +475,14 @@ def test_pipeline_applies_local_windows_to_named_channels(
     )
     config_path.write_text(yaml.safe_dump(values), encoding="utf-8")
     calls: list[dict[str, object]] = []
-    original = pipeline_module.apply_selected_local_fastr_batch
+    original = channels_module.apply_selected_local_fastr_batch
 
     def capture_selected_local(*args: object, **kwargs: object) -> object:
         calls.append(dict(kwargs))
         return original(*args, **kwargs)
 
     monkeypatch.setattr(
-        pipeline_module,
+        channels_module,
         "apply_selected_local_fastr_batch",
         capture_selected_local,
     )
@@ -520,7 +523,7 @@ def test_psd_plot_preparation_assigns_standard_channel_locations() -> None:
     )
     raw = mne.io.RawArray(np.zeros((3, 100)), info, verbose="ERROR")
 
-    prepared = pipeline_module._prepare_psd_raw(raw)
+    prepared = prepare_psd_raw(raw)
 
     assert prepared.ch_names == ["Fp1", "Fp2"]
     assert prepared.get_montage() is not None
@@ -607,7 +610,7 @@ def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
     taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
     filtered = _reference_low_pass(data, taps)
 
-    actual = pipeline_module._lowpass_and_decimate(
+    actual = pipeline_io.lowpass_and_decimate(
         data,
         sampling_rate=5000.0,
         output_sampling_rate=1000.0,
@@ -627,7 +630,7 @@ def test_lowpass_and_decimate_full_window_matches_the_legacy_stride() -> None:
     taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
     expected = _reference_low_pass(data, taps)[:, ::5]
 
-    actual = pipeline_module._lowpass_and_decimate(
+    actual = pipeline_io.lowpass_and_decimate(
         data,
         sampling_rate=5000.0,
         output_sampling_rate=1000.0,
@@ -861,7 +864,7 @@ def retry_policy_fixture(
 
 def residual_measurement(rows: list[list[float]]) -> object:
     """A stand-in measurement, so the correction itself stays real."""
-    return pipeline_module._BlockResidualMeasurement(
+    return pipeline_quality._BlockResidualMeasurement(
         residuals_uv=np.asarray(rows, dtype=np.float64),
         harmonics_hz=(20.0,),
         block_seconds=30.0,
@@ -886,11 +889,16 @@ def serve_measurements(
     measurements: list[object],
 ) -> None:
     source = iter(measurements)
+
+    def measurement(*args: object, **kwargs: object) -> object:
+        return next(source)
+
     monkeypatch.setattr(
-        pipeline_module,
+        channels_module,
         "_measure_block_residuals",
-        lambda *args, **kwargs: next(source),
+        measurement,
     )
+    monkeypatch.setattr(pipeline_quality, "_measure_block_residuals", measurement)
 
 
 def policy_provenance(summary: object) -> dict[str, object]:
@@ -1050,7 +1058,7 @@ def test_no_candidates_never_reaches_the_local_retry(
     def forbidden(*args: object, **kwargs: object) -> object:
         raise AssertionError("a clean recording must not be corrected twice")
 
-    monkeypatch.setattr(pipeline_module, "_process_local_retry_channel", forbidden)
+    monkeypatch.setattr(channels_module, "_process_local_retry_channel", forbidden)
 
     summary = run_correction(load_config(retry_policy_fixture(tmp_path)))
     policy = policy_provenance(summary)
@@ -1189,14 +1197,14 @@ def test_the_report_policy_leaves_the_sidecar_and_measurement_count_alone(
 ) -> None:
     """Reporting must stay a single measurement: the retry pass is opt-in."""
     calls: list[int] = []
-    original = pipeline_module._measure_block_residuals
+    original = pipeline_quality._measure_block_residuals
 
     def count_measurements(*args: object, **kwargs: object) -> object:
         calls.append(1)
         return original(*args, **kwargs)
 
     monkeypatch.setattr(
-        pipeline_module,
+        pipeline_quality,
         "_measure_block_residuals",
         count_measurements,
     )

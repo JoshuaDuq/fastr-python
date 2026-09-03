@@ -10,9 +10,9 @@ import mne
 import numpy as np
 from scipy.signal import oaconvolve
 
-from .config import CorrectionConfig
-from .pipeline_types import PipelineInputError
-from .window import OutputWindow
+from ..config import CorrectionConfig
+from ..window import OutputWindow
+from .models import PipelineInputError
 
 
 def validate_input_files(config: CorrectionConfig) -> None:
