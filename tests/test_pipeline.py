@@ -11,12 +11,12 @@ from scipy.signal import oaconvolve
 
 import fastr_python.pipeline as pipeline_module
 from fastr_python import pipeline_io
-from fastr_python.brainvision import (
+from fastr_python.config import load_config
+from fastr_python.io.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from fastr_python.config import load_config
 from fastr_python.pipeline import PipelineInputError, run_correction
 from fastr_python.window import OutputWindow
 

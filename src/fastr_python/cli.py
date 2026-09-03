@@ -12,12 +12,6 @@ from pathlib import Path
 import mne
 
 from . import __version__
-from .brainvision import BrainVisionMarkerError
-from .brainvision_io import (
-    BrainVisionInputError,
-    read_brainvision_recording,
-    select_marker_samples,
-)
 from .config import MARKER_KINDS, ConfigurationError, load_config
 from .demo import write_demo_dataset
 from .fastr import (
@@ -26,6 +20,12 @@ from .fastr import (
     load_bids_fmri_timing,
     slice_marker_geometry,
     volume_marker_geometry,
+)
+from .io.brainvision import BrainVisionMarkerError
+from .io.recording import (
+    BrainVisionInputError,
+    read_brainvision_recording,
+    select_marker_samples,
 )
 from .pipeline import PipelineInputError, run_correction
 

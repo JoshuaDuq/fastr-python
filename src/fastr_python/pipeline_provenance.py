@@ -11,7 +11,6 @@ import mne
 import numpy as np
 
 from . import __version__
-from .brainvision_io import BrainVisionRecording
 from .config import CorrectionConfig
 from .fastr import (
     AcquisitionGeometry,
@@ -19,6 +18,7 @@ from .fastr import (
     FastrGeometry,
     FmriAcquisitionTiming,
 )
+from .io.recording import BrainVisionRecording
 from .pipeline_types import ChannelFailurePolicyResult
 from .window import OutputWindow
 

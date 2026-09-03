@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from fastr_python.brainvision import (
+from fastr_python.io.brainvision import (
     BrainVisionMarker,
     BrainVisionMarkerError,
     read_brainvision_markers,

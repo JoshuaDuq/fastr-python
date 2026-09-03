@@ -14,16 +14,6 @@ import mne
 import numpy as np
 
 from . import pipeline_io, pipeline_markers, pipeline_provenance
-from .brainvision import BrainVisionMarker
-from .brainvision_io import (
-    BrainVisionInputError,
-    BrainVisionRecording,
-    read_brainvision_recording,
-    resample_markers,
-    select_marker_sample_block,
-    select_marker_samples,
-    write_brainvision_recording,
-)
 from .config import CorrectionConfig
 from .fastr import (
     AcquisitionGeometry,
@@ -45,6 +35,16 @@ from .fastr import (
     repair_volume_starts,
     slice_marker_geometry,
     volume_marker_geometry,
+)
+from .io.brainvision import BrainVisionMarker
+from .io.recording import (
+    BrainVisionInputError,
+    BrainVisionRecording,
+    read_brainvision_recording,
+    resample_markers,
+    select_marker_sample_block,
+    select_marker_samples,
+    write_brainvision_recording,
 )
 from .pipeline_types import ChannelFailurePolicyResult, PipelineInputError
 from .psd import prepare_psd_raw, save_psd_plot

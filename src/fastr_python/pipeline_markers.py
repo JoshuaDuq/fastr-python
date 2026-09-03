@@ -6,8 +6,8 @@ import math
 
 import numpy as np
 
-from .brainvision import BrainVisionMarker
 from .fastr import FastrGeometry
+from .io.brainvision import BrainVisionMarker
 from .pipeline_types import PipelineInputError
 from .window import OutputWindow
 

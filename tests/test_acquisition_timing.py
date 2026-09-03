@@ -8,16 +8,16 @@ import pytest
 import yaml
 from pybv import write_brainvision
 
-from fastr_python.brainvision import (
-    BrainVisionMarker,
-    write_brainvision_markers,
-)
 from fastr_python.config import ConfigurationError, load_config
 from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
     slice_marker_geometry,
     volume_marker_geometry,
+)
+from fastr_python.io.brainvision import (
+    BrainVisionMarker,
+    write_brainvision_markers,
 )
 from fastr_python.pipeline import run_correction
 

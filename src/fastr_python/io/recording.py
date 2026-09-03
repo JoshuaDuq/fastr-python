@@ -13,13 +13,13 @@ import numpy as np
 import numpy.typing as npt
 from pybv import write_brainvision
 
+from ..window import OutputWindow
 from .brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
 from .markers import map_brainvision_position
-from .window import OutputWindow
 
 
 class BrainVisionInputError(ValueError):

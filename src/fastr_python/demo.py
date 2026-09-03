@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from pybv import write_brainvision
 
-from .brainvision import BrainVisionMarker, write_brainvision_markers
+from .io.brainvision import BrainVisionMarker, write_brainvision_markers
 from .simulation import simulate_gradient_artifact
 
 _CHANNEL_NAMES = ("Fz", "Cz", "Pz", "Oz", "ECG")

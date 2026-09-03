@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 from pybv import write_brainvision
 
-from fastr_python.brainvision import (
+from fastr_python.io.brainvision import (
     BrainVisionMarker,
     read_brainvision_markers,
     write_brainvision_markers,
 )
-from fastr_python.brainvision_io import (
+from fastr_python.io.recording import (
     BrainVisionInputError,
     read_brainvision_recording,
     resample_markers,
@@ -19,6 +19,13 @@ from fastr_python.brainvision_io import (
     write_brainvision_recording,
 )
 from fastr_python.window import OutputWindow
+
+
+def test_brainvision_io_is_grouped_at_the_recording_boundary() -> None:
+    from fastr_python.io import brainvision, markers, recording
+
+    assert recording.BrainVisionMarker is brainvision.BrainVisionMarker
+    assert callable(markers.map_brainvision_position)
 
 
 def make_markers() -> tuple[BrainVisionMarker, ...]:
