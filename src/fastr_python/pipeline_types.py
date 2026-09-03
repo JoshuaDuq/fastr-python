@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .residual_qc import LocalRetryEvaluation
+from .quality.residuals import LocalRetryEvaluation
 
 
 class PipelineInputError(ValueError):

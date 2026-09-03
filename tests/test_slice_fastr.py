@@ -11,7 +11,7 @@ from fastr_python.fastr import (
     residual_obs,
     slice_fastr,
 )
-from fastr_python.simulation import simulate_gradient_artifact
+from fastr_python.validation.simulation import simulate_gradient_artifact
 
 SAMPLING_RATE = 1_000.0
 GROUP_INTERVAL_SAMPLES = 47.5

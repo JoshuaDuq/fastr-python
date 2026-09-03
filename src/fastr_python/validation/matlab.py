@@ -13,7 +13,7 @@ from numbers import Integral, Real
 import numpy as np
 import numpy.typing as npt
 
-from .residual_qc import block_residual_uv
+from ..quality.residuals import block_residual_uv
 
 
 class ComparisonError(ValueError):

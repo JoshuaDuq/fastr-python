@@ -21,7 +21,7 @@ import numpy as np
 from pybv import write_brainvision
 
 from .io.brainvision import BrainVisionMarker, write_brainvision_markers
-from .simulation import simulate_gradient_artifact
+from .validation.simulation import simulate_gradient_artifact
 
 _CHANNEL_NAMES = ("Fz", "Cz", "Pz", "Oz", "ECG")
 _INPUT_SAMPLING_RATE_HZ = 5_000.0

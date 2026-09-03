@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fastr_python.matlab_comparison import ComparisonError, compare_arrays
+from fastr_python.validation.matlab import ComparisonError, compare_arrays
 
 
 def make_recordings() -> tuple[np.ndarray, np.ndarray, np.ndarray]:

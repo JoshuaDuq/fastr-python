@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from numbers import Real
 
-from ..residual_qc import ResidualQcDefaults
+from ..quality.residuals import ResidualQcDefaults
 from .models import (
     ConfigurationError,
     DiagnosticsConfig,

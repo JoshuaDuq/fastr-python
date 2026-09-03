@@ -1,7 +1,7 @@
 import numpy as np
 
 from fastr_python import pipeline_io
-from fastr_python.metrics import tone_transfer
+from fastr_python.validation.metrics import tone_transfer
 
 
 def test_spectrum_fit_removes_only_the_configured_line() -> None:

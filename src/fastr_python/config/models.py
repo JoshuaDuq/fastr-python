@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..correction.timing import FmriAcquisitionTiming
-from ..residual_qc import ResidualQcDefaults
+from ..quality.residuals import ResidualQcDefaults
 
 _TRIM_MODES = frozenset({"none", "first_to_last_volume"})
 

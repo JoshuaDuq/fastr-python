@@ -3,7 +3,7 @@ import pytest
 
 import fastr_python.pipeline as pipeline_module
 from fastr_python.fastr import AcquisitionGeometry
-from fastr_python.residual_qc import (
+from fastr_python.quality.residuals import (
     ResidualQcError,
     block_residual_uv,
     evaluate_local_retry,
@@ -287,7 +287,7 @@ def _residuals(channels: int, blocks: int, baseline: float = 0.4) -> np.ndarray:
 
 
 def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[:32, 7] = 25.0
@@ -299,7 +299,7 @@ def test_flag_blocks_flags_a_block_elevated_across_many_channels() -> None:
 
 def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
     """One noisy electrode must not condemn all 64 channels for 30 seconds."""
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     residuals = _residuals(64, 20)
     residuals[11, 7] = 25.0
@@ -308,7 +308,7 @@ def test_flag_blocks_ignores_a_block_elevated_on_a_single_channel() -> None:
 
 
 def test_flag_channel_blocks_reports_an_isolated_channel_failure() -> None:
-    from fastr_python.residual_qc import flag_channel_blocks
+    from fastr_python.quality.residuals import flag_channel_blocks
 
     residuals = _residuals(64, 20)
     residuals[11, 7] = 25.0
@@ -321,7 +321,7 @@ def test_flag_channel_blocks_reports_an_isolated_channel_failure() -> None:
 
 
 def test_flag_channel_blocks_returns_empty_width_without_calibration() -> None:
-    from fastr_python.residual_qc import flag_channel_blocks
+    from fastr_python.quality.residuals import flag_channel_blocks
 
     flagged = flag_channel_blocks(np.full((64, 2), 50.0))
 
@@ -331,7 +331,7 @@ def test_flag_channel_blocks_returns_empty_width_without_calibration() -> None:
 
 def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
     """A high but flat residual is the recording's baseline, not an event."""
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     residuals = _residuals(64, 20, baseline=18.0)
 
@@ -340,7 +340,7 @@ def test_flag_blocks_ignores_a_uniformly_elevated_recording() -> None:
 
 def test_flag_blocks_respects_the_absolute_floor() -> None:
     """A statistical outlier still below the floor is not worth flagging."""
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     residuals = _residuals(64, 20, baseline=0.01)
     residuals[:32, 7] = 0.2
@@ -350,7 +350,7 @@ def test_flag_blocks_respects_the_absolute_floor() -> None:
 
 
 def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     residuals = np.full((64, 2), 50.0)
 
@@ -358,7 +358,7 @@ def test_flag_blocks_returns_nothing_when_too_few_blocks_to_calibrate() -> None:
 
 
 def test_flag_blocks_handles_an_empty_measurement() -> None:
-    from fastr_python.residual_qc import flag_blocks
+    from fastr_python.quality.residuals import flag_blocks
 
     assert flag_blocks(np.empty((64, 0))).shape == (0,)
 

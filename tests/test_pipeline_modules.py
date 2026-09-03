@@ -7,7 +7,7 @@ import fastr_python.pipeline as pipeline_module
 from fastr_python import pipeline_io, pipeline_markers, pipeline_provenance
 from fastr_python.pipeline import PipelineInputError
 from fastr_python.pipeline_types import PipelineInputError as SharedPipelineInputError
-from fastr_python.residual_qc import (
+from fastr_python.quality.residuals import (
     ResidualQcDefaults,
     residual_qc_defaults,
 )

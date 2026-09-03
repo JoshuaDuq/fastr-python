@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy.io import loadmat
 
-from fastr_python.matlab_comparison import ComparisonError, compare_arrays
+from fastr_python.validation.matlab import ComparisonError, compare_arrays
 
 
 def compare_mat_files(

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fastr_python.simulation import (
+from fastr_python.validation.simulation import (
     SimulationInputError,
     simulate_gradient_artifact,
     simulate_pulse_artifact,

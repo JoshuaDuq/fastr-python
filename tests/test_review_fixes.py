@@ -12,7 +12,7 @@ from fastr_python.fastr import (
     make_group_trigger_samples,
     slice_fastr_with_edges,
 )
-from fastr_python.metrics import MetricInputError, trigger_locked_rms
+from fastr_python.validation.metrics import MetricInputError, trigger_locked_rms
 
 
 def make_timing() -> FmriAcquisitionTiming:

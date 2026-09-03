@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fastr_python.metrics import (
+from fastr_python.validation.metrics import (
     MetricInputError,
     band_rms_ratio,
     cardiac_locked_rms,

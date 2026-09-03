@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from fastr_python.diagnostics import (
+from fastr_python.validation.diagnostics import (
     DiagnosticInputError,
     estimate_slice_period_candidates,
 )

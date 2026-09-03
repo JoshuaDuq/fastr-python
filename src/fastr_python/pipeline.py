@@ -47,8 +47,8 @@ from .io.recording import (
     write_brainvision_recording,
 )
 from .pipeline_types import ChannelFailurePolicyResult, PipelineInputError
-from .psd import prepare_psd_raw, save_psd_plot
-from .residual_qc import (
+from .quality.psd import prepare_psd_raw, save_psd_plot
+from .quality.residuals import (
     LocalRetryEvaluation,
     ResidualQcDefaults,
     block_residual_uv,
