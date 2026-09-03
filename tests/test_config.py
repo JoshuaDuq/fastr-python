@@ -10,6 +10,14 @@ from fastr_python.config import (
 )
 
 
+def test_configuration_package_separates_models_from_loading() -> None:
+    from fastr_python.config.loading import load_config as implementation
+    from fastr_python.config.models import CorrectionConfig as ConfigModel
+
+    assert CorrectionConfig is ConfigModel
+    assert load_config is implementation
+
+
 def valid_document() -> str:
     return """
 input:
