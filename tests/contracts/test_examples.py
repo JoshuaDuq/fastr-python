@@ -12,7 +12,7 @@ import yaml
 from fastr_python.compare.config import load_compare_config
 from fastr_python.config import load_config
 
-EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def test_the_volume_correction_example_loads() -> None:

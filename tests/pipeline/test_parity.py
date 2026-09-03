@@ -4,7 +4,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
-from test_pipeline import make_fixture
 
 import fastr_python.pipeline.acquisition as acquisition_module
 import fastr_python.pipeline.channels as channels_module
@@ -12,6 +11,7 @@ import fastr_python.pipeline.runner as pipeline_module
 from fastr_python.config import ConfigurationError, load_config
 from fastr_python.fastr import AncCorrection, ResidualObsCorrection
 from fastr_python.pipeline import run_correction
+from tests.pipeline.test_pipeline import make_fixture
 
 
 def update_config(config_path: Path, **processing: object) -> None:

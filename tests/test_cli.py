@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
-from test_pipeline import make_fixture
 
 from fastr_python.cli import main
+from tests.pipeline.test_pipeline import make_fixture
 
 
 def test_run_command_executes_yaml_pipeline(tmp_path: Path, capsys) -> None:

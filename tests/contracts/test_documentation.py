@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 DOCUMENTATION_FILES = (
     ROOT / "README.md",
@@ -49,6 +49,8 @@ def test_quality_workflow_uses_the_documented_read_only_quality_gates() -> None:
         "uv sync --locked",
         "uv run pytest",
         "uv run ruff check src tests validation",
+        "uv run ruff format --check src tests validation",
+        "uv run mypy",
         "uv build",
         "permissions:\n  contents: read",
     ):

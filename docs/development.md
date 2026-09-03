@@ -13,8 +13,9 @@ uv sync
 
 ## Repository layout
 
-- `src/fastr_python/`: production package and low-level numerical modules;
-- `tests/`: deterministic unit, integration, compatibility, and contract tests;
+- `src/fastr_python/`: domain-organized production and validation packages;
+- `tests/`: matching correction, I/O, pipeline, quality, validation, comparison,
+  and public-contract suites;
 - `examples/`: loadable configuration examples;
 - `validation/`: explicit reference and comparison runners;
 - `docs/`: user, scientific, architecture, development, and reference guides;
@@ -27,8 +28,10 @@ Run the quality checks:
 
 ```text
 uv sync
-uv run pytest
 uv run ruff check src tests validation
+uv run ruff format --check src tests validation
+uv run mypy
+uv run pytest
 git diff --check
 uv build
 ```
@@ -38,7 +41,7 @@ pushes and pull requests.
 
 ## Adding or changing configuration
 
-Update `config.py`, both examples, the tests, and
+Update the relevant module in `fastr_python.config`, both examples, the tests, and
 [`configuration.md`](configuration.md) together. Add a failing contract test
 first, document units and defaults, preserve fail-fast validation, and update
 the interaction table. Do not add a fallback or silently reinterpret ambiguous

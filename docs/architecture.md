@@ -33,51 +33,37 @@ FASTR reads BrainVision headers and markers, resolves one timing source,
 constructs acquisition-group geometry, corrects channels in batches, and writes
 BrainVision output with a JSON provenance sidecar.
 
-## Module responsibilities
+## Package responsibilities
 
-| Module | Responsibility |
-| --- | --- |
-| `__init__.py` | Package version and root export boundary. |
-| `api.py` | Stable high-level configuration-driven re-exports. |
-| `brainvision.py` | Strict BrainVision marker parsing and writing. |
-| `brainvision_io.py` | BrainVision file discovery, marker selection, and recording output. |
-| `cli.py` | Command-line parsing and operator-facing commands. |
-| `compare/__init__.py` | Comparison package boundary. |
-| `compare/config.py` | YAML configuration for folder comparisons. |
-| `compare/pairs.py` | Declared naming-based recording pairing. |
-| `compare/pipeline.py` | Comparison orchestration and summary writing. |
-| `compare/plots.py` | MNE loading, alignment checks, PSD overlays, and comparison metrics. |
-| `config.py` | YAML schema, defaults, paths, and cross-field validation. |
-| `demo.py` | Reproducible synthetic BrainVision dataset generation. |
-| `diagnostics.py` | Signal diagnostics and acquisition-period candidates. |
-| `fastr.py` | Low-level FASTR façade and public array API. |
-| `fastr_anc.py` | Normalized LMS adaptive noise cancellation. |
-| `fastr_geometry.py` | Epoch geometry, alignment, and adaptive-window decisions. |
-| `fastr_processing.py` | Array-level template, OBS, and channel-batch processing. |
-| `fastr_templates.py` | Acquisition-slot template construction. |
-| `fastr_timing.py` | BIDS timing, marker geometry, and timing validation. |
-| `fastr_types.py` | Low-level immutable correction and geometry data structures. |
-| `fastr_validation.py` | Shared shape, range, and parameter validation. |
-| `markers.py` | BrainVision marker/sample coordinate transformations. |
-| `matlab_comparison.py` | Array and MATLAB-reference comparison helpers. |
-| `metrics.py` | Signal-transfer, residual, and comparison metrics. |
-| `pipeline.py` | Configuration-driven correction orchestration and summary. |
-| `pipeline_io.py` | Pipeline input/output paths, rates, filters, and channels. |
-| `pipeline_markers.py` | Output annotations for residual and skipped regions. |
-| `pipeline_provenance.py` | JSON-safe provenance assembly and file hashes. |
-| `pipeline_types.py` | Pipeline-facing input and channel-policy data structures. |
-| `psd.py` | Before/after PSD preparation and plotting. |
-| `residual_qc.py` | Residual harmonic measurements and advisory channel decisions. |
-| `simulation.py` | Deterministic synthetic EEG-fMRI signal generation. |
-| `window.py` | Output-span resolution and trim validation. |
+```text
+fastr_python/
+├── api.py                 stable high-level API
+├── fastr.py               stable low-level array API
+├── cli.py                 command-line boundary
+├── config/                YAML decoding, models, schema, and validation
+├── correction/            numerical FASTR algorithms and timing geometry
+├── io/                    BrainVision markers and recordings
+├── pipeline/              correction orchestration and provenance
+├── quality/               PSD and residual-quality measurements
+├── validation/            simulation, metrics, and reference comparisons
+└── compare/               folder-level corrected/uncorrected comparison
+```
+
+The domain packages are dependency boundaries, not alternative public APIs.
+External callers should import from `fastr_python.api` or
+`fastr_python.fastr`; internal modules may change as responsibilities become
+clearer.
+
+The pipeline package separates acquisition resolution, channel processing,
+recording I/O, marker handling, quality measurements, provenance, and the run
+coordinator. The correction package owns numerical algorithms and has no
+configuration or file-writing responsibilities.
 
 ## Production versus validation code
 
-Production correction uses `config.py`, `pipeline.py`, the BrainVision I/O
-modules, timing/geometry/processing modules, and pipeline support modules. It
-does not import simulation or comparison helpers. The validation-only modules
-(`diagnostics.py`, `metrics.py`, `matlab_comparison.py`, and `simulation.py`)
-serve tests, demos, and audit runners.
+Production correction uses `config`, `correction`, `io`, `pipeline`, and
+`quality`. It does not import the simulation or reference-comparison helpers in
+`fastr_python.validation`; those serve tests, demos, and audit runners.
 
 The validation area contains:
 

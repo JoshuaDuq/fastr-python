@@ -98,8 +98,10 @@ fastr-python --version
 ## Development
 
 ```text
-uv run pytest
 uv run ruff check src tests validation
+uv run ruff format --check src tests validation
+uv run mypy
+uv run pytest
 git diff --check
 uv build
 ```

@@ -55,10 +55,11 @@ The original function performs these operations, following
 6. optionally scale the artifact reference and run normalized LMS ANC; and
 7. preserve excluded channels from residual PCA and ANC.
 
-They map to `fastr_timing.py`, `fastr_geometry.py`, `fastr_processing.py`,
-`fastr_anc.py`, and `pipeline_io.py`. Python derives multiband acquisition slots
-from the [BIDS MRI specification](references.md#bids), rather than treating the
-entire 0.9-second volume as one repeated waveform.
+They map to `correction/timing.py`, `correction/geometry.py`,
+`correction/processing.py`, `correction/anc.py`, and `pipeline/io.py`. Python
+derives multiband acquisition slots from the
+[BIDS MRI specification](references.md#bids), rather than treating the entire
+0.9-second volume as one repeated waveform.
 
 Automatic rank uses the three FMRIB rules: four consecutive eigenvalue slopes
 below 2 percentage points, cumulative explained variance above 80%, and first

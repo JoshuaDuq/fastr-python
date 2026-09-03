@@ -1,7 +1,7 @@
 import tomllib
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_public_package_uses_fastr_python_import_name() -> None:

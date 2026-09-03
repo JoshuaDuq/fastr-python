@@ -34,7 +34,7 @@ def expected_fixture_output() -> np.ndarray:
     that no sample moved, and an expectation derived from the code under test
     could not have shown that.
     """
-    return np.load(Path(__file__).resolve().parent / "data" / FIXTURE_OUTPUT)
+    return np.load(Path(__file__).resolve().parent.parent / "data" / FIXTURE_OUTPUT)
 
 
 def make_fixture(
