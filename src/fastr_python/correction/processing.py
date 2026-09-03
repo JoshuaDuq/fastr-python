@@ -10,7 +10,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import filtfilt, firls
 
-from .fastr_geometry import (
+from .geometry import (
     _measure_artifact_epoch,
     _to_interpolated_grid,
     _validate_epoch_bounds,
@@ -18,7 +18,7 @@ from .fastr_geometry import (
     prepare_fastr_geometry,
     prepare_local_fastr_geometry,
 )
-from .fastr_templates import (
+from .templates import (
     _extract_epochs,
     _fit_channel_noise,
     _fit_group_shifts,
@@ -29,7 +29,7 @@ from .fastr_templates import (
     _template_estimate_signal,
     _unscaled_channel_noise,
 )
-from .fastr_types import (
+from .types import (
     ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,
@@ -39,7 +39,7 @@ from .fastr_types import (
     ResidualObsCorrection,
     _ArtifactEpoch,
 )
-from .fastr_validation import (
+from .validation import (
     validate_basis_rank,
     validate_channel_indices,
     validate_group_triggers,

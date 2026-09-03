@@ -9,7 +9,7 @@ from numbers import Integral, Real
 import numpy as np
 import numpy.typing as npt
 
-from .fastr_types import FastrInputError
+from .types import FastrInputError
 
 
 def validate_recording(data: npt.ArrayLike) -> np.ndarray:

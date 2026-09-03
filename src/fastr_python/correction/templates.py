@@ -9,8 +9,8 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from scipy.signal import butter, firwin, sosfiltfilt, upfirdn
 
-from .fastr_types import FastrInputError, _ArtifactEpoch, _TemplateWindow
-from .fastr_validation import validate_sampling_rate
+from .types import FastrInputError, _ArtifactEpoch, _TemplateWindow
+from .validation import validate_sampling_rate
 
 _INTERPOLATION_HALF_SPAN = 4
 _INTERPOLATION_WINDOW = ("kaiser", 5.0)

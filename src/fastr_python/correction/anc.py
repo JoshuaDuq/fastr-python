@@ -10,8 +10,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import filtfilt, firls
 
-from .fastr_types import AncCorrection, FastrInputError
-from .fastr_validation import (
+from .types import AncCorrection, FastrInputError
+from .validation import (
     validate_channel_indices,
     validate_positive_finite,
     validate_recording,

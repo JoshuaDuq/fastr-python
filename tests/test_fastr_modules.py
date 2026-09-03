@@ -1,22 +1,22 @@
 from fastr_python import fastr
-from fastr_python.fastr_geometry import (
+from fastr_python.correction.geometry import (
     adapt_fastr_geometry,
     gate_fastr_geometry,
     prepare_fastr_geometry,
 )
-from fastr_python.fastr_processing import (
+from fastr_python.correction.processing import (
     apply_channel_adaptive_fastr_batch,
     apply_fastr_batch,
     apply_selected_local_fastr_batch,
     fit_fastr_alignment,
     residual_obs,
 )
-from fastr_python.fastr_timing import (
+from fastr_python.correction.timing import (
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
     make_group_trigger_samples,
 )
-from fastr_python.fastr_types import (
+from fastr_python.correction.types import (
     ChannelAdaptiveFastrCorrection,
     FastrAlignment,
     FastrCorrection,
@@ -24,6 +24,14 @@ from fastr_python.fastr_types import (
     FastrInputError,
     FastrProvenance,
 )
+
+
+def test_correction_internals_are_grouped_by_responsibility() -> None:
+    from fastr_python.correction import geometry, processing, timing
+
+    assert fastr.prepare_fastr_geometry is geometry.prepare_fastr_geometry
+    assert fastr.apply_fastr_batch is processing.apply_fastr_batch
+    assert fastr.volume_marker_geometry is timing.volume_marker_geometry
 
 
 def test_fastr_facade_reexports_extracted_implementations() -> None:

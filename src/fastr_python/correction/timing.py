@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .fastr_types import FastrInputError
-from .fastr_validation import validate_positive_finite, validate_sampling_rate
+from .types import FastrInputError
+from .validation import validate_positive_finite, validate_sampling_rate
 
 _GRID_TOLERANCE_SAMPLES = 1e-6
 _JITTER_TOLERANCE_FRACTION = 0.01

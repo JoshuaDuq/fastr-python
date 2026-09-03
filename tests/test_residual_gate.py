@@ -5,6 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from fastr_python.correction.geometry import (
+    adapt_channel_fastr_geometry,
+    prepare_local_fastr_geometry,
+)
 from fastr_python.fastr import (
     FastrInputError,
     FmriAcquisitionTiming,
@@ -13,10 +17,6 @@ from fastr_python.fastr import (
     gate_fastr_geometry,
     make_group_trigger_samples,
     prepare_fastr_geometry,
-)
-from fastr_python.fastr_geometry import (
-    adapt_channel_fastr_geometry,
-    prepare_local_fastr_geometry,
 )
 
 

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import numpy.typing as npt
 
-from .fastr_anc import adaptive_noise_cancel, fmrib_lms
-from .fastr_geometry import (
+from .correction.anc import adaptive_noise_cancel, fmrib_lms
+from .correction.geometry import (
     adapt_fastr_geometry,
     gate_fastr_geometry,
     prepare_fastr_geometry,
 )
-from .fastr_processing import (
+from .correction.processing import (
     _run_fastr,
     _run_fastr_with_edges,
     apply_channel_adaptive_fastr_batch,
@@ -22,7 +22,7 @@ from .fastr_processing import (
     residual_obs,
     select_obs_rank,
 )
-from .fastr_timing import (
+from .correction.timing import (
     AcquisitionGeometry,
     FmriAcquisitionTiming,
     load_bids_fmri_timing,
@@ -31,7 +31,7 @@ from .fastr_timing import (
     slice_marker_geometry,
     volume_marker_geometry,
 )
-from .fastr_types import (
+from .correction.types import (
     AncCorrection,
     ChannelAdaptiveFastrCorrection,
     FastrAlignment,

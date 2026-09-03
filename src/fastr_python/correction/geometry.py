@@ -8,7 +8,7 @@ from numbers import Real
 
 import numpy as np
 
-from .fastr_templates import (
+from .templates import (
     _extract_epochs,
     _interpolate,
     _make_interpolation_filter,
@@ -18,14 +18,14 @@ from .fastr_templates import (
     _template_estimate_signal,
     _template_residual,
 )
-from .fastr_types import (
+from .types import (
     FastrAlignment,
     FastrGeometry,
     FastrInputError,
     _ArtifactEpoch,
     _TemplateWindow,
 )
-from .fastr_validation import (
+from .validation import (
     validate_fastr_parameters,
     validate_group_triggers,
     validate_nonnegative_finite,

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import yaml
 
-from .fastr_timing import FmriAcquisitionTiming
-from .fastr_types import FastrInputError
+from .correction.timing import FmriAcquisitionTiming
+from .correction.types import FastrInputError
 from .residual_qc import ResidualQcDefaults
 
 __all__ = [
