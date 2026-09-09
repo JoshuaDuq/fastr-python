@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from ..fastr import AcquisitionGeometry
+from ..quality.harmonics import block_coherent_harmonic_rms
 from ..quality.residuals import (
     ResidualQcDefaults,
     block_residual_uv,
@@ -14,6 +15,7 @@ from ..quality.residuals import (
     flag_channel_blocks,
     slice_harmonics,
     volume_harmonic_spectrum,
+    volume_harmonics,
 )
 
 
@@ -135,8 +137,11 @@ def _residual_qc_report(
     """Serialize one residual measurement, and the flags derived from it."""
     repetition_time = acquisition.repetition_time_seconds
     residuals = measurement.residuals_uv
+    eeg_indices = [
+        index for index in range(len(channel_names)) if index not in non_eeg_indices
+    ]
     flagged = flag_blocks(
-        residuals,
+        residuals[eeg_indices],
         mad_multiplier=mad_multiplier,
         minimum_channels=minimum_channels,
         floor_uv=threshold_uv,
@@ -161,16 +166,40 @@ def _residual_qc_report(
         volume_spectrum_max_hz,
         float(np.nextafter(output_rate / 2.0, 0.0)),
     )
-    eeg_indices = [
-        index for index in range(len(channel_names)) if index not in non_eeg_indices
-    ]
+    eeg_uv = np.asarray(corrected)[eeg_indices] * 1e6
     volume_spectrum = volume_harmonic_spectrum(
-        np.asarray(corrected)[eeg_indices] * 1e6,
+        eeg_uv,
         sampling_rate=output_rate,
         repetition_time_seconds=repetition_time,
         maximum_frequency_hz=maximum_spectrum_frequency,
         mains_frequency_hz=mains_frequency_hz,
         mains_exclusion_hz=mains_exclusion_hz,
+    )
+    volume_frequencies = volume_harmonics(
+        repetition_time_seconds=repetition_time,
+        nyquist_hz=output_rate / 2.0,
+        mains_hz=mains_frequency_hz,
+        exclusion_hz=mains_exclusion_hz,
+    )
+    volume_frequencies = tuple(
+        frequency
+        for frequency in volume_frequencies
+        if frequency <= maximum_spectrum_frequency
+    )
+    volume_rms = block_coherent_harmonic_rms(
+        eeg_uv,
+        sampling_rate=output_rate,
+        fundamental_hz=1.0 / repetition_time,
+        harmonic_orders=np.rint(
+            np.asarray(volume_frequencies) * repetition_time
+        ).astype(int),
+        block_seconds=measurement.block_seconds,
+    )
+    volume_flags = flag_blocks(
+        volume_rms,
+        mad_multiplier=mad_multiplier,
+        minimum_channels=minimum_channels,
+        floor_uv=threshold_uv,
     )
     if residuals.shape[1] == 0:
         worst_block = [-1] * residuals.shape[0]
@@ -199,4 +228,16 @@ def _residual_qc_report(
         "volume_harmonic_spectrum": [
             asdict(measurement) for measurement in volume_spectrum
         ],
+        "volume_harmonic_qc": {
+            "measurement": "coherent_harmonic_rms",
+            "channel_names": [channel_names[index] for index in eeg_indices],
+            "harmonics_hz": list(volume_frequencies),
+            "block_seconds": measurement.block_seconds,
+            "block_coherent_rms_uv": volume_rms.tolist(),
+            "flagged_blocks": volume_flags.tolist(),
+            "flagged_block_count": int(volume_flags.sum()),
+            "floor_uv": float(threshold_uv),
+            "mad_multiplier": float(mad_multiplier),
+            "minimum_channels": int(minimum_channels),
+        },
     }

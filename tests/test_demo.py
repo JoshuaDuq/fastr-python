@@ -1,6 +1,7 @@
 """The generated demo has to be runnable, or it is not a demo."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import mne
@@ -127,3 +128,18 @@ def test_the_demo_command_reports_a_refusal_as_an_error(
 
     assert main(["demo", "--output-dir", str(tmp_path)]) == 1
     assert "demo files already exist" in capsys.readouterr().err
+
+
+def test_demo_completes_with_fractional_output_samples_per_volume(tmp_path: Path):
+    paths = write_demo_dataset(tmp_path)
+    config = load_config(paths.config)
+    config = replace(
+        config,
+        processing=replace(config.processing, output_sampling_rate_hz=625.0),
+    )
+
+    result = run_correction(config)
+
+    assert result.output_sampling_rate_hz == 625.0
+    report = json.loads(result.provenance_json.read_text())
+    assert report["residual_qc"]["volume_harmonic_spectrum"]

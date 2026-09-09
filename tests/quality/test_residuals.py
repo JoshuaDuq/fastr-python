@@ -153,6 +153,49 @@ def test_volume_harmonic_spectrum_is_robust_to_one_channel_outlier() -> None:
     assert profile[0].local_peak_frequency_hz == pytest.approx(10.0)
 
 
+@pytest.mark.parametrize("repetition_time", [0.9, 0.901])
+def test_volume_spectrum_evaluates_fractional_sample_harmonics_exactly(repetition_time):
+    rate = 625.0
+    sample_count = int(np.ceil(15 * repetition_time * rate))
+    times = np.arange(sample_count) / rate
+    frequency = 1 / repetition_time
+    signal = np.sin(2 * np.pi * frequency * times)
+    signal += 0.4 * np.sin(2 * np.pi * (frequency + 0.06) * times)
+    segment_samples = round(15 * repetition_time * rate)
+    segment = signal[:segment_samples] - signal[:segment_samples].mean()
+    window = 0.5 - 0.5 * np.cos(
+        2 * np.pi * np.arange(segment_samples) / segment_samples
+    )
+    transform = np.dot(
+        segment * window, np.exp(-2j * np.pi * frequency * times[:segment_samples])
+    )
+    expected_power = 2 * abs(transform) ** 2 / (rate * np.sum(window**2))
+
+    profile = volume_harmonic_spectrum(
+        signal[np.newaxis, :],
+        sampling_rate=rate,
+        repetition_time_seconds=repetition_time,
+        maximum_frequency_hz=2.5,
+    )
+
+    assert profile[0].frequency_hz == frequency
+    assert profile[0].exact_power_db == pytest.approx(
+        10 * np.log10(expected_power), abs=1e-9
+    )
+
+
+def test_volume_spectrum_handles_short_fractional_volume_segments() -> None:
+    profile = volume_harmonic_spectrum(
+        np.ones((1, 103)),
+        sampling_rate=500.0,
+        repetition_time_seconds=0.1025,
+        maximum_frequency_hz=110.0,
+    )
+
+    assert len(profile) == 11
+    assert all(np.isfinite(item.exact_power_db) for item in profile)
+
+
 def _acquisition(
     repetition_time: float = 0.9,
     *,
@@ -205,6 +248,66 @@ def test_pipeline_volume_harmonic_spectrum_excludes_ecg(
     )
 
     assert seen["shape"] == (2, 200)
+
+
+def test_non_eeg_channels_cannot_supply_an_eeg_block_vote() -> None:
+    rate = 250.0
+    times = np.arange(150 * 250) / rate
+    data = np.tile(1e-6 * np.sin(2 * np.pi * 20 * times), (4, 1))
+    data[:, 60 * 250 : 90 * 250] *= 100
+
+    report = pipeline_quality._measure_residual_qc(
+        data,
+        channel_names=["Fz", "Cz", "Pz", "ECG"],
+        non_eeg_indices=frozenset({3}),
+        output_rate=rate,
+        acquisition=_acquisition(1.0, groups_per_volume=20),
+        threshold_uv=1.0,
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=100.0,
+        minimum_channels=4,
+    )
+
+    assert report["flagged_blocks"] == [False] * 5
+    assert report["flagged_channel_blocks_by_channel"] == {
+        name: [2] for name in ("Fz", "Cz", "Pz")
+    }
+
+
+@pytest.mark.parametrize("frequency", [10.0, 60.0])
+def test_volume_harmonic_block_advisory_covers_low_harmonics_and_excludes_mains(
+    frequency,
+):
+    rate = 250.0
+    times = np.arange(150 * 250) / rate
+    data = np.tile(1e-6 * np.sin(2 * np.pi * frequency * times), (4, 1))
+    data[:, 60 * 250 : 90 * 250] *= 100
+
+    report = pipeline_quality._measure_residual_qc(
+        data,
+        channel_names=["Fz", "Cz", "Pz", "ECG"],
+        non_eeg_indices=frozenset({3}),
+        output_rate=rate,
+        acquisition=_acquisition(1.0, groups_per_volume=20),
+        threshold_uv=1.0,
+        block_seconds=30.0,
+        mains_frequency_hz=60.0,
+        mains_exclusion_hz=1.0,
+        volume_spectrum_max_hz=100.0,
+        minimum_channels=3,
+    )
+
+    advisory = report["volume_harmonic_qc"]
+    assert advisory["channel_names"] == ["Fz", "Cz", "Pz"]
+    assert 10.0 in advisory["harmonics_hz"]
+    assert 60.0 not in advisory["harmonics_hz"]
+    assert advisory["flagged_blocks"] == [False, False, frequency == 10, False, False]
+    if frequency == 10:
+        assert advisory["block_coherent_rms_uv"][0][2] == pytest.approx(
+            70.710678, rel=1e-5
+        )
 
 
 def test_invalid_inputs_are_rejected() -> None:

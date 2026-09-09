@@ -16,6 +16,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import welch
 
+from .harmonics import mean_harmonic_psd
+
 _DEFAULT_MAINS_HZ = 60.0
 _DEFAULT_EXCLUSION_HZ = 1.0
 _DEFAULT_BLOCK_SECONDS = 30.0
@@ -114,6 +116,23 @@ def slice_harmonics(
             continue
         harmonics.append(float(frequency))
     return tuple(harmonics)
+
+
+def volume_harmonics(
+    *,
+    repetition_time_seconds: float,
+    nyquist_hz: float,
+    mains_hz: float,
+    exclusion_hz: float,
+) -> tuple[float, ...]:
+    """Return volume harmonics with the same mains exclusions as group QC."""
+    return slice_harmonics(
+        groups_per_volume=1,
+        repetition_time_seconds=repetition_time_seconds,
+        nyquist_hz=nyquist_hz,
+        mains_hz=mains_hz,
+        exclusion_hz=exclusion_hz,
+    )
 
 
 def block_residual_uv(
@@ -462,16 +481,8 @@ def volume_harmonic_spectrum(
     if maximum_frequency_hz >= nyquist:
         raise ResidualQcError("maximum frequency must stay below Nyquist")
 
-    samples_per_volume_float = repetition_time_seconds * sampling_rate
-    samples_per_volume = round(samples_per_volume_float)
-    if not math.isclose(
-        samples_per_volume_float,
-        samples_per_volume,
-        rel_tol=0.0,
-        abs_tol=1e-9,
-    ):
-        raise ResidualQcError("repetition time must span an integer number of samples")
-    available_volumes = recording.shape[1] // samples_per_volume
+    samples_per_volume = repetition_time_seconds * sampling_rate
+    available_volumes = math.floor(recording.shape[1] / samples_per_volume)
     target_volumes = max(
         2,
         round(_VOLUME_SPECTRUM_SECONDS / repetition_time_seconds),
@@ -479,22 +490,37 @@ def volume_harmonic_spectrum(
     segment_volumes = min(available_volumes, target_volumes)
     if segment_volumes < 2:
         raise ResidualQcError("recording must contain at least two complete volumes")
-    segment_samples = segment_volumes * samples_per_volume
+    segment_samples = round(segment_volumes * samples_per_volume)
+    fundamental_hz = 1.0 / repetition_time_seconds
+    maximum_order = int(maximum_frequency_hz // fundamental_hz)
+    if maximum_order == 0:
+        return ()
+    exact_power = mean_harmonic_psd(
+        recording,
+        sampling_rate=sampling_rate,
+        fundamental_hz=fundamental_hz,
+        harmonic_count=maximum_order,
+        segment_samples=segment_samples,
+    )
+    # Zero padding samples the local peak search even on short recordings;
+    # it does not increase their spectral resolution.
+    fft_samples = max(
+        segment_samples, math.ceil(sampling_rate / _LOCAL_PEAK_HALF_WIDTH_HZ)
+    )
     frequencies, power = welch(
         recording,
         sampling_rate,
         nperseg=segment_samples,
+        nfft=fft_samples,
         noverlap=segment_samples // 2,
         window="hann",
         axis=1,
     )
     median_power = np.median(power, axis=0)
-    fundamental_hz = 1.0 / repetition_time_seconds
-    maximum_order = int(maximum_frequency_hz // fundamental_hz)
+    median_exact_power = np.median(exact_power, axis=0)
     profile: list[VolumeHarmonicSpectrum] = []
     for order in range(1, maximum_order + 1):
         frequency_hz = order * fundamental_hz
-        exact_index = int(np.argmin(np.abs(frequencies - frequency_hz)))
         local_indices = np.flatnonzero(
             np.abs(frequencies - frequency_hz) <= _LOCAL_PEAK_HALF_WIDTH_HZ
         )
@@ -504,7 +530,7 @@ def volume_harmonic_spectrum(
             VolumeHarmonicSpectrum(
                 order=order,
                 frequency_hz=float(frequency_hz),
-                exact_power_db=_power_db(median_power[exact_index]),
+                exact_power_db=_power_db(median_exact_power[order - 1]),
                 local_peak_frequency_hz=float(frequencies[peak_index]),
                 local_peak_power_db=_power_db(median_power[peak_index]),
                 mains_collision=(
