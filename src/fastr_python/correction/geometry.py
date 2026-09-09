@@ -104,8 +104,8 @@ def gate_fastr_geometry(
     so a motion volume cannot leak its leftover into nearby *clean* templates.
     Outlier volumes keep their original local window so a non-stationary
     gradient is still tracked. Windows that never contained an outlier are left
-    untouched. If too few valid neighbours remain for a target, that target
-    keeps its original window.
+    untouched. If a clean target has fewer than two non-excluded same-slot
+    neighbours, raise an error rather than retain its contaminated template.
     """
     _validate_geometry_alignment(geometry, alignment)
     mad_multiplier = validate_positive_finite(
@@ -839,14 +839,13 @@ def _robust_outliers(
 ) -> np.ndarray:
     median = float(np.median(values))
     mad = float(np.median(np.abs(values - median)))
-    if mad == 0.0:
-        above = values[values > median]
+    if median == 0.0:
+        above = values[values > 0.0]
         if above.size == 0:
             return np.zeros(values.shape, dtype=bool)
-        scale = float(np.median(above))
-        if scale <= 0.0:
-            return np.zeros(values.shape, dtype=bool)
-        return values > scale * ratio
+        # With a zero background, missing-edge artifacts can leave sparse
+        # echoes in otherwise exact templates. Preserve their relative scale.
+        return values > float(np.median(above)) * ratio
     threshold = max(
         median * ratio,
         median + mad_multiplier * 1.4826 * mad,
@@ -878,7 +877,9 @@ def _replace_excluded_neighbors(
                 continue
             usable = usable_all[usable_all != target]
             if usable.size < _RESIDUAL_GATE_MIN_NEIGHBORS:
-                continue
+                raise FastrInputError(
+                    "too few non-excluded same-slot groups remain for residual gating"
+                )
             kept = valid_members[~excluded[valid_members]]
             need = n_neighbors - kept.size
             if need <= 0:

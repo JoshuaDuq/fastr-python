@@ -386,7 +386,7 @@ def obs_trigger_subset(
     epoch = _measure_artifact_epoch(fine, cover_full_gap=False)
     limit = sample_count * interpolation_factor
     keep = (fine - epoch.samples_before >= 0) & (
-        fine + epoch.residual_samples_after <= limit
+        fine + epoch.residual_samples_after < limit
     )
     kept = triggers[keep]
     if kept.size < 2:

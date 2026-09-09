@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from fastr_python.correction.geometry import (
+    _replace_excluded_neighbors,
+    _robust_outliers,
     adapt_channel_fastr_geometry,
     prepare_local_fastr_geometry,
 )
@@ -78,6 +80,24 @@ def test_gate_is_a_no_op_on_a_stationary_artifact() -> None:
         gated.window.indices,
         geometry.window.indices,
     )
+
+
+@pytest.mark.parametrize("background", [1.0, 100.0])
+def test_zero_mad_does_not_let_an_outlier_set_its_own_threshold(background):
+    scores = np.full(100, background)
+    scores[50] = 1000.0 + 100 * background
+
+    flagged = _robust_outliers(scores, mad_multiplier=8.0, ratio=8.0)
+
+    np.testing.assert_array_equal(np.flatnonzero(flagged), [50])
+
+
+def test_gate_surfaces_insufficient_clean_neighbors():
+    indices = np.array([[1, 2], [0, 2], [1, 3], [1, 2]])
+    excluded = np.array([True, True, True, False])
+
+    with pytest.raises(FastrInputError, match="too few non-excluded"):
+        _replace_excluded_neighbors(indices, excluded, stride=1)
 
 
 def test_gate_drops_a_contaminated_volume_from_neighbour_windows() -> None:

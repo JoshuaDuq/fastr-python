@@ -63,6 +63,26 @@ def test_obs_trigger_subset_raises_when_nothing_fits() -> None:
         )
 
 
+@pytest.mark.parametrize(("sample_count", "last_trigger"), [(1998, 1800), (1999, 1900)])
+def test_obs_subset_respects_the_inclusive_epoch_endpoint(sample_count, last_trigger):
+    kept = obs_trigger_subset(
+        np.arange(0, 2000, 100),
+        sample_count=sample_count,
+        interpolation_factor=10,
+    )
+
+    assert kept[-1] == last_trigger
+    corrected = residual_obs(
+        np.zeros((1, sample_count)),
+        kept,
+        sampling_rate=1000.0,
+        excluded_channels=[],
+        rank=2,
+        interpolation_factor=10,
+    )
+    assert corrected.shape == (1, sample_count)
+
+
 def test_residual_obs_removes_repeating_residual_and_keeps_wanted_signal() -> None:
     rate = 5000.0
     period = 500
