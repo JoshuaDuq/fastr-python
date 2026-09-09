@@ -100,7 +100,12 @@ def resolve_reference_channel(
     return reference
 
 
-def make_output_low_pass(sampling_rate: float, lowpass_hz: float) -> np.ndarray:
+def make_output_low_pass(
+    sampling_rate: float,
+    lowpass_hz: float,
+    *,
+    output_sampling_rate: float,
+) -> np.ndarray:
     """Design the anti-alias low-pass applied before decimation.
 
     `fmrib_fastr.m` builds a least-squares FIR and runs it through `filtfilt`,
@@ -110,15 +115,19 @@ def make_output_low_pass(sampling_rate: float, lowpass_hz: float) -> np.ndarray:
     the output actually keeps. MNE designs it; the symmetric odd-length result
     is zero-phase once its group delay is removed.
     """
-    if lowpass_hz >= 0.5 * sampling_rate:
-        raise PipelineInputError(
-            "lowpass_hz must stay below the input Nyquist frequency"
-        )
+    validate_rates(sampling_rate, output_sampling_rate, lowpass_hz)
+    # MNE's automatic transition, constrained to reach the stopband before
+    # decimation. The passband edge stays at the requested cutoff.
+    transition_hz = min(
+        max(0.25 * lowpass_hz, 2.0),
+        0.5 * output_sampling_rate - lowpass_hz,
+    )
     return mne.filter.create_filter(
         None,
         sfreq=sampling_rate,
         l_freq=None,
         h_freq=lowpass_hz,
+        h_trans_bandwidth=transition_hz,
         method="fir",
         phase="zero",
         fir_window="hamming",
@@ -131,6 +140,7 @@ def apply_output_low_pass(
     data: np.ndarray,
     *,
     sampling_rate: float,
+    output_sampling_rate: float,
     lowpass_hz: float,
 ) -> np.ndarray:
     """Low-pass the whole array in place of the recording, without decimating.
@@ -139,9 +149,12 @@ def apply_output_low_pass(
     untrimmed run, whose emitted span reaches sample zero, from being faded in
     from nothing.
     """
+    validate_rates(sampling_rate, output_sampling_rate, lowpass_hz)
     if lowpass_hz == 0.0:
         return np.array(data, copy=True)
-    taps = make_output_low_pass(sampling_rate, lowpass_hz)
+    taps = make_output_low_pass(
+        sampling_rate, lowpass_hz, output_sampling_rate=output_sampling_rate
+    )
     pad = (taps.size - 1) // 2
     reflected = np.pad(
         data,
@@ -190,6 +203,7 @@ def lowpass_and_decimate(
         apply_output_low_pass(
             data,
             sampling_rate=sampling_rate,
+            output_sampling_rate=output_sampling_rate,
             lowpass_hz=lowpass_hz,
         ),
         sampling_rate=sampling_rate,

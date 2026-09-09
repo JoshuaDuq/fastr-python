@@ -203,6 +203,7 @@ def _finish_channel_batch(
     filtered = pipeline_io.apply_output_low_pass(
         corrected,
         sampling_rate=context.input_rate,
+        output_sampling_rate=context.output_rate,
         lowpass_hz=processing.lowpass_hz,
     )
     anc_reference_scales = np.full(row_count, np.nan, dtype=np.float64)
@@ -213,6 +214,7 @@ def _finish_channel_batch(
         artifact_estimate = pipeline_io.apply_output_low_pass(
             original - corrected,
             sampling_rate=context.input_rate,
+            output_sampling_rate=context.output_rate,
             lowpass_hz=processing.lowpass_hz,
         )
         anc_result = adaptive_noise_cancel(

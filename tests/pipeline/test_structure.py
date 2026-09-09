@@ -140,7 +140,10 @@ def test_output_low_pass_does_not_taper_the_start_of_the_emitted_span() -> None:
         window=OutputWindow(start=0, stop=tone.shape[1]),
     )
 
-    half = (pipeline_io.make_output_low_pass(rate, 100.0).size - 1) // 2
+    half = (
+        pipeline_io.make_output_low_pass(rate, 100.0, output_sampling_rate=rate).size
+        - 1
+    ) // 2
     np.testing.assert_allclose(filtered[0, :half], tone[0, :half], atol=0.01)
     np.testing.assert_allclose(filtered[0, -half:], tone[0, -half:], atol=0.01)
 
@@ -167,3 +170,36 @@ def test_zero_low_pass_rejects_decimation_without_an_antialias_filter() -> None:
             output_rate=500.0,
             lowpass_hz=0.0,
         )
+
+
+@pytest.mark.parametrize("frequency", [125.5, 126.0, 130.0, 140.0])
+def test_downsampling_rejects_frequencies_above_output_nyquist(frequency) -> None:
+    rate = 5000.0
+    times = np.arange(100000) / rate
+    tone = np.sin(2 * np.pi * frequency * times)[np.newaxis, :]
+
+    output = pipeline_io.lowpass_and_decimate(
+        tone,
+        sampling_rate=rate,
+        output_sampling_rate=250.0,
+        lowpass_hz=120.0,
+        window=OutputWindow(0, tone.shape[1]),
+    )
+
+    assert np.sqrt(2) * output[0, 500:-500].std() < 0.003
+
+
+def test_narrow_antialias_transition_preserves_the_requested_passband() -> None:
+    rate = 5000.0
+    times = np.arange(100000) / rate
+    tone = np.sin(2 * np.pi * 120.0 * times)[np.newaxis, :]
+
+    output = pipeline_io.lowpass_and_decimate(
+        tone,
+        sampling_rate=rate,
+        output_sampling_rate=250.0,
+        lowpass_hz=120.0,
+        window=OutputWindow(0, tone.shape[1]),
+    )
+
+    assert np.sqrt(2) * output[0, 500:-500].std() == pytest.approx(1.0, abs=0.003)

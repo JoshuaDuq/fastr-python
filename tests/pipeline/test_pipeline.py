@@ -1,11 +1,14 @@
 import json
+import platform
 import warnings
+from importlib.metadata import version
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import pytest
+import scipy
 import yaml
 from pybv import write_brainvision
 from scipy.signal import oaconvolve
@@ -150,6 +153,13 @@ def test_run_correction_writes_reopenable_output_and_provenance(
     assert provenance["residual_qc"]["mains_frequency_hz"] == 60.0
     assert provenance["residual_qc"]["mains_exclusion_hz"] == 1.0
     assert "Comment/preserve me" in set(raw.annotations.description)
+    assert provenance["software_environment"] == {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "scipy": scipy.__version__,
+        "mne": mne.__version__,
+        "pybv": version("pybv"),
+    }
 
 
 def test_channel_batch_helper_preserves_pipeline_samples(tmp_path: Path) -> None:
@@ -644,7 +654,7 @@ def _reference_low_pass(data: np.ndarray, taps: np.ndarray) -> np.ndarray:
 def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
     rng = np.random.default_rng(0)
     data = rng.standard_normal((2, 1000))
-    taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
+    taps = pipeline_io.make_output_low_pass(5000.0, 100.0, output_sampling_rate=1000.0)
     filtered = _reference_low_pass(data, taps)
 
     actual = pipeline_io.lowpass_and_decimate(
@@ -664,7 +674,7 @@ def test_lowpass_and_decimate_anchors_phase_to_the_window_start() -> None:
 def test_lowpass_and_decimate_full_window_matches_the_legacy_stride() -> None:
     rng = np.random.default_rng(1)
     data = rng.standard_normal((3, 500))
-    taps = pipeline_io.make_output_low_pass(5000.0, 100.0)
+    taps = pipeline_io.make_output_low_pass(5000.0, 100.0, output_sampling_rate=1000.0)
     expected = _reference_low_pass(data, taps)[:, ::5]
 
     actual = pipeline_io.lowpass_and_decimate(

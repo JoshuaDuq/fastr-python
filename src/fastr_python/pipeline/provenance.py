@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import math
+import platform
 from dataclasses import asdict
+from importlib.metadata import version
 from pathlib import Path
 
 import mne
@@ -200,6 +202,10 @@ def make_provenance(
 
     return {
         "package_version": __version__,
+        "software_environment": {
+            "python": platform.python_version(),
+            **{name: version(name) for name in ("numpy", "scipy", "mne", "pybv")},
+        },
         "method": config.processing.method,
         "input": {
             "raw_vhdr": str(recording.header_path),
