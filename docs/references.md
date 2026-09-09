@@ -33,6 +33,9 @@
   and [EEG reading tutorial](https://mne.tools/stable/auto_tutorials/io/20_reading_eeg_data.html).
 - [MNE examples and tutorials](https://mne.tools/stable/auto_examples/index.html)
   document the supported analysis patterns used by the project.
+- [FIR filter design](https://mne.tools/stable/generated/mne.filter.create_filter.html)
+  and [filtering before resampling](https://mne.tools/stable/auto_tutorials/preprocessing/30_filtering_resampling.html)
+  describe passband, transition, and anti-alias requirements.
 
 ## File formats and signal processing
 
@@ -40,7 +43,9 @@
   the header, binary data, and marker-file format read and written by FASTR.
 - [SciPy signal-processing documentation](https://docs.scipy.org/doc/scipy/reference/signal.html),
   including [Welch spectral estimation](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.welch.html)
-  used by comparison diagnostics.
+  used by comparison diagnostics, and
+  [ZoomFFT](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.ZoomFFT.html)
+  used to evaluate acquisition harmonics at their exact frequencies.
 
 ## FMRIB FASTR implementation
 

@@ -96,25 +96,50 @@ signal transfer. Zero-variance and divergent states raise an error.
 ## Output filtering and decimation
 
 The output low-pass is a zero-phase FIR designed through MNE-Python and applied
-before integer decimation. Its cutoff must be below both input and output
-Nyquist frequencies. A zero cutoff is allowed only when the output rate equals
-the input rate. See [MNE filtering documentation](references.md#mne-python).
+before integer decimation. Its passband edge must be below both input and output
+Nyquist frequencies. The transition width is the smaller of MNE's automatic
+width and the distance from the passband edge to output Nyquist. This keeps the
+stopband at or below output Nyquist without moving the requested passband edge;
+narrow transitions require longer filters. The same filter is applied to the
+ANC artifact reference. A zero cutoff is allowed only when the output rate
+equals the input rate. See [MNE filtering documentation](references.md#mne-python).
 
 Frequencies in `line_noise_frequencies_hz` are regressed from EEG channels
 after filtering and decimation. An empty list disables regression.
 
 ## Quality control and provenance
 
-Residual QC measures scanner-locked harmonic excess in microvolts over complete
-blocks. Temporal flags identify coherent multi-channel blocks; optional spatial
+Residual QC measures acquisition-group harmonic excess in microvolts over complete
+blocks. Temporal flags count EEG channels only; optional spatial
 flags identify isolated channel-block outliers. The failure policy may retry a
 candidate with a local window and recommend a bad channel. It never drops or
 interpolates channels.
 
+The separate `residual_qc.volume_harmonic_qc` report covers integer multiples of
+`1 / RepetitionTime`, including harmonics below the group rate. Each complete
+block uses a detrended rectangular window and Fourier-series normalization to
+report the RMS of components at the declared harmonic frequencies. Mains
+collisions are excluded and only EEG channels enter this report. Its flags use
+the same configured floor, robust multiplier, and minimum EEG-channel count,
+but remain separate from group-residual flags and automatic local retries.
+These measurements include possible neural activity and must not be interpreted
+as artifact alone. Finite block lengths also admit leakage from nearby frequencies;
+longer blocks distinguish nearby frequencies more clearly. Rectangular windows
+avoid counting a harmonic twice through adjacent harmonics even for one-volume
+blocks. Measurements are reported in JSON, without automatic data rejection.
+
+The whole-run volume spectrum evaluates power at exact harmonic frequencies with
+SciPy ZoomFFT and Welch density normalization. Local peak searches use a separate
+Welch spectrum. Segment durations are sampled on the output grid; acquisition
+periods and harmonic frequencies are not rounded. Fractional output samples per
+volume are supported, such as TR 0.9 s at 625 Hz. Zero padding samples the local
+peak search on short recordings but does not improve their spectral resolution.
+
 The JSON sidecar records input SHA-256 hashes, resolved timing and geometry,
 configuration, output window, alignment, correction counts, PSD interval,
-residual measurements, channel decisions, and runtime. Preserve it with the
-corrected recording.
+residual measurements, channel decisions, and runtime. `software_environment`
+records Python, NumPy, SciPy, MNE, and pybv versions. Preserve the sidecar with
+the corrected recording.
 
 ## The 1/TR limitation
 
@@ -123,6 +148,12 @@ Scanner artifact and its harmonics are locked to the acquisition period:
 those frequencies cannot be separated by frequency alone. Template, OBS, and
 ANC stages can reduce signal as well as artifact. Report suppression with an
 independent signal-transfer measure.
+
+For example, continuous 10 Hz activity is exactly the ninth volume harmonic at
+TR 0.9 s and may be removed with the artifact, even while nearby 10.5 Hz activity
+survives. Validate the frequencies and time structure used by the intended
+analysis, including bursts and task-locked responses. Lower residual power alone
+does not establish that EEG was preserved.
 
 ## Known limitations
 

@@ -49,6 +49,12 @@ For each corrected run:
 6. Review alignment, residual-QC blocks, and channel recommendations before
    downstream rejection or interpolation.
 
+Inspect both group-residual flags and the separate
+`residual_qc.volume_harmonic_qc` block measurements. Volume harmonics below the
+group rate can be prominent even when the group-residual report is quiet. The
+coherent harmonic RMS includes any neural activity at those frequencies; its
+flags are advisory and do not control automatic retries or reject data.
+
 ## Comparison to another correction implementation
 
 Use the [FMRIB parity audit](fmrib-parity-validation.md) and its runners when a
@@ -75,6 +81,7 @@ Keep these with each result:
 - `fastr-python --version` output;
 - exact YAML configuration;
 - provenance JSON and input hashes;
+- Python and numerical dependency versions from `software_environment`;
 - scanner, sequence, sampling rate, montage, and marker details;
 - timing-validation output; and
 - residual and signal-transfer measures used for interpretation.

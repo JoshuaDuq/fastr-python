@@ -75,15 +75,15 @@ the same validation.
 | `processing.neighbor_count` | positive even integer | required | volumes/groups | Wide moving-template width. |
 | `processing.search_radius_samples` | nonnegative integer | required | input samples | Alignment search radius around each trigger. |
 | `processing.pre_trigger_fraction` | number | `0.03` | fraction | Trigger location within the artifact epoch; must be in `[0, 1]`. |
-| `processing.lowpass_hz` | nonnegative number | required | Hz | Anti-alias cutoff below both Nyquist frequencies unless zero. Zero is allowed only without decimation. |
-| `processing.output_sampling_rate_hz` | positive number | required | Hz | Input/output rates must have an integer ratio; output cannot exceed input. |
+| `processing.lowpass_hz` | nonnegative number | required | Hz | Passband edge below both Nyquist frequencies unless zero; transition is constrained to reach the stopband by output Nyquist. Zero is allowed only without decimation. |
+| `processing.output_sampling_rate_hz` | positive number | required | Hz | Input/output rates must have an integer ratio; output cannot exceed input. QC supports fractional output samples per volume. |
 | `processing.channel_batch_size` | positive integer | required | channels/batch | Controls memory use without changing the numerical path. |
 | `processing.reference_channel` | string or integer | required | channel name/index | Alignment reference; names and indices must be valid. |
 | `processing.line_noise_frequencies_hz` | list of positive numbers | required | Hz | Frequencies below output Nyquist; `[]` disables regression. Applied to EEG after filtering/decimation. |
 | `processing.non_eeg_channels` | list of strings | `[ECG]` | channel names | Excluded from template scaling, residual OBS, ANC, line-noise regression, and residual-QC statistics. |
 | `processing.template_high_pass_hz` | nonnegative number | `1.0` | Hz | High-pass for template estimation and alignment; `0.0` uses the unfiltered estimate. |
-| `processing.residual_threshold_uv` | nonnegative number | `1.0` | µV | Legacy absolute residual threshold for residual gating; does not replace robust QC thresholds. |
-| `processing.residual_gate` | boolean | `false` | — | Excludes extreme residual volumes from clean-neighbour templates. |
+| `processing.residual_threshold_uv` | nonnegative number | `1.0` | µV | Absolute floor for temporal group-residual and coherent volume-harmonic QC flags; the robust outlier and minimum-channel criteria must also hold. |
+| `processing.residual_gate` | boolean | `false` | — | Excludes extreme residual volumes from clean-neighbour templates; fails if fewer than two clean same-slot neighbours remain. Flagged targets retain their local windows. |
 | `processing.residual_obs` | boolean | `false` | — | Enables residual optimal-basis correction after template subtraction. |
 | `processing.residual_obs_rank` | positive integer or `auto` | `4` | components | Fixed OBS rank or FMRIB-style automatic selection. |
 | `processing.residual_obs_section_seconds` | positive number or null | `null` | seconds | Refit OBS by sections; null fits one basis for the run. |
@@ -93,7 +93,7 @@ the same validation.
 | `processing.local_neighbor_count` | positive even integer | `20` | volumes/groups | Local window width; must be smaller than `neighbor_count` for local modes. |
 | `processing.local_window_channels` | list of strings | `[]` | channel names | Forces the local window for named EEG channels; names must exist and cannot be non-EEG. |
 | `processing.residual_gate_mad_multiplier` | positive number | `8.0` | robust sigma | Residual-gate outlier multiplier. |
-| `processing.residual_gate_ratio` | positive number | `8.0` | ratio | Maximum allowed fraction of residual-gated volumes. |
+| `processing.residual_gate_ratio` | positive number | `8.0` | ratio | Residual-score threshold relative to the background level, combined with the MAD threshold. |
 | `processing.residual_gate_max_fraction` | number in `(0, 1]` | `0.02` | fraction | Upper bound on excluded volumes. |
 | `processing.adaptive_improvement_ratio` | number in `(0, 1]` | `0.85` | ratio | Local residual must be at most this fraction of the wide score. |
 | `processing.channel_failure_policy` | `report` or `retry_local_and_recommend_bad` | `report` | — | Retry policy owns its local window; requires channel-outlier reporting and is incompatible with other local/adaptive modes. Never drops or interpolates a channel. |
@@ -107,7 +107,7 @@ the same validation.
 | `quality_control.mains_exclusion_hz` | nonnegative number | `1.0` | Hz | Width around mains harmonics excluded from attribution. |
 | `quality_control.residual_mad_multiplier` | nonnegative number | `6.0` | robust sigma | Per-channel temporal residual multiplier for coherent block flags. |
 | `quality_control.residual_minimum_channels` | positive integer | `4` | channels | Minimum simultaneous EEG channels for a residual-block flag. |
-| `quality_control.volume_spectrum_max_hz` | positive number | `110.0` | Hz | Highest reported volume harmonic, capped by output Nyquist. |
+| `quality_control.volume_spectrum_max_hz` | positive number | `110.0` | Hz | Highest harmonic in the whole-run volume spectrum and separate coherent volume-harmonic block report, capped below output Nyquist. |
 | `quality_control.report_channel_outliers` | boolean | `true` | — | Reports isolated channel/block outliers; does not alter samples. Required by the automatic channel-failure policy. |
 | `quality_control.bad_channel_residual_uv` | positive number | `5.0` | µV | Absolute floor for spatial channel-failure candidates. |
 
@@ -136,7 +136,8 @@ the same validation.
   `local_window_channels` are mutually exclusive. The automatic channel
   failure policy is also incompatible with them.
 - A nonzero low-pass must be below both Nyquist frequencies. Decimation needs
-  anti-alias filtering; zero cutoff is valid only when rates are equal.
+  anti-alias filtering, including its transition band; zero cutoff is valid only
+  when rates are equal. A cutoff close to output Nyquist requires a longer FIR.
 - Values select or enable stages; invalid inputs raise errors rather than
   triggering a fallback.
 
