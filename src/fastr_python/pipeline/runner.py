@@ -108,6 +108,7 @@ def _run_correction(
         acquisition.volume_starts,
         mode=config.trim.mode,
         input_sample_count=int(raw.n_times),
+        volume_duration_samples=round(acquisition.repetition_time_seconds * input_rate),
     )
     reference_index = pipeline_io.resolve_reference_channel(
         raw.ch_names,

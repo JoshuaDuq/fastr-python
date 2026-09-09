@@ -767,11 +767,11 @@ def test_trimmed_run_emits_the_first_to_last_volume_span(tmp_path: Path) -> None
     trim = provenance["trim"]
     assert trim["mode"] == "first_to_last_volume"
     assert trim["window_start_sample"] == 200
-    assert trim["window_stop_sample"] == 801
-    assert trim["window_length"] == 601
+    assert trim["window_stop_sample"] == 900
+    assert trim["window_length"] == 700
     assert trim["head_margin_samples"] == 200
-    assert trim["tail_margin_samples"] == 200
-    assert summary.output_sample_count == (601 - 1) // 2 + 1
+    assert trim["tail_margin_samples"] == 101
+    assert summary.output_sample_count == 350
     assert summary.input_sample_count == 1001
 
     raw = mne.io.read_raw_brainvision(
@@ -779,7 +779,7 @@ def test_trimmed_run_emits_the_first_to_last_volume_span(tmp_path: Path) -> None
         preload=True,
         verbose="ERROR",
     )
-    assert raw.get_data().shape == (3, 301)
+    assert raw.get_data().shape == (3, 350)
     assert np.all(np.isfinite(raw.get_data()))
 
 
@@ -796,6 +796,19 @@ def test_trimmed_run_puts_the_first_volume_marker_on_the_first_sample(
     ]
     assert volume_positions[0] == 1
     assert volume_positions == [1 + 50 * index for index in range(7)]
+
+
+def test_trimmed_run_keeps_and_marks_a_partial_final_volume(tmp_path: Path) -> None:
+    config = load_config(make_untrimmed_fixture(tmp_path, head=200, tail=36))
+
+    summary = run_correction(config)
+
+    provenance = json.loads(summary.provenance_json.read_text(encoding="utf-8"))
+    assert provenance["trim"]["window_stop_sample"] == 837
+    assert summary.output_sample_count == 319
+    _, markers = read_brainvision_markers(summary.output_vmrk)
+    bad = [marker for marker in markers if marker.description == "Bad_Gradient"]
+    assert any(marker.position + marker.size - 1 == 319 for marker in bad)
 
 
 def test_trimmed_run_uses_the_margin_to_correct_the_boundary_volumes(

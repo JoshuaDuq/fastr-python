@@ -36,9 +36,11 @@ in provenance, and receive a `Bad_Gradient` marker.
 
 ## Trimming and boundary margin
 
-`trim.mode: none` emits the full recording. `first_to_last_volume` emits the
-zero-based, half-open span from the first through last selected volume marker.
-Correction and filtering still run on the untrimmed input first.
+`trim.mode: none` emits the full recording. `first_to_last_volume` starts at the
+first selected volume marker and ends one declared TR after the last selected
+marker, clipped to the recording end. Correction and filtering still run on the
+untrimmed input first. A partial final TR is retained, with uncorrected boundary
+samples marked `Bad_Gradient`.
 
 The final volume is not synthesized when its artifact epoch is incomplete. A
 marker gap is an error by default. Explicit repair can fill uniquely located

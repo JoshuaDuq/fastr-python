@@ -122,7 +122,7 @@ the same validation.
 
 | Field | Type | Required or default | Units | Rules |
 | --- | --- | --- | --- | --- |
-| `trim.mode` | `none` or `first_to_last_volume` | `none` | — | `none` emits the full recording. The other mode emits the span from the first through last selected volume marker after correction. Explicit volume-marker selection requires it. |
+| `trim.mode` | `none` or `first_to_last_volume` | `none` | — | `none` emits the full recording. The other mode starts at the first selected volume marker and ends one declared TR after the last, clipped to the recording end. Partial final TRs are retained; uncorrected boundary samples are marked `Bad_Gradient`. Explicit volume-marker selection requires this mode. |
 
 ## Interaction rules
 
