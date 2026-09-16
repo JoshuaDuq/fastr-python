@@ -67,6 +67,9 @@ extend-select = ["C90", "N", "D101", "D102", "D103", "D401"]
 
 [tool.mypy]
 files = ["src/fastr_python", "benchmark"]
+# Runs under FACETpy's own interpreter, whose dependencies conflict with this
+# project's; there is no environment here in which to check it.
+exclude = ["benchmark/arms/facetpy_runner\\.py"]
 python_version = "3.12"
 strict = true
 warn_return_any = false

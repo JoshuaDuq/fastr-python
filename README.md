@@ -50,51 +50,28 @@ The package is `fastr_python`; the command-line entrypoint is `fastr-python`; an
 
 ## Processing Pipeline Flow
 
-```text
-               +--------------------------------------------+
-               |  Raw BrainVision Recording (.vhdr/.vmrk)   |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |  Timing & Acquisition Geometry Validation  |
-               |  (BIDS RepetitionTime / Measured Slices)   |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |    Sub-sample Temporal Sinc Alignment      |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |   Target-Excluding Moving Average (AAS)    |
-               |   - Least-squares channel amplitude scale  |
-               |   - Adaptive / gated window policies       |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |      Optional Residual OBS (PCA Basis)     |
-               |      Optional Normalized LMS ANC           |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |  Zero-Phase Delay-Compensated FIR Lowpass  |
-               |  & Exact Integer Decimation (MNE-Python)   |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |      Stationary Line-Noise Regression      |
-               +--------------------------------------------+
-                                     |
-                                     v
-               +--------------------------------------------+
-               |   Harmonic QC, Provenance JSON & Export    |
-               |   (.vhdr / .eeg / .vmrk / .json / .png)    |
-               +--------------------------------------------+
+```mermaid
+flowchart LR
+    subgraph IN ["Inputs"]
+        direction TB
+        raw["BrainVision Data<br/>.vhdr / .eeg / .vmrk"]
+        meta["Timing Metadata<br/>BIDS JSON / Triggers"]
+    end
+
+    subgraph CORE ["FASTR Correction Pipeline"]
+        direction LR
+        s1["1. Sinc Alignment"] --> s2["2. Moving Average AAS"]
+        s2 --> s3["3. Residual OBS / ANC"]
+        s3 --> s4["4. FIR Filter & Decimate"]
+    end
+
+    subgraph OUT ["Outputs"]
+        direction TB
+        clean["Corrected Recording<br/>.vhdr / .eeg / .vmrk"]
+        prov["Audit Sidecar & Plots<br/>.json / _psd_*.png"]
+    end
+
+    IN --> CORE --> OUT
 ```
 
 ---

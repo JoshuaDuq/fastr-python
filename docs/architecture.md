@@ -16,38 +16,13 @@ This document details the engineering principles, subsystem boundaries, data flo
 
 ## 2. Subsystem Architecture & Component Flow
 
-```text
-[ Configuration ]
-        |
-        v  (fastr_python.config)
-[ Validated Config Model ]
-        |
-        +-----------------------------------+
-        |                                   |
-        v (fastr_python.io)                 v (fastr_python.correction.timing)
-[ BrainVision Reader ]             [ Acquisition Geometry ]
-(.vhdr / .eeg / .vmrk)              (BIDS / Slice Offsets / Triggers)
-        |                                   |
-        +-----------------+-----------------+
-                          |
-                          v (fastr_python.pipeline.coordinator)
-              [ Batch Channel Processor ]
-                          |
-                          +--> [ Sub-sample Interpolation & Sinc Alignment ]
-                          +--> [ Target-Excluding Moving Average (AAS) ]
-                          +--> [ Optional Residual OBS (PCA Projection) ]
-                          +--> [ Optional Normalized LMS ANC ]
-                          +--> [ Zero-Phase Delay-Compensated FIR Lowpass ]
-                          +--> [ Exact Integer Decimation ]
-                          +--> [ Stationary Line-Noise Regression ]
-                          |
-                          v (fastr_python.quality)
-              [ Residual & Harmonic QC ]
-              (ZoomFFT / Coherent Block RMS)
-                          |
-                          v (fastr_python.io / fastr_python.pipeline.provenance)
-              [ Corrected BrainVision Export & JSON Provenance ]
-              (.vhdr / .eeg / .vmrk / .json / _psd_*.png)
+```mermaid
+flowchart LR
+    cfg["Config & Timing<br/>fastr_python.config"] --> io_in["Recording Ingestion<br/>fastr_python.io"]
+    io_in --> coord["Batch Coordinator<br/>fastr_python.pipeline"]
+    coord --> num["Numerical Correction<br/>fastr_python.correction"]
+    num --> qc["Residual & Harmonic QC<br/>fastr_python.quality"]
+    qc --> io_out["Export & Provenance<br/>fastr_python.io"]
 ```
 
 ---
