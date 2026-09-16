@@ -25,7 +25,7 @@ from pathlib import Path
 import mne
 import numpy as np
 
-from benchmark.arms import Arm, ArmError, ArmOutput, resolve_geometry
+from benchmark.arms import Arm, ArmError, ArmOutput, MeasuredRun, resolve_geometry
 from benchmark.cohort import RunSpec
 from benchmark.config import BenchmarkConfig
 from benchmark.harmonise import (
@@ -62,6 +62,7 @@ class ArmAttempt:
     arm: str
     probe: str
     output: ArmOutput | None
+    cost: MeasuredRun | None
     error: str | None
 
     @property
@@ -100,10 +101,16 @@ def correct_run(
                 output = arm.correct(probe_run, output_directory=directory)
             except (ArmError, OSError, ValueError) as error:
                 attempts.append(
-                    ArmAttempt(arm.name, name, None, f"{type(error).__name__}: {error}")
+                    ArmAttempt(
+                        arm.name,
+                        name,
+                        None,
+                        getattr(error, "cost", None),
+                        f"{type(error).__name__}: {error}",
+                    )
                 )
                 continue
-            attempts.append(ArmAttempt(arm.name, name, output, None))
+            attempts.append(ArmAttempt(arm.name, name, output, output.cost, None))
     return tuple(attempts)
 
 
@@ -332,15 +339,12 @@ def write_outcomes(attempts: Sequence[ArmAttempt], run: RunSpec, path: Path) -> 
                         "status": "ok" if attempt.succeeded else "failed",
                         "error": attempt.error,
                         "wall_clock_seconds": (
-                            attempt.output.cost.wall_clock_seconds
-                            if attempt.output
-                            else None
+                            attempt.cost.wall_clock_seconds if attempt.cost else None
                         ),
                         "peak_memory_bytes": (
-                            attempt.output.cost.peak_memory_bytes
-                            if attempt.output
-                            else None
+                            attempt.cost.peak_memory_bytes if attempt.cost else None
                         ),
+                        "exit_code": attempt.cost.exit_code if attempt.cost else None,
                     }
                 )
                 + "\n"

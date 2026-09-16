@@ -79,7 +79,11 @@ class MatlabFmribArm:
             ]
         )
         if cost.exit_code != 0:
-            raise ArmError(f"{NAME} failed on {run.raw_vhdr.name}:\n{cost.output}")
+            raise ArmError(
+                f"{NAME} failed on {run.raw_vhdr.name} "
+                f"(exit {cost.exit_code}):\n{cost.output}",
+                cost=cost,
+            )
 
         corrected = _rewrite_as_brainvision(
             samples,

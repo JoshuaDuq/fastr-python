@@ -59,7 +59,13 @@ def main(request_path: str) -> int:
     triggers = np.asarray(request["triggers"], dtype=int)
     output_vhdr = Path(request["output_vhdr"])
     contract = _probe_contract(request) if request["mode"] == DEEP_LEARNING else None
-    channel_wise = contract is not None and contract[0] == 1
+    # Averaging corrections build one template per channel, so processing the
+    # channels one at a time gives the same result. It is the only way they fit:
+    # upsampling 64 channels tenfold in one array asks for 12.4 GB, and the
+    # slot-matched correction was killed by the OS at 64 channels without it.
+    channel_wise = (
+        contract[0] == 1 if contract is not None else request["mode"] != DEEP_LEARNING
+    )
 
     result = Pipeline(
         [

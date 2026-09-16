@@ -42,10 +42,6 @@ from fastr_python.io.recording import (
 _MAXRSS_SCALE = 1 if sys.platform == "darwin" else 1024
 
 
-class ArmError(RuntimeError):
-    """Raised when an arm cannot produce a corrected recording."""
-
-
 @dataclass(frozen=True, slots=True)
 class MeasuredRun:
     """What one subprocess cost, and what it said."""
@@ -54,6 +50,20 @@ class MeasuredRun:
     peak_memory_bytes: int
     exit_code: int
     output: str
+
+
+class ArmError(RuntimeError):
+    """Raised when an arm cannot produce a corrected recording.
+
+    Carries what the attempt cost wherever a subprocess actually ran. A failure
+    is a measurement in this benchmark, and an arm killed for exhausting memory
+    is diagnosable only from the clock and the resident set it reached before
+    it died -- which is exactly what a bare message throws away.
+    """
+
+    def __init__(self, message: str, *, cost: MeasuredRun | None = None) -> None:
+        super().__init__(message)
+        self.cost = cost
 
 
 @dataclass(frozen=True, slots=True)

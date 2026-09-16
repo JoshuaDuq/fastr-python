@@ -49,7 +49,11 @@ class FastrPythonArm:
         )
         cost = run_measured([_executable(), "run", "--config", str(config_path)])
         if cost.exit_code != 0:
-            raise ArmError(f"{NAME} failed on {run.raw_vhdr.name}:\n{cost.output}")
+            raise ArmError(
+                f"{NAME} failed on {run.raw_vhdr.name} "
+                f"(exit {cost.exit_code}):\n{cost.output}",
+                cost=cost,
+            )
         return _read_output(corrected, cost=cost)
 
     def _configuration(

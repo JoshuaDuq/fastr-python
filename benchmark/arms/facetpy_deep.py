@@ -99,7 +99,11 @@ class FacetpyDeepArm:
         )
         cost = run_measured([str(self.interpreter), str(RUNNER), str(request)])
         if cost.exit_code != 0:
-            raise ArmError(f"{self.name} failed on {run.raw_vhdr.name}:\n{cost.output}")
+            raise ArmError(
+                f"{self.name} failed on {run.raw_vhdr.name} "
+                f"(exit {cost.exit_code}):\n{cost.output}",
+                cost=cost,
+            )
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         return ArmOutput(
             corrected_vhdr=corrected,

@@ -54,3 +54,24 @@ def test_run_measured_reads_output_larger_than_a_pipe_buffer():
 def test_run_measured_surfaces_a_missing_command():
     with pytest.raises(FileNotFoundError):
         run_measured(["definitely-not-a-real-command-42"])
+
+
+def test_an_arm_error_carries_what_the_failed_attempt_cost():
+    """A killed arm is diagnosable only from the clock and memory it reached."""
+    from benchmark.arms import ArmError, MeasuredRun
+
+    cost = MeasuredRun(
+        wall_clock_seconds=900.0,
+        peak_memory_bytes=14_000_000_000,
+        exit_code=-9,
+        output="",
+    )
+    error = ArmError("killed", cost=cost)
+    assert error.cost is cost
+    assert error.cost.exit_code == -9
+
+
+def test_an_arm_error_without_a_subprocess_carries_no_cost():
+    from benchmark.arms import ArmError
+
+    assert ArmError("no matlab on the path").cost is None
