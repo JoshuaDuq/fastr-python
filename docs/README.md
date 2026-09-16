@@ -18,7 +18,8 @@ docs/
 │   ├── validation.md                Protocol validation checklist, signal transfer, residual metrics
 │   └── references.md                Literature citations, BIDS standards, software foundations
 ├── Empirical Verification & Parity
-│   └── fmrib-parity-validation.md   MATLAB FMRIB 2.1 audit, capability mapping, benchmark data
+│   ├── fmrib-parity-validation.md   MATLAB FMRIB 2.1 audit, capability mapping, benchmark data
+│   └── benchmark.md                 Three-way comparison against MATLAB FMRIB and FACETpy
 └── Software Architecture & Development
     ├── architecture.md              Module responsibilities, data flow, API contracts
     └── development.md               Quality gates, testing, typing, contribution standards
