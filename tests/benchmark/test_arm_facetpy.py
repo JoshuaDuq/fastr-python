@@ -134,3 +134,31 @@ def test_a_failing_pipeline_is_reported_rather_than_passed_off_as_success(
     arm.correct(_spec(demo), output_directory=tmp_path)
     with pytest.raises(ArmError, match="failed on demo"):
         arm.correct(_spec(demo), output_directory=tmp_path)
+
+
+def test_a_volume_whose_groups_run_past_the_recording_is_dropped_whole():
+    """This project's arm drops such a volume whole, so this one must too."""
+    import numpy as np
+
+    from benchmark.arms.facetpy import _whole_volumes_inside
+
+    class _Geometry:
+        groups_per_volume = 3
+        # Three volumes of three groups, 100 samples apart.
+        group_triggers = np.array([0, 100, 200, 300, 400, 500, 600, 700, 800])
+
+    kept = _whole_volumes_inside(_Geometry(), sample_count=750)
+    # The last volume's final group at 800 needs room to 900, so all three go.
+    assert kept.tolist() == [0, 100, 200, 300, 400, 500]
+
+
+def test_a_recording_long_enough_keeps_every_group():
+    import numpy as np
+
+    from benchmark.arms.facetpy import _whole_volumes_inside
+
+    class _Geometry:
+        groups_per_volume = 3
+        group_triggers = np.array([0, 100, 200, 300, 400, 500])
+
+    assert _whole_volumes_inside(_Geometry(), sample_count=10_000).size == 6
