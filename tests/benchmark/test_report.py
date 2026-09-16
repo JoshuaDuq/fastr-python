@@ -131,3 +131,44 @@ def test_a_failed_recording_counts_as_measured_and_is_not_retried(tmp_path):
         encoding="utf-8",
     )
     assert ("sub-0003", 2) in completed_runs(path)
+
+
+def test_naming_arms_selects_only_those(monkeypatch, tmp_path):
+    """Naming arms is how a run reuses corrections it already has."""
+    import argparse
+
+    from benchmark.cli import _arms
+    from benchmark.config import BenchmarkConfig, BenchmarkPaths
+
+    config = BenchmarkConfig(
+        paths=BenchmarkPaths(tmp_path, tmp_path, tmp_path, tmp_path)
+    )
+    arguments = argparse.Namespace(
+        matlab=None, eeglab=None, facetpy=None, facetpy_source=None, arm=None
+    )
+    assert [arm.name for arm in _arms(config, arguments)] == ["fastr_python"]
+
+    arguments.arm = ["fastr_python"]
+    assert [arm.name for arm in _arms(config, arguments)] == ["fastr_python"]
+
+
+def test_an_unknown_arm_name_is_refused_rather_than_ignored(tmp_path):
+    import argparse
+
+    import pytest
+
+    from benchmark.cli import _arms
+    from benchmark.config import BenchmarkConfig, BenchmarkPaths
+
+    config = BenchmarkConfig(
+        paths=BenchmarkPaths(tmp_path, tmp_path, tmp_path, tmp_path)
+    )
+    arguments = argparse.Namespace(
+        matlab=None,
+        eeglab=None,
+        facetpy=None,
+        facetpy_source=None,
+        arm=["facetpy_volume_averaged"],
+    )
+    with pytest.raises(SystemExit, match="no such arm"):
+        _arms(config, arguments)

@@ -134,7 +134,29 @@ def _report(config: BenchmarkConfig) -> int:
 
 
 def _arms(config: BenchmarkConfig, arguments: argparse.Namespace) -> list[Arm]:
-    """Build every arm this run was asked for, refusing any it cannot build."""
+    """Build every arm this run was asked for, refusing any it cannot build.
+
+    Naming arms explicitly is how a run reuses corrections it already has. An
+    arm left out has no rows at all rather than partial ones, so whatever is
+    reported for it has to come from the build it was actually measured on.
+    """
+    arms = _available_arms(config, arguments)
+    if not arguments.arm:
+        return arms
+    wanted = list(dict.fromkeys(arguments.arm))
+    known = {arm.name: arm for arm in arms}
+    unknown = [name for name in wanted if name not in known]
+    if unknown:
+        raise SystemExit(
+            f"no such arm: {', '.join(unknown)}; this run offers {sorted(known)}"
+        )
+    return [known[name] for name in wanted]
+
+
+def _available_arms(
+    config: BenchmarkConfig, arguments: argparse.Namespace
+) -> list[Arm]:
+    """Build every arm the given tools and environments can support."""
     arms: list[Arm] = [FastrPythonArm(config.matched)]
     if arguments.matlab is not None:
         arms.append(
@@ -188,6 +210,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--participant",
         action="append",
         help="select only this participant; repeatable, for a trial run",
+    )
+    parser.add_argument(
+        "--arm",
+        action="append",
+        help="run only this arm; repeatable, to reuse corrections already made",
     )
     arguments = parser.parse_args(argv)
     if (arguments.matlab is None) != (arguments.eeglab is None):
