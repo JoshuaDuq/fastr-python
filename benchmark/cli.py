@@ -12,6 +12,14 @@ import argparse
 import json
 from pathlib import Path
 
+from benchmark.analysis import (
+    cost,
+    load_measurements,
+    load_outcomes,
+    motion_sensitivity,
+    robustness,
+    suppression_and_transfer,
+)
 from benchmark.arms import Arm
 from benchmark.arms.facetpy import SLOT_MATCHED, VOLUME_AVERAGED, FacetpyArm
 from benchmark.arms.facetpy_deep import FacetpyDeepArm
@@ -20,6 +28,7 @@ from benchmark.arms.matlab_fmrib import MatlabFmribArm
 from benchmark.arms.model_zoo import discover_exports, fetch
 from benchmark.cohort import CohortPaths, load_manifest, select_cohort, write_manifest
 from benchmark.config import BenchmarkConfig, BenchmarkPaths
+from benchmark.figures import write_figures
 from benchmark.orchestrator import (
     correct_run,
     measure_run,
@@ -39,6 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     config = _config(arguments)
     if arguments.command == "select":
         return _select(config, arguments.participant)
+    if arguments.command == "report":
+        return _report(config)
     return _run(config, arguments)
 
 
@@ -92,6 +103,32 @@ def _run(config: BenchmarkConfig, arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _report(config: BenchmarkConfig) -> int:
+    """Summarise a finished run and draw its figures."""
+    measurements = load_measurements(config.paths.output_root / MEASUREMENTS)
+    outcomes = load_outcomes(config.paths.output_root / OUTCOMES)
+    motion = motion_sensitivity(measurements)
+    print("\nSuppression and what it cost\n")
+    print(suppression_and_transfer(measurements).to_string(float_format="%.4f"))
+    print("\nProcessing cost\n")
+    print(cost(measurements).to_string(float_format="%.1f"))
+    print("\nRobustness\n")
+    print(robustness(outcomes).to_string(float_format="%.3f"))
+    if motion:
+        print("\nSensitivity to movement\n")
+        for arm in motion:
+            print(
+                f"  {arm.arm:<26}{arm.slope_uv_per_mm:>8.3f} "
+                f"+/- {arm.standard_error:.3f} uV/mm  "
+                f"({arm.blocks} blocks, {arm.participants} participants)"
+            )
+    else:
+        print("\nSensitivity to movement: not enough motion range to fit a slope")
+    figures = write_figures(measurements, motion, config.paths.output_root / "figures")
+    print(f"\n{len(figures)} figures in {figures[0].parent}")
+    return 0
+
+
 def _arms(config: BenchmarkConfig, arguments: argparse.Namespace) -> list[Arm]:
     """Build every arm this run was asked for, refusing any it cannot build."""
     arms: list[Arm] = [FastrPythonArm(config.matched)]
@@ -134,7 +171,7 @@ def _config(arguments: argparse.Namespace) -> BenchmarkConfig:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("select", "run"))
+    parser.add_argument("command", choices=("select", "run", "report"))
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--matlab", type=Path, help="path to the MATLAB executable")
     parser.add_argument("--eeglab", type=Path, help="path to the EEGLAB root")
