@@ -38,12 +38,17 @@ def main(argv: list[str] | None = None) -> int:
     arguments = _parse_args(argv)
     config = _config(arguments)
     if arguments.command == "select":
-        return _select(config)
+        return _select(config, arguments.participant)
     return _run(config, arguments)
 
 
-def _select(config: BenchmarkConfig) -> int:
-    """Choose the motion-stratified recordings and freeze them to a manifest."""
+def _select(config: BenchmarkConfig, participants: list[str] | None) -> int:
+    """Choose the motion-stratified recordings and freeze them to a manifest.
+
+    Stratification always ranks a participant against their own runs, so
+    narrowing to one participant selects the same recordings it would have
+    selected for them inside the whole cohort.
+    """
     runs = select_cohort(
         CohortPaths(
             source_root=config.paths.source_root,
@@ -52,9 +57,14 @@ def _select(config: BenchmarkConfig) -> int:
         ),
         runs_per_participant=config.runs_per_participant,
     )
+    if participants:
+        chosen = set(participants)
+        runs = tuple(run for run in runs if run.participant in chosen)
+        if not runs:
+            raise SystemExit(f"no selected recording belongs to {sorted(chosen)}")
     write_manifest(runs, config.paths.manifest)
-    participants = len({run.participant for run in runs})
-    print(f"selected {len(runs)} recordings from {participants} participants")
+    selected = len({run.participant for run in runs})
+    print(f"selected {len(runs)} recordings from {selected} participants")
     print(f"manifest {config.paths.manifest}")
     return 0
 
@@ -133,6 +143,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--facetpy-source", type=Path, help="FACETpy clone holding the model exports"
+    )
+    parser.add_argument(
+        "--participant",
+        action="append",
+        help="select only this participant; repeatable, for a trial run",
     )
     arguments = parser.parse_args(argv)
     if (arguments.matlab is None) != (arguments.eeglab is None):
