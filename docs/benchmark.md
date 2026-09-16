@@ -34,7 +34,6 @@ and describe neither.
 | --- | --- |
 | `fastr_python` | acquisition-slot FASTR at the cohort's settings |
 | `matlab_fmrib` | `fmrib_fastr.m` at one trigger per volume |
-| `facetpy_slot_matched` | slot-matched averaging on the same triggers and window |
 | `facetpy_volume_averaged` | FACETpy's own default shape, one artifact per volume |
 | `ml_*` | one arm per pretrained FACETpy network |
 
@@ -44,9 +43,20 @@ it has no acquisition-slot concept, so averaging a group against its neighbours
 in a multiband sequence averages different slice sets together. Reporting that
 as an implementation result would report a missing capability as a broken one.
 
-FACETpy gets two arms. The slot-matched arm differs from `fastr_python` by
-implementation; the volume-averaged arm differs from the slot-matched arm by
-method. One arm would confound the two.
+FACETpy runs at its own documented shape for the same reason. It does ship a
+slot-matched mode, but it cannot represent this cohort's acquisition: it cuts
+every epoch to one fixed length, taken from the median trigger spacing, and
+subtracts each template in place and cumulatively. The multiband slots here are
+spaced 237, 238, 250 and 350 samples apart, so no single length tiles a volume.
+At the inferred 250 the epochs overlap and about half the slot boundaries are
+subtracted twice, leaving 113.7 uV where the other arms leave 2.4; at 237, the
+widest length that cannot overlap, the gaps still leave 66.9.
+
+Neither reference implementation, then, can represent non-uniform multiband
+acquisition timing -- FMRIB has no acquisition-slot concept at all, and
+FACETpy's fixed-length epochs cannot tile an unevenly spaced volume. That is a
+result of the comparison rather than a configuration to keep tuning, and it is
+why no arm here is a pure implementation comparison.
 
 ## What is held constant
 

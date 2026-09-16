@@ -24,7 +24,6 @@ import numpy as np
 from facet import (
     AASCorrection,
     BrainVisionExporter,
-    CorrespondingSliceCorrection,
     DownSample,
     Loader,
     Pipeline,
@@ -36,11 +35,6 @@ from facet.correction.deep_learning import (
     DeepLearningOutputType,
     list_deep_learning_blueprints,
 )
-
-# Averaging each acquisition slot against the same slot in neighbouring volumes,
-# which is what this project's own arm does and the only FACETpy mode that can
-# represent a multiband sequence.
-SLOT_MATCHED = "slot_matched"
 
 # FACETpy's documented default shape: one artifact per volume, averaged against
 # its neighbours. Its own recommended configuration rather than a match to
@@ -140,11 +134,6 @@ def _inject(triggers: np.ndarray) -> Any:
 def _template(request: dict[str, Any]) -> Any:
     """Build the averaging correction this run asked for."""
     mode = request["mode"]
-    if mode == SLOT_MATCHED:
-        return CorrespondingSliceCorrection(
-            slices_per_volume=request["groups_per_volume"],
-            window_size=request["neighbor_count"],
-        )
     if mode == VOLUME_AVERAGED:
         return AASCorrection(window_size=request["window_size"])
     raise ValueError(f"unknown correction mode: {mode!r}")

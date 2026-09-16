@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from benchmark.arms import ArmError
-from benchmark.arms.facetpy import SLOT_MATCHED, VOLUME_AVERAGED, FacetpyArm
+from benchmark.arms.facetpy import FacetpyArm
 from benchmark.cohort import RunSpec
 from benchmark.config import MatchedSettings
 
@@ -77,14 +77,14 @@ def _suppression(
     return before / after, tone_after / tone_before
 
 
-@pytest.fixture(scope="module", params=[SLOT_MATCHED, VOLUME_AVERAGED])
-def corrected(request, demo, tmp_path_factory):
-    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=request.param)
-    directory = tmp_path_factory.mktemp(request.param)
+@pytest.fixture(scope="module")
+def corrected(demo, tmp_path_factory):
+    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER)
+    directory = tmp_path_factory.mktemp("facetpy")
     return arm, arm.correct(_spec(demo), output_directory=directory)
 
 
-def test_both_configurations_correct_and_report_their_cost(corrected, demo):
+def test_the_arm_corrects_and_reports_its_cost(corrected, demo):
     _, result = corrected
     assert result.corrected_vhdr.is_file()
     assert result.sampling_rate == 5000.0
@@ -93,7 +93,7 @@ def test_both_configurations_correct_and_report_their_cost(corrected, demo):
     assert result.cost.peak_memory_bytes > 0
 
 
-def test_both_configurations_suppress_the_comb_and_keep_the_tone(corrected, demo):
+def test_the_arm_suppresses_the_comb_and_keeps_the_tone(corrected, demo):
     _, result = corrected
     suppression, tone = _suppression(
         demo / "demo.vhdr", result.corrected_vhdr, result.sampling_rate
@@ -102,63 +102,27 @@ def test_both_configurations_suppress_the_comb_and_keep_the_tone(corrected, demo
     assert tone > 0.9
 
 
-def test_the_arm_names_say_which_configuration_produced_a_result():
-    matched = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=SLOT_MATCHED)
-    averaged = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=VOLUME_AVERAGED)
-    assert matched.name == "facetpy_slot_matched"
-    assert averaged.name == "facetpy_volume_averaged"
-
-
-def test_an_unknown_configuration_is_refused_before_anything_runs(demo, tmp_path):
-    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode="whatever")
-    with pytest.raises(ArmError, match="unknown FACETpy mode"):
-        arm.correct(_spec(demo), output_directory=tmp_path)
-
-
-def test_the_slot_matched_arm_is_given_one_trigger_per_acquisition_group(
-    demo, tmp_path
-):
-    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=SLOT_MATCHED)
-    arm.correct(_spec(demo), output_directory=tmp_path)
-    request = json.loads(
-        (tmp_path / "demo_facetpy_slot_matched_request.json").read_text()
-    )
-    assert len(request["triggers"]) == 18 * len(request["volume_starts"])
-
-
 def test_a_failing_pipeline_is_reported_rather_than_passed_off_as_success(
     demo, tmp_path
 ):
     """FACETpy returns failures in its result object instead of raising."""
-    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=SLOT_MATCHED)
+    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER)
     arm.correct(_spec(demo), output_directory=tmp_path)
     with pytest.raises(ArmError, match="failed on demo"):
         arm.correct(_spec(demo), output_directory=tmp_path)
 
 
-def test_a_volume_whose_groups_run_past_the_recording_is_dropped_whole():
-    """This project's arm drops such a volume whole, so this one must too."""
-    import numpy as np
-
-    from benchmark.arms.facetpy import _whole_volumes_inside
-
-    class _Geometry:
-        groups_per_volume = 3
-        # Three volumes of three groups, 100 samples apart.
-        group_triggers = np.array([0, 100, 200, 300, 400, 500, 600, 700, 800])
-
-    kept = _whole_volumes_inside(_Geometry(), sample_count=750)
-    # The last volume's final group at 800 needs room to 900, so all three go.
-    assert kept.tolist() == [0, 100, 200, 300, 400, 500]
+def test_the_arm_is_named_for_the_configuration_it_runs():
+    assert FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER).name == (
+        "facetpy_volume_averaged"
+    )
 
 
-def test_a_recording_long_enough_keeps_every_group():
-    import numpy as np
-
-    from benchmark.arms.facetpy import _whole_volumes_inside
-
-    class _Geometry:
-        groups_per_volume = 3
-        group_triggers = np.array([0, 100, 200, 300, 400, 500])
-
-    assert _whole_volumes_inside(_Geometry(), sample_count=10_000).size == 6
+def test_the_arm_is_given_one_trigger_per_volume(demo, tmp_path):
+    """FACETpy's documented shape corrects one artifact per repetition."""
+    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER)
+    arm.correct(_spec(demo), output_directory=tmp_path)
+    request = json.loads(
+        (tmp_path / "demo_facetpy_volume_averaged_request.json").read_text()
+    )
+    assert request["triggers"] == request["volume_starts"]

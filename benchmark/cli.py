@@ -21,7 +21,7 @@ from benchmark.analysis import (
     suppression_and_transfer,
 )
 from benchmark.arms import Arm
-from benchmark.arms.facetpy import SLOT_MATCHED, VOLUME_AVERAGED, FacetpyArm
+from benchmark.arms.facetpy import FacetpyArm
 from benchmark.arms.facetpy_deep import FacetpyDeepArm
 from benchmark.arms.fastr_python import FastrPythonArm
 from benchmark.arms.matlab_fmrib import MatlabFmribArm
@@ -143,8 +143,7 @@ def _arms(config: BenchmarkConfig, arguments: argparse.Namespace) -> list[Arm]:
             )
         )
     if arguments.facetpy is not None:
-        for mode in (SLOT_MATCHED, VOLUME_AVERAGED):
-            arms.append(FacetpyArm(config.matched, arguments.facetpy, mode))
+        arms.append(FacetpyArm(config.matched, arguments.facetpy))
         if arguments.facetpy_source is not None:
             cache = config.paths.output_root / "models"
             arms.extend(
