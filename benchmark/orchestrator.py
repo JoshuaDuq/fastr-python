@@ -32,7 +32,6 @@ from benchmark.harmonise import (
     CommonWindow,
     common_window,
     crop,
-    decimated_offset,
     guard_volumes,
     to_output_rate,
 )
@@ -263,21 +262,31 @@ def _window(
 def _on_grid(
     output: ArmOutput, window: CommonWindow, config: BenchmarkConfig
 ) -> tuple[np.ndarray, list[str]]:
-    """Filter, decimate, and crop one arm's output onto the shared grid."""
+    """Filter, decimate, and crop one arm's output onto the shared grid.
+
+    The recording is cut to its own first volume before it is decimated, so
+    that every arm's decimated grid begins on the same acquisition rather than
+    on whatever sample its file happens to start at. Decimating first would
+    leave each arm on the phase of its own file origin: this project's arm
+    trims its output to the first volume and the others emit the whole
+    recording, so their grids would sit up to four recorded samples apart, and
+    a first volume that is not a whole number of decimated samples from the
+    origin could not be indexed onto the grid at all.
+
+    Cutting before filtering puts the filter's edge on the cut, which the
+    measured span already drops a whole guard volume to avoid.
+    """
     raw = mne.io.read_raw_brainvision(
         output.corrected_vhdr, preload=True, verbose="error"
     )
+    from_first_volume = raw.get_data()[:, output.first_volume_sample :]
     decimated = to_output_rate(
-        raw.get_data(),
+        from_first_volume,
         sampling_rate=output.sampling_rate,
         output_sampling_rate=config.output.sampling_rate_hz,
         lowpass_hz=config.output.lowpass_hz,
     )
-    offset = decimated_offset(
-        output.first_volume_sample,
-        decimation=round(output.sampling_rate / config.output.sampling_rate_hz),
-    )
-    return crop(decimated, first_volume_sample=offset, window=window), raw.ch_names
+    return crop(decimated, first_volume_sample=0, window=window), raw.ch_names
 
 
 def _probe_on_grid(

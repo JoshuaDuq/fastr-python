@@ -162,20 +162,3 @@ def crop(
             f"the shared span needs {stop} samples but this arm wrote {data.shape[1]}"
         )
     return data[:, start:stop]
-
-
-def decimated_offset(first_volume_sample: int, *, decimation: int) -> int:
-    """Move an arm's first-volume offset onto the decimated grid.
-
-    An offset that is not a whole number of decimated samples would shift that
-    arm against the others by a fraction of a sample, so it is refused rather
-    than rounded.
-    """
-    if decimation < 1:
-        raise HarmoniseError("decimation must be at least one")
-    if first_volume_sample % decimation:
-        raise HarmoniseError(
-            f"a first volume at sample {first_volume_sample} does not land on the "
-            f"decimated grid of {decimation}"
-        )
-    return first_volume_sample // decimation

@@ -29,6 +29,8 @@ from benchmark.arms.model_zoo import discover_exports, fetch
 from benchmark.cohort import CohortPaths, load_manifest, select_cohort, write_manifest
 from benchmark.config import BenchmarkConfig, BenchmarkPaths
 from benchmark.figures import write_figures
+from benchmark.harmonise import HarmoniseError
+from benchmark.metrics import MetricError
 from benchmark.orchestrator import (
     completed_runs,
     correct_run,
@@ -96,7 +98,15 @@ def _run(config: BenchmarkConfig, arguments: argparse.Namespace) -> int:
         print(f"[{index}/{len(remaining)}] {label}", flush=True)
         tones = plan_run_tones(run, config=config)
         attempts = correct_run(run, arms, config=config, tones=tones)
-        measured = measure_run(run, attempts, config=config, tones=tones)
+        try:
+            measured = measure_run(run, attempts, config=config, tones=tones)
+        except (HarmoniseError, MetricError) as error:
+            # One recording that cannot be measured must not end the run. Its
+            # outcomes stay unwritten, so resuming comes back to it rather than
+            # counting it as done.
+            release_native_outputs(attempts)
+            print(f"    NOT MEASURED: {type(error).__name__}: {error}", flush=True)
+            continue
         write_outcomes(attempts, run, outcomes)
         write_rows(measured, run, measurements)
         release_native_outputs(attempts)

@@ -6,7 +6,6 @@ from benchmark.harmonise import (
     HarmoniseError,
     common_window,
     crop,
-    decimated_offset,
     guard_volumes,
     to_output_rate,
 )
@@ -111,15 +110,6 @@ def test_decimation_refuses_a_non_integer_ratio():
             output_sampling_rate=999.0,
             lowpass_hz=100.0,
         )
-
-
-def test_offset_moves_onto_the_decimated_grid():
-    assert decimated_offset(4_500, decimation=5) == 900
-
-
-def test_offset_refuses_to_round_onto_the_decimated_grid():
-    with pytest.raises(HarmoniseError, match="does not land on the decimated grid"):
-        decimated_offset(4_501, decimation=5)
 
 
 def test_the_filter_edge_is_what_the_guard_exists_to_exclude():
