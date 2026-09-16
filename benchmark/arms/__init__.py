@@ -25,6 +25,17 @@ from typing import Protocol
 import mne
 
 from benchmark.cohort import RunSpec
+from benchmark.config import MatchedSettings
+from fastr_python.correction.timing import (
+    AcquisitionGeometry,
+    load_bids_fmri_timing,
+    volume_marker_geometry,
+)
+from fastr_python.io.recording import (
+    read_brainvision_recording,
+    select_marker_sample_block,
+    select_marker_samples,
+)
 
 # getrusage reports the peak resident set in bytes on macOS and in kibibytes
 # everywhere else.
@@ -106,3 +117,30 @@ def input_sampling_rate(raw_vhdr: Path) -> float:
     """Return the rate a recording was sampled at, without reading its samples."""
     raw = mne.io.read_raw_brainvision(raw_vhdr, preload=False, verbose="error")
     return float(raw.info["sfreq"])
+
+
+def resolve_geometry(run: RunSpec, *, settings: MatchedSettings) -> AcquisitionGeometry:
+    """Work out where the scanner fired, once, for every arm that needs it.
+
+    Resolved here rather than by each arm so that no two arms can disagree
+    about the acquisition they are correcting. A difference between arms is
+    then a difference in what they do with the same geometry.
+    """
+    markers = read_brainvision_recording(run.raw_vhdr).markers
+    raw = mne.io.read_raw_brainvision(run.raw_vhdr, preload=False, verbose="error")
+    volume_starts = select_marker_samples(
+        markers,
+        marker_type=settings.marker_type,
+        marker_description=settings.marker_description,
+        sample_count=raw.n_times,
+    )
+    if run.marker_block is not None:
+        start, count = run.marker_block
+        volume_starts = select_marker_sample_block(
+            volume_starts, start_index=start, count=count
+        )
+    return volume_marker_geometry(
+        volume_starts,
+        sampling_rate=float(raw.info["sfreq"]),
+        timing=load_bids_fmri_timing(run.protocol_json),
+    )

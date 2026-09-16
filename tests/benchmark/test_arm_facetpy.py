@@ -124,3 +124,13 @@ def test_the_slot_matched_arm_is_given_one_trigger_per_acquisition_group(
         (tmp_path / "demo_facetpy_slot_matched_request.json").read_text()
     )
     assert len(request["triggers"]) == 18 * len(request["volume_starts"])
+
+
+def test_a_failing_pipeline_is_reported_rather_than_passed_off_as_success(
+    demo, tmp_path
+):
+    """FACETpy returns failures in its result object instead of raising."""
+    arm = FacetpyArm(DEMO_SETTINGS, interpreter=INTERPRETER, mode=SLOT_MATCHED)
+    arm.correct(_spec(demo), output_directory=tmp_path)
+    with pytest.raises(ArmError, match="failed on demo"):
+        arm.correct(_spec(demo), output_directory=tmp_path)

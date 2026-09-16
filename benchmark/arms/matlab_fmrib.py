@@ -28,19 +28,13 @@ from pathlib import Path
 import mne
 import numpy as np
 
-from benchmark.arms import ArmError, ArmOutput, run_measured
+from benchmark.arms import ArmError, ArmOutput, resolve_geometry, run_measured
 from benchmark.cohort import RunSpec
 from benchmark.config import MatchedSettings
-from fastr_python.correction.timing import (
-    AcquisitionGeometry,
-    load_bids_fmri_timing,
-    volume_marker_geometry,
-)
+from fastr_python.correction.timing import AcquisitionGeometry
 from fastr_python.io.brainvision import BrainVisionMarker
 from fastr_python.io.recording import (
     read_brainvision_recording,
-    select_marker_sample_block,
-    select_marker_samples,
     write_brainvision_recording,
 )
 
@@ -67,7 +61,7 @@ class MatlabFmribArm:
         output_directory.mkdir(parents=True, exist_ok=True)
         recording = read_brainvision_recording(run.raw_vhdr)
         raw = mne.io.read_raw_brainvision(run.raw_vhdr, preload=False, verbose="error")
-        geometry = self._geometry(run, recording.markers, raw)
+        geometry = resolve_geometry(run, settings=self.settings)
 
         samples = output_directory / f"{run.raw_vhdr.stem}_fmrib.f32"
         metadata_path = samples.with_suffix(".json")
@@ -102,30 +96,6 @@ class MatlabFmribArm:
             # the last marker are untouched artifact, not a worse correction.
             volume_count=geometry.volume_count - 1,
             cost=cost,
-        )
-
-    def _geometry(
-        self,
-        run: RunSpec,
-        markers: tuple[BrainVisionMarker, ...],
-        raw: mne.io.BaseRaw,
-    ) -> AcquisitionGeometry:
-        """Resolve group triggers exactly as this project's own arm resolves them."""
-        volume_starts = select_marker_samples(
-            markers,
-            marker_type=self.settings.marker_type,
-            marker_description=self.settings.marker_description,
-            sample_count=raw.n_times,
-        )
-        if run.marker_block is not None:
-            start, count = run.marker_block
-            volume_starts = select_marker_sample_block(
-                volume_starts, start_index=start, count=count
-            )
-        return volume_marker_geometry(
-            volume_starts,
-            sampling_rate=float(raw.info["sfreq"]),
-            timing=load_bids_fmri_timing(run.protocol_json),
         )
 
     def _request(

@@ -23,21 +23,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import mne
-
-from benchmark.arms import ArmError, ArmOutput, input_sampling_rate, run_measured
+from benchmark.arms import (
+    ArmError,
+    ArmOutput,
+    input_sampling_rate,
+    resolve_geometry,
+    run_measured,
+)
 from benchmark.cohort import RunSpec
 from benchmark.config import MatchedSettings
-from fastr_python.correction.timing import (
-    AcquisitionGeometry,
-    load_bids_fmri_timing,
-    volume_marker_geometry,
-)
-from fastr_python.io.recording import (
-    read_brainvision_recording,
-    select_marker_sample_block,
-    select_marker_samples,
-)
+from fastr_python.correction.timing import AcquisitionGeometry
 
 RUNNER = Path(__file__).with_name("facetpy_runner.py")
 SLOT_MATCHED = "slot_matched"
@@ -63,7 +58,7 @@ class FacetpyArm:
         if self.mode not in (SLOT_MATCHED, VOLUME_AVERAGED):
             raise ArmError(f"unknown FACETpy mode: {self.mode!r}")
         output_directory.mkdir(parents=True, exist_ok=True)
-        geometry = self._geometry(run)
+        geometry = resolve_geometry(run, settings=self.settings)
         corrected = output_directory / f"{run.raw_vhdr.stem}_{self.name}.vhdr"
         metadata_path = corrected.with_suffix(".meta.json")
         request = output_directory / f"{run.raw_vhdr.stem}_{self.name}_request.json"
@@ -81,27 +76,6 @@ class FacetpyArm:
             first_volume_sample=metadata["first_volume_sample"],
             volume_count=metadata["volume_count"],
             cost=cost,
-        )
-
-    def _geometry(self, run: RunSpec) -> AcquisitionGeometry:
-        """Resolve triggers exactly as this project's own arm resolves them."""
-        markers = read_brainvision_recording(run.raw_vhdr).markers
-        raw = mne.io.read_raw_brainvision(run.raw_vhdr, preload=False, verbose="error")
-        volume_starts = select_marker_samples(
-            markers,
-            marker_type=self.settings.marker_type,
-            marker_description=self.settings.marker_description,
-            sample_count=raw.n_times,
-        )
-        if run.marker_block is not None:
-            start, count = run.marker_block
-            volume_starts = select_marker_sample_block(
-                volume_starts, start_index=start, count=count
-            )
-        return volume_marker_geometry(
-            volume_starts,
-            sampling_rate=float(raw.info["sfreq"]),
-            timing=load_bids_fmri_timing(run.protocol_json),
         )
 
     def _request(
