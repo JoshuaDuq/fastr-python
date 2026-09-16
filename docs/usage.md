@@ -1,56 +1,86 @@
-# Usage
+# Usage Guide
 
-## Installation
+This guide covers installation, command-line operations, Python API workflows, pre-flight timing validation, output file inspection, and pre-interpretation scientific checks.
 
-FASTR-Python supports Python 3.12. For the locked development environment:
+---
 
-```text
-uv sync
+## 1. Environment & Installation
+
+FASTR-Python requires **Python 3.12**.
+
+### Recommended: Locked Virtual Environment via `uv`
+
+For scientific reproducibility, use [`uv`](https://docs.astral.sh/uv/) to synchronize the exact dependency tree pinned in `uv.lock`:
+
+```bash
+uv sync --locked
 ```
 
-For an existing compatible environment:
+### Existing Virtual Environment
 
-```text
+To install into an existing active Python 3.12 environment:
+
+```bash
 uv pip install .
+# or standard pip:
+pip install .
 ```
 
-Check the installed version:
+Verify your installation and runtime environment:
 
-```text
+```bash
 fastr-python --version
 ```
 
-## Synthetic demo
+---
 
-Generate a BrainVision recording, BIDS timing sidecar, and configuration, then
-run the correction:
+## 2. Quickstart: Synthetic Pipeline Verification
 
-```text
-fastr-python demo --output-dir /path/to/demo
-fastr-python run --config /path/to/demo/demo.yml
+FASTR-Python includes a deterministic synthetic generator to verify your software environment and complete execution path without needing scanner data:
+
+```bash
+# 1. Generate synthetic BrainVision recording, BIDS sidecar, and YAML config
+fastr-python demo --output-dir /tmp/fastr_demo
+
+# 2. Execute gradient artifact correction
+fastr-python run --config /tmp/fastr_demo/demo.yml
 ```
 
-The synthetic data tests the software path; it is not scanner validation.
+The demo simulates an 18-channel EEG recording containing scanner gradient switching, an injected 10.5 Hz neural signal, and BrainVision markers.
 
-## Correct a recording
+> [!NOTE]
+> The demo validates the end-to-end numerical and I/O pipeline. It is an automated software verification step, not scanner- or protocol-specific validation.
 
-Use [`configuration.yml`](../examples/configuration.yml) for volume markers or
-[`configuration-slice.yml`](../examples/configuration-slice.yml) for
-acquisition-group markers. Set the paths and timing fields, then run:
+---
 
-```text
+## 3. Correcting a Real BrainVision Recording
+
+Production correction runs are driven by YAML configurations. Template configurations are provided in `examples/`:
+
+- [`examples/configuration.yml`](../examples/configuration.yml): For volume-triggered recordings (one scanner trigger per whole volume).
+- [`examples/configuration-slice.yml`](../examples/configuration-slice.yml): For slice- or group-triggered recordings (one scanner trigger per acquisition slice/multiband group).
+
+Run the correction:
+
+```bash
 fastr-python run --config /path/to/configuration.yml
 ```
 
-Paths resolve relative to the YAML file. Existing outputs, invalid marker
-selection, timing, geometry, rates, or signal inputs cause an error before an
-incomplete output is written.
+### Key Execution Behaviors
 
-## Validate timing before correction
+1. **Relative Paths**: All relative paths inside the configuration YAML resolve relative to the directory containing that YAML file.
+2. **Fail-Fast Safety**: If destination output files already exist, or if marker selection, timing, sampling rates, or channel labels are invalid, FASTR-Python raises an explicit error before any file is created or partially modified.
+3. **No Hidden State**: Each run is completely self-contained and reproducible from the configuration and raw inputs alone.
 
-For one marker per volume, provide BIDS metadata:
+---
 
-```text
+## 4. Validate Timing Before Correction
+
+Scanner triggers are prone to missing pulses, jitter, or timing-source ambiguities. Run the pre-flight `validate-timing` CLI command to verify timing integrity before launching a correction:
+
+### Volume Markers (BIDS Timing Source)
+
+```bash
 fastr-python validate-timing \
   --metadata /path/to/bold.json \
   --sampling-rate 5000 \
@@ -60,10 +90,9 @@ fastr-python validate-timing \
   --output /path/to/timing-validation.json
 ```
 
-For one marker per acquisition group, provide the group count and optional TR
-check:
+### Slice / Acquisition-Group Markers
 
-```text
+```bash
 fastr-python validate-timing \
   --marker-kind slice \
   --groups-per-volume 18 \
@@ -75,63 +104,121 @@ fastr-python validate-timing \
   --output /path/to/timing-validation.json
 ```
 
-The command writes resolved repetition time, group count, offsets, and volume
-starts. It fails on missing or duplicate markers, non-increasing markers,
-timing gaps, inconsistent periodicity, and invalid TR-to-sample conversion. It
-does not infer scanner events from EEG waveforms.
+### What `validate-timing` Checks
 
-## Compare folders
+- Marker ordering (strictly monotonically increasing sample indices).
+- Duplicate triggers or missing interior pulses.
+- Periodic interval stability and alignment with declared $T_R$.
+- Integer conversion of repetition time and group offsets to input sampling samples.
+- Complete artifact epochs across the entire recording.
 
-Set both export naming conventions in `examples/compare.yaml`:
+> [!IMPORTANT]
+> `validate-timing` verifies the logged event markers against declared sequence parameters. It does **not** attempt to guess scanner events from EEG waveforms.
 
-```text
+---
+
+## 5. Cohort Comparison Tool
+
+To evaluate correction performance across multiple runs or compare two processing pipelines (e.g. raw vs corrected, or MATLAB FMRIB vs Python FASTR):
+
+```bash
 fastr-python compare --config examples/compare.yaml
 ```
 
-Pairing uses only the configured suffixes and subject/run rules. The command
-writes PSD overlays and CSV/JSON summaries. Pair-specific load or alignment
-errors are reported; unexpected programming errors remain visible.
+Configure `examples/compare.yaml` with your directory pairs, filename suffixes, and channels of interest. The command outputs:
+- Multi-channel PSD overlay plots;
+- Summary CSV tables of scanner-harmonic RMS residual suppression; and
+- JSON metrics recording broadband signal transfer and ECG preservation.
 
-## Python API
+---
 
-Use the high-level API for a configuration-driven run:
+## 6. Python API
+
+FASTR-Python provides two stable API entrypoints: a high-level configuration-driven API and a low-level array API.
+
+### High-Level API: `fastr_python.api`
+
+Recommended for analysis scripts, workflow managers (e.g., Snakemake, Nextflow), and BIDS pipelines:
 
 ```python
+from pathlib import Path
 from fastr_python.api import load_config, run_correction
 
-summary = run_correction(load_config("configuration.yml"))
-print(summary.output_vhdr)
+# 1. Load and strictly validate YAML configuration into a frozen dataclass
+config = load_config(Path("study_config.yml"))
+
+# 2. Execute end-to-end correction
+summary = run_correction(config)
+
+# 3. Access summary metadata
+print("Correction Status:", summary.status)
+print("Emitted VHDR:", summary.output_vhdr)
+print("Provenance JSON:", summary.provenance_json)
+print("Volumes processed:", summary.processed_volumes)
 ```
 
-The low-level functions in `fastr_python.fastr` accept validated arrays and
-geometry for integration into a larger analysis system.
+### Low-Level Array API: `fastr_python.fastr`
 
-## Output files
+For researchers integrating FASTR into custom pipelines operating directly on in-memory NumPy arrays:
 
-For `corrected.vhdr`, outputs are:
+```python
+import numpy as np
+from fastr_python.fastr import apply_fastr_batch, slice_fastr
 
-- `corrected.vhdr`, `corrected.eeg`, and `corrected.vmrk`;
-- `corrected.json`, the provenance sidecar; and
-- `corrected_psd_before.png` and `corrected_psd_after.png`.
+# Apply low-level FASTR template subtraction on validated numeric arrays
+# (refer to docstrings in fastr_python.fastr for exact argument schemas)
+```
 
-The sidecar records configuration, input hashes, timing and geometry, output
-window, alignment, diagnostics, residual QC, channel decisions, and runtime.
-Read it with the corrected data.
+---
 
-## Failure behavior
+## 7. Output Artifacts & Provenance Sidecar
 
-Configuration, input, marker, timing, geometry, and output-collision errors
-return a nonzero CLI status. Conflicting timing sources and ambiguous marker
-streams are not silently resolved. Programming errors remain visible.
+Given an output target `output.vhdr = "sub-01_corrected.vhdr"`, each run produces the following companion files in the target folder:
 
-## Before interpreting a corrected run
+| File Pattern | Description & Format |
+| --- | --- |
+| `sub-01_corrected.vhdr` | BrainVision Core Data Format header file. |
+| `sub-01_corrected.eeg` | Binary multiplexed float32 / int16 signal data. |
+| `sub-01_corrected.vmrk` | BrainVision marker file containing resampled scanner markers and `Bad_Gradient` annotations. |
+| `sub-01_corrected.json` | Comprehensive JSON provenance sidecar. |
+| `sub-01_corrected_psd_before.png` | Welch power spectral density estimate before correction. |
+| `sub-01_corrected_psd_after.png` | Welch power spectral density estimate after correction. |
 
-1. Check input paths and hashes in the sidecar.
-2. Check timing, marker selection, output window, and skipped groups.
-3. Inspect raw and corrected signals in time and frequency domains.
-4. Measure residuals at `1 / RepetitionTime` and relevant harmonics.
-5. Measure signal transfer independently of the correction template.
-6. Review alignment, skipped spans, and channel recommendations.
+### Anatomy of the Provenance Sidecar (`.json`)
 
-Lower scanner-harmonic power alone is not evidence of a better correction;
-neural signal at the same frequencies may also be removed.
+The JSON sidecar contains exhaustive cryptographic and scientific metadata:
+1. **Input Hashes**: SHA-256 hashes of input `.vhdr`, `.eeg`, `.vmrk`, and BIDS JSON files.
+2. **Software Environment**: Exact version numbers for `fastr-python`, Python, NumPy, SciPy, MNE-Python, and pybv.
+3. **Timing & Geometry**: Resolved repetition time, group offsets, volume start indices, and sub-sample interpolation factors.
+4. **Processing Configuration**: Complete snapshot of all parameters used.
+5. **Quality Control Summary**:
+   - Temporal block residual excess in $\mu\mathrm{V}$;
+   - Volume harmonic RMS across multiples of $1/T_R$;
+   - Channel outlier recommendations; and
+   - Flagged boundary groups or uncorrected regions.
+
+---
+
+## 8. Failure Behavior & Error Handling
+
+FASTR-Python enforces a strict **fail-fast, no hidden fallback** design philosophy:
+
+- **Invalid Configuration**: Unknown keys, missing fields, or invalid types raise `ConfigurationError` immediately.
+- **Ambiguous Timing**: Specifying conflicting timing sources (e.g. both BIDS metadata and slice marker count) raises an error.
+- **Output Collision**: Existing files matching target stems are never overwritten silently.
+- **Marker Inconsistencies**: Non-monotonic markers, unexpected gaps, or boundary truncations without declared repair policies halt execution.
+- **Divergence Guard**: If adaptive LMS filters encounter non-finite weights or numerical divergence, execution aborts with a diagnostic trace.
+
+---
+
+## 9. Pre-Interpretation Checklist
+
+Before using corrected EEG data in downstream scientific analyses (ERP, frequency bands, connectivity, or BIDS export):
+
+1. **Verify Provenance**: Open `corrected.json` and confirm SHA-256 input hashes match your source files.
+2. **Inspect PSD Plots**: Compare `corrected_psd_before.png` and `corrected_psd_after.png` to confirm gradient comb peaks are suppressed without wiping out non-harmonic physiological bands.
+3. **Examine Comb Harmonics**: Check `residual_qc.volume_harmonic_qc` in the JSON sidecar. Ensure no persistent residual bursts remain during task periods.
+4. **Evaluate Broadband Signal Transfer**: Verify that frequencies between gradient harmonics maintain near-unity transfer.
+5. **Review Boundary Markers**: Identify any samples annotated with `Bad_Gradient` and mask or reject them in downstream epoching.
+6. **Check ECG Channel**: If recorded, verify that the ECG waveform preserved QRS morphology without distortion.
+
