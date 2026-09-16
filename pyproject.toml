@@ -66,7 +66,7 @@ extend-select = ["C90", "N", "D101", "D102", "D103", "D401"]
 "validation/**/*.py" = ["D101", "D102", "D103", "D401"]
 
 [tool.mypy]
-files = ["src/fastr_python"]
+files = ["src/fastr_python", "benchmark"]
 python_version = "3.12"
 strict = true
 warn_return_any = false

@@ -1,68 +1,116 @@
-# Development
+# Development & Contribution Guide
 
-## Supported environment
+This guide details the development workflows, static analysis standards, testing protocols, and engineering principles governing the **FASTR-Python** codebase.
 
-The supported interpreter is Python 3.12. Runtime ranges are in
-`pyproject.toml`; `uv.lock` records the tested environment.
+---
 
-Set up the environment:
+## 1. Environment Setup
 
-```text
-uv sync
+FASTR-Python requires **Python 3.12**. Development environments are strictly managed and locked using [`uv`](https://docs.astral.sh/uv/).
+
+To initialize the locked development environment:
+
+```bash
+uv sync --locked
 ```
 
-## Repository layout
+This installs runtime dependencies along with developer tools (`pytest`, `ruff`, `mypy`, `types-pyyaml`).
 
-- `src/fastr_python/`: domain-organized production and validation packages;
-- `tests/`: matching correction, I/O, pipeline, quality, validation, comparison,
-  and public-contract suites;
-- `examples/`: loadable configuration examples;
-- `validation/`: explicit reference and comparison runners;
-- `docs/`: user, scientific, architecture, development, and reference guides;
-- `CITATION.cff`: machine-readable software citation; and
-- `.github/workflows/quality.yml`: pull-request and push quality gate.
+---
 
-## Quality checks
-
-Run the quality checks:
+## 2. Repository Architecture
 
 ```text
-uv sync
+fastr-python/
+├── src/fastr_python/            Production package source code
+│   ├── api.py                   Stable high-level API entrypoint
+│   ├── fastr.py                 Stable low-level array API entrypoint
+│   ├── cli.py                   Command-line interface (`fastr-python`)
+│   ├── config/                  Configuration schemas, validation, and loading
+│   ├── correction/              Pure numerical signal processing algorithms
+│   ├── io/                      BrainVision reader, writer, and marker management
+│   ├── pipeline/                Pipeline orchestration, windowing, and provenance
+│   ├── quality/                 Harmonic and residual quality-control analytics
+│   ├── validation/              Simulation models, metrics, and reference runners
+│   └── compare/                 Cohort folder-level comparison tooling
+├── tests/                       Comprehensive test suites matching source structure
+├── examples/                    Loadable YAML configuration examples
+├── validation/                  Standalone reference runners and comparison scripts
+├── docs/                        Technical and scientific documentation
+├── .github/workflows/           Continuous integration (CI) quality gates
+├── pyproject.toml               PEP 621 package and dependency declarations
+├── uv.lock                      Cryptographically locked dependency graph
+└── CITATION.cff                 Machine-readable citation metadata
+```
+
+---
+
+## 3. Read-Only Quality Gates
+
+Before committing changes or opening a pull request, run the complete local quality gate:
+
+```bash
+# 1. Verify dependencies are locked and synced
+uv sync --locked
+
+# 2. Fast linting and style checking
 uv run ruff check src tests validation
+
+# 3. Code formatting compliance
 uv run ruff format --check src tests validation
+
+# 4. Strict static type analysis
 uv run mypy
+
+# 5. Execute full test suite
 uv run pytest
+
+# 6. Check for whitespace issues or merge conflict markers
 git diff --check
+
+# 7. Verify source distribution and wheel packaging
 uv build
 ```
 
-`.github/workflows/quality.yml` runs the same checks in a locked environment for
-pushes and pull requests.
+These exact commands are executed by the GitHub Actions CI workflow (`.github/workflows/quality.yml`) on every push and pull request.
 
-## Adding or changing configuration
+---
 
-Update the relevant module in `fastr_python.config`, both examples, the tests, and
-[`configuration.md`](configuration.md) together. Add a failing contract test
-first, document units and defaults, preserve fail-fast validation, and update
-the interaction table. Do not add a fallback or silently reinterpret ambiguous
-input.
+## 4. Engineering & Scientific Principles
 
-## Adding validation evidence
+Contributors must adhere to the project's core engineering principles:
 
-Keep validation evidence reproducible and scoped. Record the inputs,
-configuration, software version, hashes, metrics, and comparison conditions.
-Label project-generated measurements and keep private recordings and outputs
-outside the repository.
+1. **Clarity & Scientific Rigor over Cleverness**: Algorithms should clearly reflect their mathematical formulations. Avoid opaque optimizations that hinder peer audit.
+2. **Single Responsibility**: Each module, class, and function must do exactly one thing. Functions should be small, focused, and free of flag arguments.
+3. **Fail-Fast Error Handling**: Validate assumptions (types, shapes, ranges, mutual exclusivity) at public boundaries. Raise specific exceptions (`ConfigurationError`, `ValueError`) early; never swallow exceptions or implement hidden silent fallbacks.
+4. **Behavioral Invariance**: Refactorings must preserve numerical outputs and side effects bit-for-bit.
+5. **No Hidden State**: Avoid global singletons, mutable module state, or hidden side effects. Prefer pure functions operating on explicit immutable arguments.
+6. **Domain-Aware Naming**: Functions are verbs; variables are nouns. Embed physical units in variable names where ambiguity can arise (`*_hz`, `*_seconds`, `*_uv`).
 
-## Data and generated files
+---
 
-Do not commit subject recordings, private BIDS metadata, generated BrainVision
-outputs, plots, private provenance, or virtual environments. Use temporary or
-ignored directories.
+## 5. Modifying Configuration
 
-## Commit and review expectations
+When adding, renaming, or modifying a configuration parameter:
 
-Keep commits focused and descriptive. Preserve valid-input behavior, output
-schemas, CLI formats, and expected errors. Test numerical changes and compare
-with a reference or signal-transfer measure when relevant. Update
-[references](references.md) for new scientific or software claims.
+1. **Co-update Schema**: Update dataclass models and validation logic in `fastr_python.config`.
+2. **Synchronize Examples**: Update both [`examples/configuration.yml`](../examples/configuration.yml) and [`examples/configuration-slice.yml`](../examples/configuration-slice.yml).
+3. **Update Documentation**: Update the parameter specification tables and mutual exclusivity rules in [`docs/configuration.md`](configuration.md).
+4. **Write Contract Tests**: Add unit tests in `tests/pipeline/test_config.py` asserting both valid parsing and expected error rejection for invalid inputs.
+
+---
+
+## 6. Data Hygiene & Confidentiality
+
+- **Never commit human subject EEG or fMRI data**: Real patient or volunteer recordings, private BIDS metadata, and scan notes must never be committed to Git.
+- **Use Synthetic Generators for Tests**: Unit tests must use programmatic synthetic signals (`fastr_python.validation.simulation`) or existing minimal fixtures.
+- **Keep Artifacts Local**: Store scratch logs, temporary recordings, and generated MAT files in temporary directories excluded by `.gitignore`.
+
+---
+
+## 7. Review & Release Guidelines
+
+- Commits should be focused, atomic, and descriptive.
+- All 720+ automated unit and regression tests must pass without warnings.
+- Documentation links must be verified (`uv run pytest tests/contracts/test_documentation.py`).
+- Update [`CITATION.cff`](../CITATION.cff) and version declarations in `pyproject.toml` when preparing releases.
