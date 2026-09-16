@@ -323,6 +323,24 @@ def _confounds(run: RunSpec, config: BenchmarkConfig) -> Path:
     )
 
 
+def completed_runs(path: Path) -> frozenset[tuple[str, int]]:
+    """Name the recordings already written to an outcome log.
+
+    A cohort-sized run does not fit in one sitting, and the correction pipeline
+    refuses to write over an existing output, so resuming means skipping whole
+    recordings rather than stepping back into one.
+    """
+    if not path.is_file():
+        return frozenset()
+    done: set[tuple[str, int]] = set()
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                row = json.loads(line)
+                done.add((row["participant"], row["run_index"]))
+    return frozenset(done)
+
+
 def write_outcomes(attempts: Sequence[ArmAttempt], run: RunSpec, path: Path) -> None:
     """Append one line per attempt, so a failure is as recorded as a success."""
     path.parent.mkdir(parents=True, exist_ok=True)

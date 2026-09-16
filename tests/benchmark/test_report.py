@@ -99,3 +99,35 @@ def test_a_second_arm_appends_rather_than_replacing(tmp_path):
 def test_an_arm_that_failed_simply_has_no_rows(tmp_path):
     rows = _rows(tmp_path, _measured())
     assert "facetpy_slot_matched" not in {row["arm"] for row in rows}
+
+
+def test_a_long_run_resumes_from_the_recordings_already_measured(tmp_path):
+    """A cohort run does not fit in one sitting, and outputs cannot be rewritten."""
+    import json
+
+    from benchmark.orchestrator import completed_runs
+
+    path = tmp_path / "outcomes.jsonl"
+    assert completed_runs(path) == frozenset()
+    path.write_text(
+        "\n".join(
+            json.dumps({"participant": p, "run_index": r, "arm": "a", "status": "ok"})
+            for p, r in (("sub-0001", 4), ("sub-0001", 4), ("sub-0002", 1))
+        ),
+        encoding="utf-8",
+    )
+    assert completed_runs(path) == frozenset({("sub-0001", 4), ("sub-0002", 1)})
+
+
+def test_a_failed_recording_counts_as_measured_and_is_not_retried(tmp_path):
+    """Nothing is retried: a failure is a result, not an incomplete attempt."""
+    import json
+
+    from benchmark.orchestrator import completed_runs
+
+    path = tmp_path / "outcomes.jsonl"
+    path.write_text(
+        json.dumps({"participant": "sub-0003", "run_index": 2, "status": "failed"}),
+        encoding="utf-8",
+    )
+    assert ("sub-0003", 2) in completed_runs(path)

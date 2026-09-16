@@ -30,6 +30,7 @@ from benchmark.cohort import CohortPaths, load_manifest, select_cohort, write_ma
 from benchmark.config import BenchmarkConfig, BenchmarkPaths
 from benchmark.figures import write_figures
 from benchmark.orchestrator import (
+    completed_runs,
     correct_run,
     measure_run,
     plan_run_tones,
@@ -84,12 +85,15 @@ def _run(config: BenchmarkConfig, arguments: argparse.Namespace) -> int:
     """Correct and measure every selected recording with every arm."""
     runs = load_manifest(config.paths.manifest)
     arms = _arms(config, arguments)
-    print(f"{len(arms)} arms over {len(runs)} recordings")
     outcomes = config.paths.output_root / OUTCOMES
     measurements = config.paths.output_root / MEASUREMENTS
-    for index, run in enumerate(runs, start=1):
+    done = completed_runs(outcomes)
+    remaining = [run for run in runs if (run.participant, run.run_index) not in done]
+    print(f"{len(arms)} arms over {len(remaining)} recordings", end="")
+    print(f" ({len(done)} already measured, skipped)" if done else "")
+    for index, run in enumerate(remaining, start=1):
         label = f"{run.participant} run {run.run_index} ({run.motion_stratum})"
-        print(f"[{index}/{len(runs)}] {label}", flush=True)
+        print(f"[{index}/{len(remaining)}] {label}", flush=True)
         tones = plan_run_tones(run, config=config)
         attempts = correct_run(run, arms, config=config, tones=tones)
         measured = measure_run(run, attempts, config=config, tones=tones)
