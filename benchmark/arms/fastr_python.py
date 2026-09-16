@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from benchmark.arms import ArmError, ArmOutput, run_measured
+from benchmark.arms import ArmError, ArmOutput, input_sampling_rate, run_measured
 from benchmark.cohort import RunSpec
 from benchmark.config import MatchedSettings
 
@@ -39,8 +39,12 @@ class FastrPythonArm:
         output_directory.mkdir(parents=True, exist_ok=True)
         corrected = output_directory / f"{run.raw_vhdr.stem}_fastr.vhdr"
         config_path = output_directory / f"{run.raw_vhdr.stem}_config.yml"
+        sampling_rate = input_sampling_rate(run.raw_vhdr)
         config_path.write_text(
-            yaml.safe_dump(self._configuration(run, corrected), sort_keys=False),
+            yaml.safe_dump(
+                self._configuration(run, corrected, sampling_rate=sampling_rate),
+                sort_keys=False,
+            ),
             encoding="utf-8",
         )
         cost = run_measured([_executable(), "run", "--config", str(config_path)])
@@ -48,8 +52,15 @@ class FastrPythonArm:
             raise ArmError(f"{NAME} failed on {run.raw_vhdr.name}:\n{cost.output}")
         return _read_output(corrected, cost=cost)
 
-    def _configuration(self, run: RunSpec, corrected: Path) -> dict[str, Any]:
-        """Build the YAML the command reads, in the cohort's own settings."""
+    def _configuration(
+        self, run: RunSpec, corrected: Path, *, sampling_rate: float
+    ) -> dict[str, Any]:
+        """Build the YAML the command reads, in the cohort's own settings.
+
+        The output is left at the recorded rate and unfiltered. The benchmark
+        applies one anti-alias low-pass and decimation to every arm afterwards,
+        so that the comparison is of corrections and not of output filters.
+        """
         timing: dict[str, Any] = {
             "marker_type": self.settings.marker_type,
             "marker_description": self.settings.marker_description,
@@ -74,8 +85,8 @@ class FastrPythonArm:
                 "search_radius_samples": self.settings.search_radius_samples,
                 "pre_trigger_fraction": self.settings.pre_trigger_fraction,
                 "template_high_pass_hz": self.settings.template_high_pass_hz,
-                "lowpass_hz": self.settings.lowpass_hz,
-                "output_sampling_rate_hz": self.settings.output_sampling_rate_hz,
+                "lowpass_hz": 0.0,
+                "output_sampling_rate_hz": sampling_rate,
                 "non_eeg_channels": list(self.settings.non_eeg_channels),
                 "channel_batch_size": self.settings.channel_batch_size,
                 "reference_channel": self.settings.reference_channel,

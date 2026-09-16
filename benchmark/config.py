@@ -30,8 +30,6 @@ class MatchedSettings:
     search_radius_samples: int = 3
     pre_trigger_fraction: float = 0.03
     template_high_pass_hz: float = 1.0
-    lowpass_hz: float = 100.0
-    output_sampling_rate_hz: float = 1000.0
     non_eeg_channels: tuple[str, ...] = ("ECG",)
     # No mains regression: the cohort was corrected without it, and removing
     # power-line interference is not part of gradient correction.
@@ -41,6 +39,19 @@ class MatchedSettings:
     channel_batch_size: int = 8
     mains_frequency_hz: float = 60.0
     block_seconds: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class OutputSettings:
+    """The one anti-alias low-pass and decimation applied to every arm.
+
+    Held here rather than in the arms because each tool ships a different
+    output filter, and a difference between filters would otherwise be read as
+    a difference between corrections.
+    """
+
+    lowpass_hz: float = 100.0
+    sampling_rate_hz: float = 1000.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,4 +93,5 @@ class BenchmarkConfig:
     paths: BenchmarkPaths
     runs_per_participant: int = 3
     matched: MatchedSettings = field(default_factory=MatchedSettings)
+    output: OutputSettings = field(default_factory=OutputSettings)
     tones: ToneSettings = field(default_factory=ToneSettings)

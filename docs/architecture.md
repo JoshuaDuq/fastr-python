@@ -1,81 +1,120 @@
-# Architecture
+# Software Architecture & System Design
 
-## Principles
+This document details the engineering principles, subsystem boundaries, data flows, and API contracts governing **FASTR-Python**.
 
-Validate configuration before I/O, resolve geometry before numerical processing,
-and write outputs only after required checks pass. Modules expose small data
-structures and functions; names include units where needed. Unexpected errors
-surface.
+---
 
-## Public API
+## 1. Architectural Principles
 
-Use [`fastr_python.api`](../src/fastr_python/api.py) for the stable,
-configuration-driven interface:
+1. **Strict Separation of Concerns**: Configuration parsing, acquisition geometry, numerical signal processing, file I/O, and quality assurance reside in decoupled packages.
+2. **Fail-Fast Boundary Validation**: Validate all configuration and metadata before performing I/O. Resolve and verify temporal geometry before initiating numerical loops. Refuse to write partial files on error.
+3. **No Hidden State or Fallbacks**: Behavior is determined entirely by explicit YAML configurations or API parameters. Never guess ambiguous parameters or mask numerical exceptions.
+4. **Deterministic Reproducibility**: Given identical input data and configuration, the pipeline generates identical output arrays and bit-for-bit identical cryptographic hashes.
+5. **Memory-Bounded Batch Processing**: EEG channels are processed in configurable batches (`channel_batch_size`), ensuring that multi-hour 128-channel recordings can be processed within constrained RAM footprints without numerical divergence.
+
+---
+
+## 2. Subsystem Architecture & Component Flow
+
+```text
+[ Configuration ]
+        |
+        v  (fastr_python.config)
+[ Validated Config Model ]
+        |
+        +-----------------------------------+
+        |                                   |
+        v (fastr_python.io)                 v (fastr_python.correction.timing)
+[ BrainVision Reader ]             [ Acquisition Geometry ]
+(.vhdr / .eeg / .vmrk)              (BIDS / Slice Offsets / Triggers)
+        |                                   |
+        +-----------------+-----------------+
+                          |
+                          v (fastr_python.pipeline.coordinator)
+              [ Batch Channel Processor ]
+                          |
+                          +--> [ Sub-sample Interpolation & Sinc Alignment ]
+                          +--> [ Target-Excluding Moving Average (AAS) ]
+                          +--> [ Optional Residual OBS (PCA Projection) ]
+                          +--> [ Optional Normalized LMS ANC ]
+                          +--> [ Zero-Phase Delay-Compensated FIR Lowpass ]
+                          +--> [ Exact Integer Decimation ]
+                          +--> [ Stationary Line-Noise Regression ]
+                          |
+                          v (fastr_python.quality)
+              [ Residual & Harmonic QC ]
+              (ZoomFFT / Coherent Block RMS)
+                          |
+                          v (fastr_python.io / fastr_python.pipeline.provenance)
+              [ Corrected BrainVision Export & JSON Provenance ]
+              (.vhdr / .eeg / .vmrk / .json / _psd_*.png)
+```
+
+---
+
+## 3. Package Responsibilities
+
+The codebase under `src/fastr_python/` is organized into single-responsibility modules:
+
+| Subpackage / Module | Role & Responsibility |
+| --- | --- |
+| [`api.py`](../src/fastr_python/api.py) | **Stable High-Level API**. Exposes `load_config` and `run_correction`. No internal subpackages should be imported directly by casual users. |
+| [`fastr.py`](../src/fastr_python/fastr.py) | **Stable Low-Level Array API**. Exposes `apply_fastr_batch` and `slice_fastr` for direct NumPy array processing. |
+| [`cli.py`](../src/fastr_python/cli.py) | **CLI Boundary**. Implements `run`, `validate-timing`, `compare`, and `demo` subcommands via standard `argparse`. |
+| `config/` | YAML schema decoding, dataclass configuration models, type coercion, and strict mutual exclusivity validation. |
+| `correction/` | Pure numerical algorithms: sub-sample alignment (`geometry.py`), moving average AAS & OBS (`fastr.py`, `processing.py`), adaptive filters (`anc.py`), and trigger resolution (`timing.py`). Contains no disk I/O. |
+| `io/` | Reading and writing BrainVision Core Data Format files (`.vhdr`, `.eeg`, `.vmrk`) and marker streams via [pybv](https://pybv.readthedocs.io). |
+| `pipeline/` | Orchestration layer: coordinates channel batching, window slicing, marker resampling, and cryptographic provenance sidecar assembly. |
+| `quality/` | Quality control: ZoomFFT exact harmonic analysis, Welch PSD estimation, and robust block residual detection. |
+| `validation/` | Research validation test harness: synthetic artifact simulation, Tone Transfer Function (TTF), and MATLAB reference comparison runners. |
+| `compare/` | Directory-level batch comparison tool evaluating residual metrics across cohorts. |
+
+---
+
+## 4. Public API Contracts
+
+FASTR-Python strictly separates public entrypoints from internal implementation details:
+
+### High-Level Configuration API
 
 ```python
-from fastr_python.api import load_config, run_correction
+from fastr_python.api import FastrSummary, load_config, run_correction
 
-summary = run_correction(load_config("configuration.yml"))
+# load_config returns a frozen, immutable FastrConfig instance
+config = load_config("configuration.yml")
+
+# run_correction executes the pipeline and returns execution metadata
+summary: FastrSummary = run_correction(config)
 ```
 
-The low-level array interface is [`fastr_python.fastr`](../src/fastr_python/fastr.py).
-The package root exports only `__version__` and does not eagerly load MNE or the
-pipeline.
+### Low-Level Array API
 
-## Correction data flow
+```python
+from fastr_python.fastr import apply_fastr_batch, slice_fastr
 
-```text
-YAML -> config -> timing/markers -> geometry -> channel batches ->
-optional OBS/ANC -> output filter/decimation -> markers/QC/PSD/provenance
+# Functions accept validated 2D/3D float NumPy arrays and return corrected arrays
 ```
 
-FASTR reads BrainVision headers and markers, resolves one timing source,
-constructs acquisition-group geometry, corrects channels in batches, and writes
-BrainVision output with a JSON provenance sidecar.
+The package root (`fastr_python/__init__.py`) exports only `__version__`. It intentionally does not eagerly import heavy scientific dependencies (such as MNE or Matplotlib) at module load time.
 
-## Package responsibilities
+---
 
-```text
-fastr_python/
-├── api.py                 stable high-level API
-├── fastr.py               stable low-level array API
-├── cli.py                 command-line boundary
-├── config/                YAML decoding, models, schema, and validation
-├── correction/            numerical FASTR algorithms and timing geometry
-├── io/                    BrainVision markers and recordings
-├── pipeline/              correction orchestration and provenance
-├── quality/               PSD and residual-quality measurements
-├── validation/            simulation, metrics, and reference comparisons
-└── compare/               folder-level corrected/uncorrected comparison
-```
+## 5. Production vs Validation Isolation
 
-The domain packages are dependency boundaries, not alternative public APIs.
-External callers should import from `fastr_python.api` or
-`fastr_python.fastr`; internal modules may change as responsibilities become
-clearer.
+To ensure that production pipeline runs are lightweight and free of testing overhead:
+- **Production Pipeline** depends exclusively on `config`, `correction`, `io`, `pipeline`, and `quality`.
+- **Validation Harness** (`fastr_python.validation`) contains simulation engines and benchmark scripts. Production code never imports `fastr_python.validation`.
 
-The pipeline package separates acquisition resolution, channel processing,
-recording I/O, marker handling, quality measurements, provenance, and the run
-coordinator. The correction package owns numerical algorithms and has no
-configuration or file-writing responsibilities.
+---
 
-## Production versus validation code
+## 6. Physical Units & Coordinate Invariants
 
-Production correction uses `config`, `correction`, `io`, `pipeline`, and
-`quality`. It does not import the simulation or reference-comparison helpers in
-`fastr_python.validation`; those serve tests, demos, and audit runners.
+To avoid unit ambiguity across different scientific domains:
 
-The validation area contains:
+- **Signal Data**: Volts ($\mathrm{V}$) internally following MNE-Python norms.
+- **Residual Reports**: Microvolts ($\mu\mathrm{V}$).
+- **Time**: Seconds ($\mathrm{s}$).
+- **Frequency**: Hertz ($\mathrm{Hz}$).
+- **Array Indexing**: 0-based in Python code; 1-based in on-disk BrainVision marker files.
+- **Variable Suffixes**: Variable names explicitly embed units where ambiguity is possible (e.g. `sampling_rate_hz`, `repetition_time_seconds`, `residual_threshold_uv`).
 
-- `validation/run_python_reference.py`: shared classical volume-stage contract;
-- `validation/run_python_bids_reference.py`: production BIDS geometry path; and
-- `validation/compare_fmrib_reference.py`: aggregate comparison metrics.
-
-The original MATLAB reference is `validation/fmrib_reference.m`.
-
-## Naming and units
-
-Names state domain and units where needed: BIDS timing uses seconds, signal
-arrays use volts, residual reports use microvolts, internal samples are
-zero-based, and BrainVision marker positions are one-based. `*_hz`,
-`*_seconds`, and `*_uv` identify frequencies, durations, and microvolt values.

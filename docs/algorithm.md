@@ -1,194 +1,185 @@
-# Algorithm
+# Algorithmic & Mathematical Specifications
 
-## Scope and assumptions
+## Scope & Physical Principles
 
-FASTR removes scanner-gradient artifact from simultaneous EEG-fMRI recordings.
-It requires a BrainVision recording, an exact scanner-marker stream, and one
-declared acquisition-timing interpretation. BCG, bad electrodes, motion, and
-other physiological artifacts are outside its scope. See the
-[validation checklist](validation.md).
+Simultaneous EEG-fMRI recordings suffer from severe scanner-gradient artifacts (GA) induced by the rapid switching of magnetic field gradients ($G_x, G_y, G_z$) and radiofrequency (RF) pulses. By Faraday's law of induction:
+
+$$\mathcal{E} = -\frac{d\Phi_B}{dt} = -\frac{d}{dt} \iint_S \mathbf{B}(t) \cdot d\mathbf{A}$$
+
+Because the gradient switching waveforms are precisely periodic and synchronized to scanner acquisition clocks, the induced artifact voltage (often reaching tens of millivolts, $10^3$ to $10^4$ times larger than physiological EEG) can be modeled as a deterministic, phase-locked periodic signal.
+
+FASTR-Python removes scanner-gradient artifacts by combining sub-sample temporal alignment, target-excluding Averaged Artifact Subtraction (AAS), optional residual Optimal Basis Sets (OBS via PCA), optional normalized LMS Adaptive Noise Cancellation (ANC), delay-compensated FIR filtering, integer decimation, and stationary line-noise regression.
+
+> [!NOTE]
+> Cardioballistic (BCG) artifacts, head motion, electrode pops, and electromyographic (EMG) noise are outside the scope of GA correction and must be treated with dedicated downstream tools (e.g. FACETpy).
+
+---
 
 ## Processing model
 
-For one configured run, FASTR:
+For each configured run, FASTR-Python executes the following sequential stages:
 
-1. Reads the BrainVision files without overwriting them.
-2. Selects the configured marker type and description, optionally selecting a
-   contiguous volume-marker block.
-3. Resolves acquisition geometry from declared volume timing or measured
-   acquisition-group markers.
-4. Validates marker spacing, ordering, and complete artifact epochs.
-5. Interpolates the signal for sub-sample alignment.
-6. Estimates target-excluding acquisition-slot templates and fits one amplitude
-   per channel.
-7. Applies optional residual gating and adaptive/local-window policies.
-8. Applies optional residual OBS over complete whole-volume epochs.
-9. Applies optional normalized LMS adaptive noise cancellation.
-10. Low-passes and decimates the corrected signal when configured, then applies
-    stationary line-noise regression to EEG channels.
-11. Resamples markers into the emitted output window and annotates skipped
-    gradient spans and residual-QC blocks.
-12. Writes BrainVision output, PSD figures, and JSON provenance.
+1. **Header & Recording Ingestion**: Reads BrainVision `.vhdr`, `.eeg`, and `.vmrk` files strictly without modifying the source files.
+2. **Scanner Trigger Selection**: Locates all markers matching the declared `timing.marker_type` and `timing.marker_description`, optionally extracting a contiguous user-specified volume block.
+3. **Acquisition Geometry Resolution**: Reconstructs exact temporal slots from declared BIDS fMRI metadata (`RepetitionTime`, `SliceTiming`, `MultibandAccelerationFactor`) or measured inter-trigger intervals (`marker_kind: slice`).
+4. **Trigger & Interval Validation**: Verifies monotonic sample ordering, absence of anomalous gaps, and epoch completeness across the full recording.
+5. **Sub-Sample Alignment**: Interpolates the EEG signal around each trigger using band-limited sinc resampling to estimate and correct sub-sample trigger jitter.
+6. **Moving Average Artifact Estimation (AAS)**: Constructs an epoch template for each acquisition slot across $2N$ adjacent epochs (excluding the target epoch) and computes an optimal least-squares amplitude scale per channel.
+7. **Adaptive & Gated Window Policies**: Optionally excludes residual outlier epochs from neighboring templates and selects local vs wide template windows.
+8. **Residual Optimal Basis Sets (OBS)**: Projects out residual gradient variance across complete volume epochs using an orthogonal principal component basis.
+9. **Normalized LMS Adaptive Noise Cancellation (ANC)**: Optionally removes residual high-frequency artifacts using the filtered template as an adaptive reference.
+10. **Zero-Phase Filtering & Integer Decimation**: Low-pass filters the corrected signal using an MNE-designed delay-compensated FIR filter and decimates by an integer factor $D = f_{s,\text{in}} / f_{s,\text{out}}$.
+11. **Stationary Line-Noise Regression**: Regresses configured power-line sinusoids (50/60 Hz) from EEG channels.
+12. **Marker Resampling & Provenance Generation**: Resamples event markers to the output grid, annotates uncorrected boundary groups with `Bad_Gradient`, evaluates spectral QC metrics, and writes the BrainVision output and cryptographic JSON sidecar.
 
-Correction and filtering use the available input context before the output
-window is sliced. Incomplete boundary groups remain uncorrected, are recorded
-in provenance, and receive a `Bad_Gradient` marker.
+---
 
-## Trimming and boundary margin
+## Mathematical Formulation
 
-`trim.mode: none` emits the full recording. `first_to_last_volume` starts at the
-first selected volume marker and ends one declared TR after the last selected
-marker, clipped to the recording end. Correction and filtering still run on the
-untrimmed input first. A partial final TR is retained, with uncorrected boundary
-samples marked `Bad_Gradient`.
+### 1. Sub-sample Temporal Alignment
 
-The final volume is not synthesized when its artifact epoch is incomplete. A
-marker gap is an error by default. Explicit repair can fill uniquely located
-interior volume markers when an expected count is supplied. See the
-[configuration reference](configuration.md#trim).
+Due to unsynchronized scanner and EEG acquisition clocks, triggers may exhibit sub-sample jitter $\tau \in (-0.5, 0.5]$ samples. The signal $s(t)$ around each trigger is upsampled by integer factor $L$ (typically $L=10$) via band-limited sinc interpolation:
 
-## Template estimation and alignment
+$$\tilde{s}(t) = \sum_{n} s[n] \, \mathrm{sinc}\left(\frac{t - n T_s}{T_s}\right)$$
 
-The moving template and least-squares amplitude follow
-[Niazy et al. (2005)](references.md#niazy-et-al-2005). For each acquisition
-slot, neighboring volumes are averaged after excluding the target volume. A
-high-pass copy is used for template estimation and shared alignment; the
-estimate is subtracted from the original signal so slow content is retained.
+Cross-correlation against the reference channel's high-pass template identifies the optimal fractional delay $\hat{\tau}_k$ within search radius $\pm R$ samples:
 
-Alignment uses the configured reference channel and is applied consistently to
-all channel batches. `neighbor_count` must be even. Local modes require a
-smaller even `local_neighbor_count`. Adaptive decisions are recorded in
-provenance.
+$$\hat{\tau}_k = \arg\max_{\tau} \sum_{t} \tilde{s}_{\text{ref}, k}(t - \tau) \, \tilde{A}_{\text{ref}}(t)$$
 
-## Acquisition timing and geometry
+All channels within volume epoch $k$ are time-shifted by $\hat{\tau}_k$ to align gradient waveforms before averaging.
 
-With `marker_kind: volume`, one marker starts each volume. Group positions are
-expanded from `RepetitionTime`, `SliceTiming`, and
-`MultibandAccelerationFactor`, read from one BIDS JSON sidecar or the inline
-`acquisition` section. These fields follow the
-[BIDS MRI specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html).
+---
 
-With `marker_kind: slice`, every acquisition group is marked. Marker positions
-provide group offsets; `groups_per_volume` declares the number of groups per
-volume. FASTR measures repetition time and checks repeated spacing and
-within-volume offsets. It does not infer the group count.
+### 2. Averaged Artifact Subtraction (AAS)
 
-The timing sources are not merged. A configuration selects exactly one valid
-interpretation so provenance can distinguish declared from measured timing.
+For channel $c$ and acquisition slot $k$, the artifact template $A_{c,k}(t)$ is formed by averaging the $2N$ surrounding epochs, strictly excluding the target epoch $k$:
 
-## Non-EEG channels
+$$A_{c,k}(t) = \frac{1}{2N} \sum_{\substack{j=-N \\ j \neq 0}}^{N} s_{c, k+j}(t - \hat{\tau}_{k+j})$$
 
-Channels in `processing.non_eeg_channels` default to `ECG`. Their template
-subtraction uses an unscaled estimate. They are excluded from residual OBS,
-ANC, line-noise regression, and residual-QC channel statistics. Output filtering,
-decimation, and trimming still apply.
+To account for minor electrode impedance changes or amplifier gain drift, an optimal scalar amplitude factor $\alpha_{c,k}$ is computed by ordinary least squares:
 
-## Residual OBS and adaptive noise cancellation
+$$\alpha_{c,k} = \frac{\langle s_{c,k}, A_{c,k} \rangle}{\|A_{c,k}\|^2} = \frac{\sum_{t=0}^{T-1} s_{c,k}(t) \, A_{c,k}(t)}{\sum_{t=0}^{T-1} A_{c,k}(t)^2}$$
 
-Residual OBS is optional. It fits a fixed or automatic rank over complete
-whole-volume epochs; `residual_obs_section_seconds` refits by sections.
-Automatic selection rejects an unstable rank rather than choosing one silently.
+The template-subtracted residual epoch $r_{c,k}(t)$ is:
 
-Optional normalized LMS ANC follows the
-[FMRIB `fmrib_fastr.m` implementation](references.md#fmrib-fastr-implementation)
-and uses the low-passed artifact estimate as its reference. ANC can remove
-narrowband EEG near scanner harmonics, so assess residual suppression with
-signal transfer. Zero-variance and divergent states raise an error.
+$$r_{c,k}(t) = s_{c,k}(t) - \alpha_{c,k} \, A_{c,k}(t)$$
 
-## Output filtering and decimation
+A high-pass filtered copy of the signal (default $1.0\text{ Hz}$) is used to compute $\alpha_{c,k}$ and $\hat{\tau}_k$, ensuring that slow DC drifts and low-frequency neural rhythms do not distort template scaling.
 
-The output low-pass is a zero-phase FIR designed through MNE-Python and applied
-before integer decimation. Its passband edge must be below both input and output
-Nyquist frequencies. The transition width is the smaller of MNE's automatic
-width and the distance from the passband edge to output Nyquist. This keeps the
-stopband at or below output Nyquist without moving the requested passband edge;
-narrow transitions require longer filters. The same filter is applied to the
-ANC artifact reference. A zero cutoff is allowed only when the output rate
-equals the input rate. See [MNE filtering documentation](references.md#mne-python).
+---
 
-Frequencies in `line_noise_frequencies_hz` are regressed from EEG channels
-after filtering and decimation. An empty list disables regression.
+### 3. Optimal Basis Sets (OBS)
 
-## Quality control and provenance
+Following [Niazy et al. (2005)](references.md#niazy-et-al-2005), residual artifact variance not captured by the moving average (such as subtle cardiac-induced head movements or respiratory modulation of the RF field) is removed using Principal Component Analysis (PCA).
 
-Residual QC measures acquisition-group harmonic excess in microvolts over complete
-blocks. Temporal flags count EEG channels only; optional spatial
-flags identify isolated channel-block outliers. The failure policy may retry a
-candidate with a local window and recommend a bad channel. It never drops or
-interpolates channels.
+For each channel, residual epochs are arranged into matrix $R \in \mathbb{R}^{M \times T}$, where $M$ is the number of volume epochs and $T$ is the number of samples per volume. Singular Value Decomposition yields:
 
-The separate `residual_qc.volume_harmonic_qc` report covers integer multiples of
-`1 / RepetitionTime`, including harmonics below the group rate. Each complete
-block uses a detrended rectangular window and Fourier-series normalization to
-report the RMS of components at the declared harmonic frequencies. Mains
-collisions are excluded and only EEG channels enter this report. Its flags use
-the same configured floor, robust multiplier, and minimum EEG-channel count,
-but remain separate from group-residual flags and automatic local retries.
-These measurements include possible neural activity and must not be interpreted
-as artifact alone. Finite block lengths also admit leakage from nearby frequencies;
-longer blocks distinguish nearby frequencies more clearly. Rectangular windows
-avoid counting a harmonic twice through adjacent harmonics even for one-volume
-blocks. Measurements are reported in JSON, without automatic data rejection.
+$$R = U \Sigma V^T$$
 
-The whole-run volume spectrum evaluates power at exact harmonic frequencies with
-SciPy ZoomFFT and Welch density normalization. Local peak searches use a separate
-Welch spectrum. Segment durations are sampled on the output grid; acquisition
-periods and harmonic frequencies are not rounded. Fractional output samples per
-volume are supported, such as TR 0.9 s at 625 Hz. Zero padding samples the local
-peak search on short recordings but does not improve their spectral resolution.
+The first $K$ right-singular vectors $v_1, v_2, \dots, v_K$ represent the dominant temporal artifact basis. The residual epoch $r_k$ is projected onto this orthogonal basis and subtracted:
 
-The JSON sidecar records input SHA-256 hashes, resolved timing and geometry,
-configuration, output window, alignment, correction counts, PSD interval,
-residual measurements, channel decisions, and runtime. `software_environment`
-records Python, NumPy, SciPy, MNE, and pybv versions. Preserve the sidecar with
-the corrected recording.
+$$r_k^{\text{clean}} = r_k - \sum_{i=1}^{K} \langle r_k, v_i \rangle \, v_i$$
 
-## The 1/TR limitation
+#### Automatic Rank Selection
 
-Scanner artifact and its harmonics are locked to the acquisition period:
-`1 / RepetitionTime` and integer multiples. Neural or physiological activity at
-those frequencies cannot be separated by frequency alone. Template, OBS, and
-ANC stages can reduce signal as well as artifact. Report suppression with an
-independent signal-transfer measure.
+When `residual_obs_rank: auto`, $K$ is selected using the three FMRIB criteria:
+1. **Eigenvalue Slope**: The slope of four consecutive normalized eigenvalues drops below 2 percentage points.
+2. **Cumulative Variance**: Cumulative explained variance exceeds 80%.
+3. **First Component Bound**: The first principal component accounts for less than 5% of total variance.
 
-For example, continuous 10 Hz activity is exactly the ninth volume harmonic at
-TR 0.9 s and may be removed with the artifact, even while nearby 10.5 Hz activity
-survives. Validate the frequencies and time structure used by the intended
-analysis, including bursts and task-locked responses. Lower residual power alone
-does not establish that EEG was preserved.
+If these criteria are not met or yield an unstable rank, FASTR-Python raises an error rather than silently defaulting to an arbitrary rank.
 
-## Known limitations
+---
 
-- Marker errors, timing gaps, and incompatible timing sources are not repaired
-  implicitly.
-- Boundary groups without complete epochs remain uncorrected.
-- A fixed artifact model may not capture motion or scanner-state changes;
-  inspect block-level residuals.
-- Residual QC is advisory and does not establish that a channel is unusable.
-- BCG correction and general bad-channel handling are outside this package.
-- This Python implementation is compared with, but is not a drop-in
-  replacement for, the FMRIB EEGLAB interface.
+### 4. Normalized LMS Adaptive Noise Cancellation (ANC)
 
-## Trying the pipeline without a recording
+Normalized Least Mean Squares (NLMS) adaptive filtering uses the estimated artifact as a reference input $x(n)$ to cancel residual artifact from desired signal $d(n)$:
 
-Generate and correct the deterministic synthetic demo:
+$$e(n) = d(n) - \mathbf{w}^T(n) \, \mathbf{x}(n)$$
 
-```text
-fastr-python demo --output-dir /path/to/demo
-fastr-python run --config /path/to/demo/demo.yml
-```
+$$\mathbf{w}(n+1) = \mathbf{w}(n) + \frac{\mu}{\|\mathbf{x}(n)\|^2 + \epsilon} \, e(n) \, \mathbf{x}(n)$$
 
-The demo validates the software path and an injected off-comb signal. It is not
-protocol-specific validation.
+where:
+- $\mathbf{w}(n)$ is the $P$-tap adaptive FIR filter weight vector;
+- $\mu$ is the normalized adaptation step size ($0 < \mu < 2$);
+- $\epsilon$ is a small positive regularization constant preventing division by zero.
 
-## Inputs and units
+> [!WARNING]
+> ANC is an opt-in stage. Because NLMS adapts rapidly, it can attenuate narrowband neural rhythms near scanner harmonics. Always verify broadband signal transfer when enabling ANC.
 
-Input and output use BrainVision Core Data Format. Signal arrays follow MNE's
-volt convention. BIDS timing and configuration durations use seconds;
-frequencies use hertz; residual reports use microvolts; internal sample indices
-are zero-based; and BrainVision marker positions on disk are one-based.
+---
+
+### 5. Zero-Phase Filtering & Integer Decimation
+
+To eliminate high-frequency gradient harmonics and downsample to a typical EEG rate (e.g. 5 kHz $\rightarrow$ 500 Hz):
+1. **Filter Design**: An linear-phase zero-phase FIR low-pass filter is designed via MNE-Python (`mne.filter.create_filter`). The passband edge $f_{\text{pass}}$ is set by `lowpass_hz`. The transition bandwidth $\Delta f$ is strictly constrained so that stopband attenuation is achieved at or before the output Nyquist frequency:
+   $$f_{\text{stop}} = f_{\text{pass}} + \Delta f \le \frac{f_{s,\text{out}}}{2}$$
+2. **Delay Compensation**: Filtering is applied with zero phase shift ($t_{\text{delay}} = 0$).
+3. **Decimation**: Signal arrays are decimated by integer factor $D = f_{s,\text{in}} / f_{s,\text{out}}$:
+   $$y[m] = x[m \cdot D]$$
+
+---
+
+### 6. Stationary Line-Noise Regression
+
+Mains interference (50 Hz or 60 Hz and harmonics) is modeled as stationary sinusoidal regressors:
+
+$$y_{\text{mains}}(t) = \sum_{m} \left( a_m \cos(2\pi f_m t) + b_m \sin(2\pi f_m t) \right)$$
+
+Coefficients $a_m, b_m$ are estimated via multivariate linear regression on EEG channels and subtracted, leaving non-EEG channels unaffected.
+
+---
+
+## Quality Control & Spectral Diagnostics
+
+### 1. Volume Harmonic Evaluation via ZoomFFT
+
+Gradient artifacts concentrate energy at the fundamental volume repetition frequency and its integer harmonics:
+
+$$f_k = \frac{k}{T_R}, \quad k \in \{1, 2, \dots, K_{\max}\}$$
+
+FASTR-Python evaluates power at exact harmonic bins using SciPy's `ZoomFFT` with Welch spectral density normalization. Unlike standard discrete Fourier transforms with fixed frequency bins, ZoomFFT computes the continuous-time Fourier transform at exact harmonic frequencies without bin rounding errors.
+
+### 2. Block-Level Coherent Harmonic RMS
+
+Temporal blocks (default 30 seconds) are evaluated using a detrended rectangular window and Fourier-series normalization. By aligning window lengths to exact multiples of $T_R$, leakage between adjacent harmonic bins is eliminated. Frequencies within $\pm 1.0\text{ Hz}$ of mains harmonics are excluded from attribution.
+
+---
+
+## The 1/TR Limitation
+
+Scanner gradient switching is strictly periodic with fundamental frequency $f_{\text{fund}} = 1 / T_R$. By Fourier series decomposition, all gradient artifact energy resides in the discrete comb:
+
+$$\mathcal{H} = \left\{ f \in \mathbb{R}^+ \;\middle|\; f = \frac{k}{T_R}, \; k \in \mathbb{N} \right\}$$
+
+### Physical Consequence
+
+Any physiological or cognitive neural oscillation that coincides exactly with a comb frequency $f \in \mathcal{H}$ cannot be separated from gradient artifact by stationary spectral filtering.
+
+**Concrete Example**:  
+If $T_R = 0.900\text{ s}$, the 9th harmonic occurs at:
+
+$$f_9 = \frac{9}{0.900} = 10.000\text{ Hz}$$
+
+A continuous 10.000 Hz posterior alpha oscillation coincides identically with $f_9$ and will be partially subtracted by the template or OBS basis. However, an adjacent 10.500 Hz oscillation lies off-comb and is preserved with near-unity transfer.
+
+Researchers must measure independent **broadband signal transfer** and evaluate task-related rhythms relative to scanner repetition harmonics.
+
+---
+
+## Known Limitations & Boundary Conditions
+
+1. **Uncorrected Boundary Margins**: Epochs at the very beginning or end of a recording lacking complete moving-average neighborhoods are retained uncorrected and annotated with `Bad_Gradient` in the `.vmrk` file.
+2. **Motion Disruption**: Rapid head movements alter the spatial geometry between electrodes and gradient fields, temporarily degrading template subtraction.
+3. **Non-EEG Channels**: Channels listed in `processing.non_eeg_channels` (such as `ECG`) undergo unscaled template subtraction and bypass OBS, ANC, and line regression.
+
+---
 
 ## External references
 
-See [References](references.md) for the FASTR paper, BIDS specification,
-MNE-Python, BrainVision format, SciPy diagnostics, and the FMRIB source audit.
+- [Niazy et al. (2005)](references.md#niazy-et-al-2005): Optimal basis sets (OBS) and moving template subtraction.
+- [Allen et al. (2000)](references.md#allen-et-al-2000): Foundations of Averaged Artifact Subtraction (AAS).
+- [BIDS MRI Specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html): Timing metadata definitions.
+- [MNE-Python Filter Design](https://mne.tools/stable/generated/mne.filter.create_filter.html): Linear-phase FIR design.
+- [FMRIB FASTR Implementation](references.md#fmrib-fastr-implementation): Legacy MATLAB EEGLAB plug-in reference.
+

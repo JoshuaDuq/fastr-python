@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.arms import ArmError
+from benchmark.arms import ArmError, input_sampling_rate
 from benchmark.arms.fastr_python import FastrPythonArm
 from benchmark.cohort import RunSpec
 from benchmark.config import MatchedSettings
@@ -52,7 +52,8 @@ def test_arm_corrects_the_demo_recording_and_reports_its_cost(demo, tmp_path):
         _run_spec(demo), output_directory=tmp_path / "out"
     )
     assert result.corrected_vhdr.is_file()
-    assert result.sampling_rate == 1000.0
+    # The arm corrects at the recorded rate; the benchmark decimates afterwards.
+    assert result.sampling_rate == input_sampling_rate(demo / "demo.vhdr")
     assert result.first_volume_sample == 0
     assert result.volume_count > 0
     assert result.cost.wall_clock_seconds > 0
@@ -70,8 +71,10 @@ def test_arm_writes_the_matched_settings_into_its_configuration(demo, tmp_path):
     processing = sidecar["configuration"]["processing"]
     assert processing["interpolation_factor"] == 10
     assert processing["neighbor_count"] == 20
-    assert processing["lowpass_hz"] == 100.0
-    assert processing["output_sampling_rate_hz"] == 1000.0
+    assert processing["lowpass_hz"] == 0.0
+    assert processing["output_sampling_rate_hz"] == input_sampling_rate(
+        demo / "demo.vhdr"
+    )
     assert processing["residual_obs"] is False
     assert processing["adaptive_noise_cancellation"] is False
 
@@ -102,5 +105,5 @@ def test_arm_raises_when_the_recording_cannot_be_corrected(demo, tmp_path):
         motion_stratum="low",
         marker_block=None,
     )
-    with pytest.raises(ArmError, match="failed on demo.vhdr"):
+    with pytest.raises(ArmError, match=r"failed on demo\.vhdr"):
         FastrPythonArm(DEMO_SETTINGS).correct(spec, output_directory=tmp_path / "out2")

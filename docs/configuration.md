@@ -1,149 +1,220 @@
-# Configuration reference
+# Configuration Reference
 
-Configurations are YAML mappings loaded by `fastr_python.config.load_config`.
-Relative paths resolve from the YAML file's directory. Unknown fields, missing
-fields, invalid types, and incompatible combinations raise
-`ConfigurationError`. Loading does not create files or require the input to
-exist.
+FASTR-Python configurations are defined in YAML mappings and parsed by `fastr_python.config.load_config`.
 
-## Timing source rule
+All relative filesystem paths resolve relative to the directory of the YAML configuration file. Loading performs strict validation: missing required fields, unknown keys, invalid value types, out-of-bounds ranges, or contradictory parameter combinations immediately raise `ConfigurationError`. Configuration parsing is pure and does not write to disk.
 
-Timing is explicit and exclusive. For `marker_kind: volume`, use exactly one of
-`input.fmri_metadata` or the inline `acquisition` section. For
-`marker_kind: slice`, use neither: group positions are measured from the
-recording and `groups_per_volume` is declared. The BIDS fields
-`RepetitionTime`, `SliceTiming`, and `MultibandAccelerationFactor` follow the
-[BIDS MRI specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html).
+---
 
-## Top-level sections
+## 1. Minimal YAML Templates
 
-| Section | Type | Required or default | Units | Rules |
+### Volume-Triggered Recording (BIDS Timing Source)
+
+Use this pattern when your EEG recording contains **one scanner trigger per whole volume** (e.g. at the start of each TR), and BIDS fMRI metadata provides slice timing:
+
+```yaml
+input:
+  raw_vhdr: "sub-01/eeg/sub-01_task-rest_eeg.vhdr"
+  fmri_metadata: "sub-01/func/sub-01_task-rest_bold.json"
+
+output:
+  vhdr: "derivatives/fastr/sub-01/sub-01_task-rest_desc-fastr_eeg.vhdr"
+
+timing:
+  marker_type: "Response"
+  marker_description: "R128"
+  marker_kind: "volume"
+
+processing:
+  method: "acquisition_group_fastr"
+  interpolation_factor: 10
+  neighbor_count: 30
+  search_radius_samples: 5
+  pre_trigger_fraction: 0.03
+  lowpass_hz: 70.0
+  output_sampling_rate_hz: 500.0
+  channel_batch_size: 16
+  reference_channel: "Cz"
+  line_noise_frequencies_hz: [60.0]
+  non_eeg_channels: ["ECG"]
+```
+
+### Slice-Triggered Recording (Measured Marker Timing)
+
+Use this pattern when your EEG recording contains **one scanner trigger per slice or multiband acquisition group**:
+
+```yaml
+input:
+  raw_vhdr: "sub-01/eeg/sub-01_task-rest_eeg.vhdr"
+
+output:
+  vhdr: "derivatives/fastr/sub-01/sub-01_task-rest_desc-fastr_eeg.vhdr"
+
+timing:
+  marker_type: "Response"
+  marker_description: "R128"
+  marker_kind: "slice"
+  groups_per_volume: 18
+  expected_repetition_time_seconds: 0.9
+
+processing:
+  method: "acquisition_group_fastr"
+  interpolation_factor: 10
+  neighbor_count: 30
+  search_radius_samples: 5
+  pre_trigger_fraction: 0.03
+  lowpass_hz: 70.0
+  output_sampling_rate_hz: 500.0
+  channel_batch_size: 16
+  reference_channel: "Cz"
+  line_noise_frequencies_hz: [60.0]
+  non_eeg_channels: ["ECG"]
+```
+
+---
+
+## 2. Top-Level Sections
+
+| Section | Type | Required? | Purpose |
+| --- | --- | :---: | --- |
+| [`input`](#input) | mapping | Yes | Path to raw BrainVision recording and optional BIDS metadata. |
+| [`output`](#output) | mapping | Yes | Path to destination `.vhdr` file (stem governs derived outputs). |
+| [`timing`](#timing) | mapping | Yes | Marker selection and acquisition geometry source (`volume` vs `slice`). |
+| [`acquisition`](#acquisition) | mapping | Optional | Inline BIDS acquisition timing (alternative to external BIDS JSON). |
+| [`processing`](#processing) | mapping | Yes | Numerical FASTR parameters (AAS, OBS, ANC, filtering, decimation). |
+| [`quality_control`](#quality_control) | mapping | Optional | Parameters for residual and harmonic QC block detection. |
+| [`diagnostics`](#diagnostics) | mapping | Optional | PSD estimation parameters for before/after summary plots. |
+| [`trim`](#trim) | mapping | Optional | Recording window trimming mode (defaults to `none`). |
+
+---
+
+## 3. Section Specifications
+
+### input
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `input` | mapping | required | paths | Requires `raw_vhdr`; may contain `fmri_metadata`. |
-| `output` | mapping | required | path | Requires `vhdr`; derived outputs use its stem. |
-| `timing` | mapping | required | marker metadata | Requires `marker_type` and `marker_description`. |
-| `acquisition` | mapping | absent | BIDS timing | Valid only as the volume-marker timing source. |
-| `processing` | mapping | required | mixed | FASTR and optional-stage settings. |
-| `quality_control` | mapping | absent | mixed | Missing fields use the defaults below. |
-| `diagnostics` | mapping | absent | mixed | Missing fields use the defaults below. |
-| `trim` | mapping | absent | mode | Defaults to `none`. |
+| `input.raw_vhdr` | string / path | *required* | path | Path to existing BrainVision `.vhdr`. Companion `.eeg` and `.vmrk` files must exist alongside it. |
+| `input.fmri_metadata` | string / path or null | `null` | path | Path to BIDS JSON sidecar. Allowed **only** when `timing.marker_kind: volume`; mutually exclusive with the inline `acquisition` section. |
 
-## input
+---
 
-| Field | Type | Required or default | Units | Rules |
+### output
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `input.raw_vhdr` | string/path | required | path | BrainVision `.vhdr`; referenced `.eeg` and `.vmrk` files must be present beside it. |
-| `input.fmri_metadata` | string/path or null | `null` | path | BIDS timing source for volume markers; mutually exclusive with `acquisition` and invalid for slice markers. |
+| `output.vhdr` | string / path | *required* | path | Target `.vhdr` path. Must end with `.vhdr`. Destination files (`.vhdr`, `.eeg`, `.vmrk`, `.json`, `_psd_*.png`) must not already exist. |
 
-## output
+---
 
-| Field | Type | Required or default | Units | Rules |
+### timing
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `output.vhdr` | string/path | required | path | Must end in `.vhdr`; `.vhdr`, `.eeg`, `.vmrk`, `.json`, and PSD outputs must not exist. |
+| `timing.marker_type` | string | *required* | string | BrainVision marker type (e.g. `Response`, `Stimulus`). Exact case-sensitive match. |
+| `timing.marker_description` | string | *required* | string | BrainVision description (e.g. `R128`, `V`). Exact case-sensitive match. |
+| `timing.marker_kind` | `volume` or `slice` | `volume` | — | `volume`: One marker per whole volume TR. `slice`: One marker per slice/multiband group. |
+| `timing.groups_per_volume` | integer > 0 or null | `null` | groups/volume | **Required** when `marker_kind: slice`; forbidden when `marker_kind: volume`. Declared by operator, never inferred. |
+| `timing.expected_repetition_time_seconds` | number > 0 or null | `null` | seconds | Optional validation check for slice markers; forbidden when `marker_kind: volume`. |
+| `timing.missing_volume_markers` | `error` or `repair` | `error` | — | Volume markers only. `repair` interpolates uniquely identifiable interior missing volume markers. |
+| `timing.expected_volume_count` | integer > 0 or null | `null` | volumes | **Required** when `missing_volume_markers: repair`; forbidden with `error`. |
+| `timing.volume_marker_start_index` | integer $\ge 0$ or null | `null` | index | Zero-based index of first volume marker in an explicit contiguous block. Requires `volume_marker_count`. |
+| `timing.volume_marker_count` | integer > 0 or null | `null` | markers | Number of volume markers in explicit contiguous block. Requires `volume_marker_start_index`. |
 
-## timing
+---
 
-| Field | Type | Required or default | Units | Rules |
+### acquisition
+
+Used **only** when `timing.marker_kind: volume` as an alternative to an external BIDS JSON sidecar. Conforms strictly to the [BIDS MRI specification](https://bids-specification.readthedocs.io/en/stable/modality-specific-files/magnetic-resonance-imaging-data.html).
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `timing.marker_type` | string | required | BrainVision marker type | Exact, case-sensitive selection. |
-| `timing.marker_description` | string | required | BrainVision description | Exact, case-sensitive selection. |
-| `timing.marker_kind` | `volume` or `slice` | `volume` | — | `volume`: one marker per volume. `slice`: one marker per acquisition group. |
-| `timing.groups_per_volume` | positive integer or null | `null` | groups/volume | Required for `slice`; invalid for `volume`. Declared, not inferred. |
-| `timing.expected_repetition_time_seconds` | positive number or null | `null` | seconds | Optional check for measured slice timing; invalid for `volume`. |
-| `timing.missing_volume_markers` | `error` or `repair` | `error` | — | Volume markers only. `repair` fills uniquely located interior gaps and requires `expected_volume_count`. |
-| `timing.expected_volume_count` | positive integer or null | `null` | volumes | Required with `missing_volume_markers: repair`; invalid with `error`. |
-| `timing.volume_marker_start_index` | nonnegative integer or null | `null` | zero-based marker index | Start of an explicit contiguous volume-marker block; use with `volume_marker_count`. Invalid for slice markers and repair mode. |
-| `timing.volume_marker_count` | positive integer or null | `null` | markers | Length of an explicit volume-marker block; use with `volume_marker_start_index`. |
+| `acquisition.repetition_time_seconds` | number > 0 | *required* | seconds | BIDS `RepetitionTime`. Must convert to an integer number of raw EEG samples ($T_R \times f_{s,\text{in}} \in \mathbb{Z}^+$). |
+| `acquisition.slice_timing_seconds` | list of numbers | *required* | seconds | BIDS `SliceTiming`. Non-empty list of slice offsets in $[0, T_R)$. |
+| `acquisition.multiband_acceleration_factor` | integer > 0 | *required* | factor | BIDS `MultibandAccelerationFactor`. Number of slices acquired simultaneously. `len(slice_timing_seconds)` must be divisible by this factor. |
 
-## acquisition
+---
 
-The inline section carries the same timing fields as the BIDS sidecar and uses
-the same validation.
+### processing
 
-| Field | Type | Required or default | Units | Rules |
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `acquisition.repetition_time_seconds` | positive number | required | seconds | BIDS `RepetitionTime`; must convert to an integer number of input samples. |
-| `acquisition.slice_timing_seconds` | nonempty list of numbers | required | seconds | BIDS `SliceTiming`; offsets must be nonnegative and less than the repetition time. |
-| `acquisition.multiband_acceleration_factor` | positive integer | required | slices/group | BIDS `MultibandAccelerationFactor`; timing length must be divisible by it and each unique offset must occur exactly that many times. |
+| `processing.method` | string | *required* | — | Must be `acquisition_group_fastr`. |
+| `processing.interpolation_factor` | integer > 0 | *required* | factor | Temporal upsampling factor for sub-sample cross-correlation alignment (typically 10). |
+| `processing.neighbor_count` | even integer > 0 | *required* | epochs | Number of adjacent epochs included in the moving average template (excluding the target epoch). Must be even. |
+| `processing.search_radius_samples` | integer $\ge 0$ | *required* | input samples | Search window around expected trigger for cross-correlation alignment (typically 3–5 samples). |
+| `processing.pre_trigger_fraction` | number | `0.03` | fraction | Fraction of the epoch prior to the trigger timestamp. Must be in $[0.0, 1.0]$. |
+| `processing.lowpass_hz` | number $\ge 0$ | *required* | Hz | Output low-pass filter cutoff. Must be strictly below both input and output Nyquist frequencies. Can be `0.0` only when not decimating. |
+| `processing.output_sampling_rate_hz` | number > 0 | *required* | Hz | Output sampling rate. Input rate must be an exact integer multiple of output rate ($f_{s,\text{in}} / f_{s,\text{out}} \in \mathbb{Z}^+$). |
+| `processing.channel_batch_size` | integer > 0 | *required* | channels | Channel chunk size for batch processing. Conserves RAM without changing numerical outputs. |
+| `processing.reference_channel` | string or integer | *required* | channel | Channel used to estimate shared sub-sample alignment delays across channels. Must exist in montage. |
+| `processing.line_noise_frequencies_hz` | list of numbers > 0 | *required* | Hz | Mains frequencies below output Nyquist regressed from EEG channels post-filtering. `[]` disables regression. |
+| `processing.non_eeg_channels` | list of strings | `["ECG"]` | channel names | Channels excluded from template amplitude scaling, OBS, ANC, line regression, and residual QC statistics. |
+| `processing.template_high_pass_hz` | number $\ge 0$ | `1.0` | Hz | High-pass cutoff applied to signal copies before template estimation and alignment. `0.0` disables. |
+| `processing.residual_threshold_uv` | number $\ge 0$ | `1.0` | $\mu\mathrm{V}$ | Absolute noise floor threshold for residual and volume harmonic QC flags. |
+| `processing.residual_gate` | boolean | `false` | — | Excludes outlier residual volumes from moving templates of neighboring volumes. |
+| `processing.residual_gate_mad_multiplier` | number > 0 | `8.0` | robust $\sigma$ | Multiplier on median absolute deviation (MAD) for residual gating. |
+| `processing.residual_gate_ratio` | number > 0 | `8.0` | ratio | Ratio of local residual to background level for residual gating. |
+| `processing.residual_gate_max_fraction` | number in $(0, 1]$ | `0.02` | fraction | Maximum allowable fraction of excluded volumes before error is raised. |
+| `processing.residual_obs` | boolean | `false` | — | Enables Optimal Basis Set (OBS) PCA residual artifact projection. |
+| `processing.residual_obs_rank` | integer > 0 or `auto` | `4` | rank | Number of principal components to project out, or `auto` for FMRIB eigenvalue slope heuristic. |
+| `processing.residual_obs_section_seconds` | number > 0 or null | `null` | seconds | Time interval over which OBS bases are re-estimated. `null` fits one basis across the run. |
+| `processing.adaptive_noise_cancellation` | boolean | `false` | — | Enables normalized LMS adaptive noise cancellation against artifact reference. Requires `lowpass_hz > 0`. |
+| `processing.adaptive_window` | boolean | `false` | — | Dynamically chooses wide vs local template window based on reference channel residuals. Mutually exclusive with other local window modes. |
+| `processing.channel_adaptive_window` | boolean | `false` | — | Dynamically chooses wide vs local template window independently per channel. Mutually exclusive with other local window modes. |
+| `processing.local_neighbor_count` | even integer > 0 | `20` | epochs | Template window width for local mode. Must be strictly less than `neighbor_count`. |
+| `processing.local_window_channels` | list of strings | `[]` | channel names | Forces local window on named EEG channels. Mutually exclusive with adaptive modes. |
+| `processing.adaptive_improvement_ratio` | number in $(0, 1]$ | `0.85` | ratio | Threshold ratio of local to wide residual required to switch to local window. |
+| `processing.channel_failure_policy` | `report` or `retry_local_and_recommend_bad` | `report` | — | Strategy when a channel exhibits residual failure. `retry_local_and_recommend_bad` attempts a local window retry and adds channel to recommendations. Never drops or interpolates data. |
 
-## processing
+---
 
-| Field | Type | Required or default | Units | Rules |
+### quality_control
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `processing.method` | string | required | — | Must be `acquisition_group_fastr`. |
-| `processing.interpolation_factor` | positive integer | required | samples/grid | Temporal factor for sub-sample alignment. |
-| `processing.neighbor_count` | positive even integer | required | volumes/groups | Wide moving-template width. |
-| `processing.search_radius_samples` | nonnegative integer | required | input samples | Alignment search radius around each trigger. |
-| `processing.pre_trigger_fraction` | number | `0.03` | fraction | Trigger location within the artifact epoch; must be in `[0, 1]`. |
-| `processing.lowpass_hz` | nonnegative number | required | Hz | Passband edge below both Nyquist frequencies unless zero; transition is constrained to reach the stopband by output Nyquist. Zero is allowed only without decimation. |
-| `processing.output_sampling_rate_hz` | positive number | required | Hz | Input/output rates must have an integer ratio; output cannot exceed input. QC supports fractional output samples per volume. |
-| `processing.channel_batch_size` | positive integer | required | channels/batch | Controls memory use without changing the numerical path. |
-| `processing.reference_channel` | string or integer | required | channel name/index | Alignment reference; names and indices must be valid. |
-| `processing.line_noise_frequencies_hz` | list of positive numbers | required | Hz | Frequencies below output Nyquist; `[]` disables regression. Applied to EEG after filtering/decimation. |
-| `processing.non_eeg_channels` | list of strings | `[ECG]` | channel names | Excluded from template scaling, residual OBS, ANC, line-noise regression, and residual-QC statistics. |
-| `processing.template_high_pass_hz` | nonnegative number | `1.0` | Hz | High-pass for template estimation and alignment; `0.0` uses the unfiltered estimate. |
-| `processing.residual_threshold_uv` | nonnegative number | `1.0` | µV | Absolute floor for temporal group-residual and coherent volume-harmonic QC flags; the robust outlier and minimum-channel criteria must also hold. |
-| `processing.residual_gate` | boolean | `false` | — | Excludes extreme residual volumes from clean-neighbour templates; fails if fewer than two clean same-slot neighbours remain. Flagged targets retain their local windows. |
-| `processing.residual_obs` | boolean | `false` | — | Enables residual optimal-basis correction after template subtraction. |
-| `processing.residual_obs_rank` | positive integer or `auto` | `4` | components | Fixed OBS rank or FMRIB-style automatic selection. |
-| `processing.residual_obs_section_seconds` | positive number or null | `null` | seconds | Refit OBS by sections; null fits one basis for the run. |
-| `processing.adaptive_noise_cancellation` | boolean | `false` | — | Enables normalized LMS ANC against the filtered artifact reference. Requires nonzero `lowpass_hz`; use only after signal-transfer checks. |
-| `processing.adaptive_window` | boolean | `false` | — | Chooses wide or local windows from reference-channel residuals. Incompatible with other local modes. |
-| `processing.channel_adaptive_window` | boolean | `false` | — | Chooses wide or local windows per EEG channel. Incompatible with other local modes. |
-| `processing.local_neighbor_count` | positive even integer | `20` | volumes/groups | Local window width; must be smaller than `neighbor_count` for local modes. |
-| `processing.local_window_channels` | list of strings | `[]` | channel names | Forces the local window for named EEG channels; names must exist and cannot be non-EEG. |
-| `processing.residual_gate_mad_multiplier` | positive number | `8.0` | robust sigma | Residual-gate outlier multiplier. |
-| `processing.residual_gate_ratio` | positive number | `8.0` | ratio | Residual-score threshold relative to the background level, combined with the MAD threshold. |
-| `processing.residual_gate_max_fraction` | number in `(0, 1]` | `0.02` | fraction | Upper bound on excluded volumes. |
-| `processing.adaptive_improvement_ratio` | number in `(0, 1]` | `0.85` | ratio | Local residual must be at most this fraction of the wide score. |
-| `processing.channel_failure_policy` | `report` or `retry_local_and_recommend_bad` | `report` | — | Retry policy owns its local window; requires channel-outlier reporting and is incompatible with other local/adaptive modes. Never drops or interpolates a channel. |
+| `quality_control.block_seconds` | number > 0 | `30.0` | seconds | Block duration for residual QC, rounded to complete volume TRs. |
+| `quality_control.mains_frequency_hz` | number > 0 | `60.0` | Hz | Mains line frequency excluded from scanner harmonic attribution. |
+| `quality_control.mains_exclusion_hz` | number $\ge 0$ | `1.0` | Hz | Half-width around mains harmonics excluded from attribution. |
+| `quality_control.residual_mad_multiplier` | number $\ge 0$ | `6.0` | robust $\sigma$ | MAD multiplier for coherent multi-channel residual detection. |
+| `quality_control.residual_minimum_channels` | integer > 0 | `4` | channels | Minimum number of EEG channels simultaneously flagged to mark a block outlier. |
+| `quality_control.volume_spectrum_max_hz` | number > 0 | `110.0` | Hz | Upper frequency limit for whole-run volume harmonic evaluation (capped at output Nyquist). |
+| `quality_control.report_channel_outliers` | boolean | `true` | — | Detects and logs spatial channel outliers in QC report. |
+| `quality_control.bad_channel_residual_uv` | number > 0 | `5.0` | $\mu\mathrm{V}$ | Absolute microvolt floor for candidate channel failure recommendations. |
 
-## quality_control
+---
 
-| Field | Type | Required or default | Units | Rules |
+### diagnostics
+
+| Field | Type | Default | Units | Rules & Validation |
 | --- | --- | --- | --- | --- |
-| `quality_control.block_seconds` | positive number | `30.0` | seconds | Residual-QC block duration, rounded to complete volumes. |
-| `quality_control.mains_frequency_hz` | positive number | `60.0` | Hz | Mains frequency excluded from scanner-harmonic attribution. |
-| `quality_control.mains_exclusion_hz` | nonnegative number | `1.0` | Hz | Width around mains harmonics excluded from attribution. |
-| `quality_control.residual_mad_multiplier` | nonnegative number | `6.0` | robust sigma | Per-channel temporal residual multiplier for coherent block flags. |
-| `quality_control.residual_minimum_channels` | positive integer | `4` | channels | Minimum simultaneous EEG channels for a residual-block flag. |
-| `quality_control.volume_spectrum_max_hz` | positive number | `110.0` | Hz | Highest harmonic in the whole-run volume spectrum and separate coherent volume-harmonic block report, capped below output Nyquist. |
-| `quality_control.report_channel_outliers` | boolean | `true` | — | Reports isolated channel/block outliers; does not alter samples. Required by the automatic channel-failure policy. |
-| `quality_control.bad_channel_residual_uv` | positive number | `5.0` | µV | Absolute floor for spatial channel-failure candidates. |
+| `diagnostics.psd_max_frequency_hz` | number > 0 | `100.0` | Hz | Maximum frequency plotted in pre/post Welch PSD figures (capped by output Nyquist). |
+| `diagnostics.psd_n_fft` | integer > 0 or null | `null` | samples | FFT window length for PSD estimation. `null` selects an optimal power-of-2 default based on sampling rate. |
 
-## diagnostics
+---
 
-| Field | Type | Required or default | Units | Rules |
-| --- | --- | --- | --- | --- |
-| `diagnostics.psd_max_frequency_hz` | positive number | `100.0` | Hz | PSD limit, capped by output Nyquist. |
-| `diagnostics.psd_n_fft` | positive integer or null | `null` | FFT samples | Optional PSD FFT length; null uses the diagnostic default. |
+### trim
 
-## trim
+| Field | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `trim.mode` | `none` or `first_to_last_volume` | `none` | `none`: Retains and exports the entire raw recording length. Boundary samples outside valid artifact templates are marked `Bad_Gradient`.<br>`first_to_last_volume`: Trims output recording to start at the first selected volume marker and end exactly one $T_R$ after the last selected volume marker. |
 
-| Field | Type | Required or default | Units | Rules |
-| --- | --- | --- | --- | --- |
-| `trim.mode` | `none` or `first_to_last_volume` | `none` | — | `none` emits the full recording. The other mode starts at the first selected volume marker and ends one declared TR after the last, clipped to the recording end. Partial final TRs are retained; uncorrected boundary samples are marked `Bad_Gradient`. Explicit volume-marker selection requires this mode. |
+---
 
-## Interaction rules
+## 4. Invariance & Mutual Exclusivity Rules
 
-- Use one timing source. Volume markers need BIDS metadata or inline timing;
-  slice markers need neither and require `groups_per_volume`.
-- Repair requires an expected count and only fills uniquely located interior
-  gaps. Explicit marker selection and repair are incompatible.
-- `neighbor_count` and `local_neighbor_count` are even. Local modes require
-  the local count to be smaller than the wide count.
-- `adaptive_window`, `channel_adaptive_window`, and nonempty
-  `local_window_channels` are mutually exclusive. The automatic channel
-  failure policy is also incompatible with them.
-- A nonzero low-pass must be below both Nyquist frequencies. Decimation needs
-  anti-alias filtering, including its transition band; zero cutoff is valid only
-  when rates are equal. A cutoff close to output Nyquist requires a longer FIR.
-- Values select or enable stages; invalid inputs raise errors rather than
-  triggering a fallback.
+To prevent accidental misconfiguration, FASTR-Python enforces strict mutual exclusivity:
 
-## Units and channel names
+1. **Timing Source Exclusivity**:
+   - `marker_kind: volume` $\implies$ Requires external `input.fmri_metadata` OR inline `acquisition`. `timing.groups_per_volume` is forbidden.
+   - `marker_kind: slice` $\implies$ Requires `timing.groups_per_volume`. `input.fmri_metadata` and inline `acquisition` are strictly forbidden.
+2. **Missing Marker Repair vs Manual Selection**:
+   - `missing_volume_markers: repair` requires `expected_volume_count` and is incompatible with explicit volume slicing (`volume_marker_start_index` / `volume_marker_count`).
+   - Slicing modes require `trim.mode: first_to_last_volume`.
+3. **Window Policies**:
+   - `adaptive_window`, `channel_adaptive_window`, and non-empty `local_window_channels` are mutually exclusive.
+   - `channel_failure_policy: retry_local_and_recommend_bad` is incompatible with other local/adaptive window flags.
+4. **Anti-Aliasing Constraints**:
+   - If $f_{s,\text{in}} > f_{s,\text{out}}$, `lowpass_hz` must be $> 0$ and its transition band must reach full stopband attenuation strictly at or before output Nyquist ($f_{s,\text{out}} / 2$).
+   - `lowpass_hz: 0.0` is permitted if and only if $f_{s,\text{in}} == f_{s,\text{out}}$ (no decimation).
 
-BIDS timing and configuration durations use seconds. Signal arrays use volts
-following MNE conventions; residual reports use microvolts (`µV`). Internal
-sample indices are zero-based; BrainVision marker positions are one-based on
-disk. Channel names are exact strings, including spaces and capitalization.

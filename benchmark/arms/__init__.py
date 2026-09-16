@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+import mne
+
 from benchmark.cohort import RunSpec
 
 # getrusage reports the peak resident set in bytes on macOS and in kibibytes
@@ -98,3 +100,9 @@ def run_measured(
         exit_code=process.returncode,
         output=output,
     )
+
+
+def input_sampling_rate(raw_vhdr: Path) -> float:
+    """Return the rate a recording was sampled at, without reading its samples."""
+    raw = mne.io.read_raw_brainvision(raw_vhdr, preload=False, verbose="error")
+    return float(raw.info["sfreq"])
