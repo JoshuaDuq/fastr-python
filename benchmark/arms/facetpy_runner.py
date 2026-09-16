@@ -7,8 +7,8 @@ project is GPL-2.0-only. It therefore imports nothing from `benchmark` or from
 `fastr_python`, and speaks to them only through the JSON request it is handed
 and the JSON summary it writes back.
 
-It applies no low-pass and no decimation. The up- and downsampling around the
-correction is FACETpy's alignment interpolation, matching the interpolation
+It applies no low-pass and no decimation. The up- and downsampling around a
+template correction is alignment interpolation, matching the interpolation
 factor the other arms use, not an output filter; the benchmark applies one
 shared output filter to every arm afterwards.
 """
@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from facet import (
@@ -31,6 +32,7 @@ from facet import (
 )
 from facet.correction.deep_learning import (
     DeepLearningCorrection,
+    DeepLearningExecutionGranularity,
     DeepLearningOutputType,
     list_deep_learning_blueprints,
 )
@@ -56,16 +58,18 @@ def main(request_path: str) -> int:
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
     triggers = np.asarray(request["triggers"], dtype=int)
     output_vhdr = Path(request["output_vhdr"])
+    contract = _probe_contract(request) if request["mode"] == DEEP_LEARNING else None
+    channel_wise = contract is not None and contract[0] == 1
 
     result = Pipeline(
         [
             Loader(path=request["raw_vhdr"], preload=True),
             _inject(triggers),
-            *_around(request, _correction(request)),
+            *_stages(request, contract=contract),
             BrainVisionExporter(path=str(output_vhdr), overwrite=False),
         ],
         name=request["mode"],
-    ).run()
+    ).run(channel_sequential=channel_wise)
     # A FACETpy pipeline reports a failure in its result rather than raising,
     # so an unchecked run would write no recording and still exit zero.
     if not result.success:
@@ -81,6 +85,8 @@ def main(request_path: str) -> int:
                 "first_volume_sample": int(request["volume_starts"][0]),
                 "volume_count": len(request["volume_starts"]) - 1,
                 "trigger_count": int(triggers.size),
+                "channel_group": None if contract is None else contract[0],
+                "chunk_size_samples": None if contract is None else contract[1],
                 "facetpy_version": _version(),
             }
         ),
@@ -89,21 +95,27 @@ def main(request_path: str) -> int:
     return 0
 
 
-def _around(request: dict[str, object], correction):
-    """Wrap a correction in the interpolation it needs, and nothing more.
+def _stages(
+    request: dict[str, Any], *, contract: tuple[int, int] | None
+) -> tuple[Any, ...]:
+    """Build the correction, wrapped in the interpolation it needs.
 
     Template subtraction is interpolated up and back down so that artifacts can
     be aligned to a fraction of a sample. A network has no template to align,
-    and was trained at the recording's own rate, so resampling around it would
-    feed it something it never saw.
+    and was trained at a fixed rate, so resampling around it would feed it
+    something it never saw.
     """
     if request["mode"] == DEEP_LEARNING:
-        return (correction,)
+        if contract is None:
+            raise ValueError(
+                f"{request['model_name']} accepted none of the input shapes probed"
+            )
+        return (_deep_learning(request, contract=contract),)
     factor = request["interpolation_factor"]
-    return (UpSample(factor=factor), correction, DownSample(factor=factor))
+    return (UpSample(factor=factor), _template(request), DownSample(factor=factor))
 
 
-def _inject(triggers: np.ndarray):
+def _inject(triggers: np.ndarray) -> Any:
     """Hand FACETpy the trigger array every other arm corrects against.
 
     Its own SliceTriggerGenerator would space the acquisition slots evenly
@@ -113,14 +125,14 @@ def _inject(triggers: np.ndarray):
     correction.
     """
 
-    def apply(context):
+    def apply(context: Any) -> Any:
         return context.with_trigger_samples(triggers, samples_are_absolute=True)
 
     return apply
 
 
-def _correction(request: dict[str, object]):
-    """Build the correction stage this run asked for."""
+def _template(request: dict[str, Any]) -> Any:
+    """Build the averaging correction this run asked for."""
     mode = request["mode"]
     if mode == SLOT_MATCHED:
         return CorrespondingSliceCorrection(
@@ -129,18 +141,16 @@ def _correction(request: dict[str, object]):
         )
     if mode == VOLUME_AVERAGED:
         return AASCorrection(window_size=request["window_size"])
-    if mode == DEEP_LEARNING:
-        return _deep_learning(request)
     raise ValueError(f"unknown correction mode: {mode!r}")
 
 
-def _deep_learning(request: dict[str, object]):
+def _deep_learning(request: dict[str, Any], *, contract: tuple[int, int]) -> Any:
     """Run one pretrained network under the settings it was trained with.
 
-    The architecture blueprint describes the published paper; the chunk length
-    and whether the network predicts artifact or clean signal come from this
-    checkpoint's own recorded training run, which is the only description that
-    matches the weights being loaded.
+    The architecture blueprint describes the published paper. The chunk length,
+    whether the network predicts artifact or clean signal, and whether it takes
+    one channel at a time all come from this checkpoint instead, because the
+    exported weights and the paper do not always agree.
     """
     blueprints = list_deep_learning_blueprints()
     blueprint = blueprints.get(request["blueprint"])
@@ -149,27 +159,75 @@ def _deep_learning(request: dict[str, object]):
             f"no blueprint named {request['blueprint']!r}; "
             f"FACETpy declares {sorted(blueprints)}"
         )
-    overrides = {
-        "name": request["model_name"],
-        "architecture": blueprint.architecture,
-        "domain": blueprint.domain,
-        "execution_granularity": blueprint.execution_granularity,
-        "supports_multichannel": blueprint.supports_multichannel,
-        "channel_group_size": blueprint.channel_group_size,
-        "requires_channel_positions": blueprint.requires_channel_positions,
-        "supports_chunking": True,
-        "chunk_size_samples": request["chunk_size_samples"],
-        "chunk_overlap_samples": blueprint.chunk_overlap_samples,
-        "output_type": DeepLearningOutputType(request["output_type"]),
-        "device_preference": "cpu",
-    }
+    channels, chunk = contract
+    granularity = DeepLearningExecutionGranularity.CHANNEL
+    if channels == request["channel_count"]:
+        granularity = DeepLearningExecutionGranularity.MULTICHANNEL
+    elif channels > 1:
+        granularity = DeepLearningExecutionGranularity.CHANNEL_GROUP
     return DeepLearningCorrection(
         model="pytorch_inference",
         model_kwargs={
             "checkpoint_path": request["checkpoint_path"],
-            "spec_overrides": overrides,
+            "spec_overrides": {
+                "name": request["model_name"],
+                "architecture": blueprint.architecture,
+                "domain": blueprint.domain,
+                "execution_granularity": granularity,
+                "supports_multichannel": channels > 1,
+                "channel_group_size": channels if channels > 1 else None,
+                "requires_channel_positions": blueprint.requires_channel_positions,
+                "supports_chunking": True,
+                "chunk_size_samples": chunk,
+                # The networks were trained on adjacent chunks, so they are run
+                # on adjacent chunks. Several blueprint overlaps exceed these
+                # checkpoints' chunk length outright.
+                "chunk_overlap_samples": 0,
+                "output_type": DeepLearningOutputType(request["output_type"]),
+                "device_preference": "cpu",
+            },
         },
     )
+
+
+def _probe_contract(request: dict[str, Any]) -> tuple[int, int] | None:
+    """Ask the checkpoint what shape of input it actually accepts.
+
+    The blueprints describe the published papers and the training configuration
+    describes a run, but the exported weights are the only thing being loaded,
+    and they do not always agree with either: several take a fixed group of
+    channels rather than one or all of them, and several were traced at a chunk
+    length other than the one they were trained on.
+
+    A shape counts only if the network returns as many samples as it was given.
+    One that returns a different length is not correcting the recording, and
+    silently resampling its output would invent data.
+    """
+    import torch
+
+    model = torch.jit.load(request["checkpoint_path"], map_location="cpu")
+    model.eval()
+    trained = int(request["chunk_size_samples"])
+    channels = _ordered(1, int(request["channel_count"]), 7, 30, 2, 16)
+    chunks = _ordered(trained, 512, 1024, 2048, 3584, 4096)
+    for channel_count in channels:
+        for chunk in chunks:
+            try:
+                with torch.no_grad():
+                    output = model(torch.zeros(1, channel_count, chunk))
+            except Exception:
+                continue
+            if getattr(output, "ndim", 0) == 3 and output.shape[-1] == chunk:
+                return channel_count, chunk
+    return None
+
+
+def _ordered(*values: int) -> tuple[int, ...]:
+    """Keep the first appearance of each value, so preference survives dedup."""
+    seen: dict[int, None] = {}
+    for value in values:
+        seen.setdefault(value, None)
+    return tuple(seen)
 
 
 def _version() -> str:

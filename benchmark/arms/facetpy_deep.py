@@ -19,6 +19,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import mne
+
 from benchmark.arms import (
     ArmError,
     ArmOutput,
@@ -67,6 +69,11 @@ class FacetpyDeepArm:
         """Correct one recording by driving FACETpy's interpreter."""
         output_directory.mkdir(parents=True, exist_ok=True)
         geometry = resolve_geometry(run, settings=self.settings)
+        channel_count = len(
+            mne.io.read_raw_brainvision(
+                run.raw_vhdr, preload=False, verbose="error"
+            ).ch_names
+        )
         corrected = output_directory / f"{run.raw_vhdr.stem}_{self.name}.vhdr"
         metadata_path = corrected.with_suffix(".meta.json")
         request = output_directory / f"{run.raw_vhdr.stem}_{self.name}_request.json"
@@ -81,6 +88,7 @@ class FacetpyDeepArm:
                     "model_name": self.export.name,
                     "checkpoint_path": str(self.checkpoint),
                     "chunk_size_samples": self.export.chunk_size_samples,
+                    "channel_count": channel_count,
                     "output_type": self.export.output_type,
                     "interpolation_factor": self.settings.interpolation_factor,
                     "output_vhdr": str(corrected),
