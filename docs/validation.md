@@ -101,8 +101,9 @@ For ECG channels (which undergo unscaled template subtraction and bypass OBS/ANC
 
 To benchmark FASTR-Python against legacy MATLAB FMRIB 2.1:
 
-1. Consult the [FMRIB Parity Audit](fmrib-parity-validation.md) for audited capability matrices and empirical benchmarks.
-2. Execute reference runners:
+1. Consult the [FMRIB Parity Audit](fmrib-parity-validation.md) for audited capability matrices and MATLAB parity tests.
+2. Consult the [Three-Way Benchmark Report](benchmark.md) for the 21-participant cohort evaluation against MATLAB FMRIB and FACETpy.
+3. Execute reference runners:
    - `validation/run_python_reference.py`: Shared volume-stage reference path;
    - `validation/run_python_bids_reference.py`: Production BIDS geometry path;
    - `validation/compare_fmrib_reference.py`: Aggregate metrics calculator.

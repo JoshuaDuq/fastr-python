@@ -22,10 +22,8 @@ from benchmark.analysis import (
 )
 from benchmark.arms import Arm
 from benchmark.arms.facetpy import FacetpyArm
-from benchmark.arms.facetpy_deep import FacetpyDeepArm
 from benchmark.arms.fastr_python import FastrPythonArm
 from benchmark.arms.matlab_fmrib import MatlabFmribArm
-from benchmark.arms.model_zoo import discover_exports, fetch
 from benchmark.cohort import CohortPaths, load_manifest, select_cohort, write_manifest
 from benchmark.config import BenchmarkConfig, BenchmarkPaths
 from benchmark.figures import write_figures
@@ -176,17 +174,6 @@ def _available_arms(
         )
     if arguments.facetpy is not None:
         arms.append(FacetpyArm(config.matched, arguments.facetpy))
-        if arguments.facetpy_source is not None:
-            cache = config.paths.output_root / "models"
-            arms.extend(
-                FacetpyDeepArm(
-                    config.matched,
-                    interpreter=arguments.facetpy,
-                    export=export,
-                    checkpoint=fetch(export, cache),
-                )
-                for export in discover_exports(arguments.facetpy_source)
-            )
     return arms
 
 
@@ -212,9 +199,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--eeglab", type=Path, help="path to the EEGLAB root")
     parser.add_argument(
         "--facetpy", type=Path, help="python interpreter of the FACETpy environment"
-    )
-    parser.add_argument(
-        "--facetpy-source", type=Path, help="FACETpy clone holding the model exports"
     )
     parser.add_argument(
         "--participant",

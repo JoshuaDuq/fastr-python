@@ -2,9 +2,8 @@
 
 An arm takes one recording and returns a corrected BrainVision file plus what
 it cost to produce. Everything that differs between the tools -- MATLAB's MAT
-round trip, FACETpy's EDF conversion and separate environment, TorchScript
-model loading -- is absorbed here, so that nothing downstream knows which tool
-wrote a recording.
+round trip, FACETpy's isolated environment and pipeline -- is absorbed here,
+so that nothing downstream knows which tool wrote a recording.
 
 Every arm runs as a subprocess, including the one that could run in process.
 That is what makes the cost axis fair: the same clock and the same peak

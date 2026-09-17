@@ -98,7 +98,7 @@ def test_a_second_arm_appends_rather_than_replacing(tmp_path):
 
 def test_an_arm_that_failed_simply_has_no_rows(tmp_path):
     rows = _rows(tmp_path, _measured())
-    assert "facetpy_slot_matched" not in {row["arm"] for row in rows}
+    assert "facetpy_volume_averaged" not in {row["arm"] for row in rows}
 
 
 def test_a_long_run_resumes_from_the_recordings_already_measured(tmp_path):
@@ -143,9 +143,7 @@ def test_naming_arms_selects_only_those(monkeypatch, tmp_path):
     config = BenchmarkConfig(
         paths=BenchmarkPaths(tmp_path, tmp_path, tmp_path, tmp_path)
     )
-    arguments = argparse.Namespace(
-        matlab=None, eeglab=None, facetpy=None, facetpy_source=None, arm=None
-    )
+    arguments = argparse.Namespace(matlab=None, eeglab=None, facetpy=None, arm=None)
     assert [arm.name for arm in _arms(config, arguments)] == ["fastr_python"]
 
     arguments.arm = ["fastr_python"]
@@ -167,7 +165,6 @@ def test_an_unknown_arm_name_is_refused_rather_than_ignored(tmp_path):
         matlab=None,
         eeglab=None,
         facetpy=None,
-        facetpy_source=None,
         arm=["facetpy_volume_averaged"],
     )
     with pytest.raises(SystemExit, match="no such arm"):

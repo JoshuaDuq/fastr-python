@@ -75,7 +75,7 @@ def _rows(arm: str, *, residual: float, on: float, between: float, blocks: int =
 def measurements() -> pd.DataFrame:
     return pd.DataFrame(
         _rows("fastr_python", residual=0.5, on=0.02, between=1.02)
-        + _rows("facetpy_slot_matched", residual=0.2, on=0.00, between=1.00)
+        + _rows("facetpy_volume_averaged", residual=0.2, on=0.00, between=1.00)
     )
 
 
@@ -92,9 +92,9 @@ def test_summary_reports_suppression_beside_transfer_not_instead_of_it(measureme
     )
     # The arm with the lowest residual keeps the least on-comb signal here, so a
     # ranking on residual alone would invert the transfer ranking.
-    assert summary.index[0] == "facetpy_slot_matched"
+    assert summary.index[0] == "facetpy_volume_averaged"
     assert (
-        summary.loc["facetpy_slot_matched", "transfer_on_comb"]
+        summary.loc["facetpy_volume_averaged", "transfer_on_comb"]
         < summary.loc["fastr_python", "transfer_on_comb"]
     )
 
@@ -109,7 +109,7 @@ def test_summary_reports_the_worst_block_not_only_the_median(measurements):
 
 def test_motion_slope_recovers_the_relationship_that_was_put_in(measurements):
     fitted = {arm.arm: arm for arm in motion_sensitivity(measurements)}
-    assert set(fitted) == {"fastr_python", "facetpy_slot_matched"}
+    assert set(fitted) == {"fastr_python", "facetpy_volume_averaged"}
     for arm in fitted.values():
         assert arm.slope_uv_per_mm == pytest.approx(2.0, rel=0.05)
         assert arm.participants == 2
@@ -131,16 +131,16 @@ def test_cost_reports_clock_and_memory_per_arm(measurements):
 def test_robustness_counts_failures_as_results(tmp_path):
     path = tmp_path / "outcomes.jsonl"
     lines = [
-        {"participant": "sub-0001", "arm": "ml_demucs", "status": "failed"},
-        {"participant": "sub-0002", "arm": "ml_demucs", "status": "failed"},
+        {"participant": "sub-0001", "arm": "matlab_fmrib", "status": "failed"},
+        {"participant": "sub-0002", "arm": "matlab_fmrib", "status": "failed"},
         {"participant": "sub-0001", "arm": "fastr_python", "status": "ok"},
         {"participant": "sub-0002", "arm": "fastr_python", "status": "ok"},
     ]
     path.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
     table = robustness(load_outcomes(path))
     assert table.loc["fastr_python", "failure_rate"] == 0.0
-    assert table.loc["ml_demucs", "failure_rate"] == 1.0
-    assert table.loc["ml_demucs", "participants_with_a_failure"] == 2
+    assert table.loc["matlab_fmrib", "failure_rate"] == 1.0
+    assert table.loc["matlab_fmrib", "participants_with_a_failure"] == 2
     assert table.index[0] == "fastr_python"
 
 

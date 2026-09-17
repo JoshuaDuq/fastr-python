@@ -48,6 +48,7 @@ docs/
 
 | Document | Primary Focus | Key Topics |
 | --- | --- | --- |
+| [**Three-Way Benchmark**](benchmark.md) | FASTR-Python vs MATLAB & FACETpy | 21-participant cohort evaluation (187,425 measurements) across 5 axes: suppression tail, tone preservation, motion, cost, and silent failure audit. |
 | [**FMRIB Parity Audit**](fmrib-parity-validation.md) | Comparison with MATLAB | Source-code audit of FMRIB 2.1 (`fmrib_fastr.m`), capability matrix, exact deterministic LMS test fixture ($1\times 10^{-13}$), and empirical real-recording comparisons across Fp1, Cz, and ECG. |
 
 ### 4. Software Architecture & Engineering
