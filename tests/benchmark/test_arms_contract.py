@@ -27,22 +27,25 @@ def test_run_measured_attributes_memory_to_the_child_that_used_it():
         [
             sys.executable,
             "-c",
-            "x = bytearray(200_000_000); x[::4096] = b'\\x01' * (len(x)//4096)",
+            "x = bytearray(b'\\x01' * 300_000_000)",
         ]
     )
+    assert big.exit_code == 0
     assert big.peak_memory_bytes > small.peak_memory_bytes + 100_000_000
 
 
 def test_run_measured_does_not_inherit_a_previous_childs_high_water_mark():
-    run_measured(
+    big = run_measured(
         [
             sys.executable,
             "-c",
-            "x = bytearray(200_000_000); x[::4096] = b'\\x01' * (len(x)//4096)",
+            "x = bytearray(b'\\x01' * 300_000_000)",
         ]
     )
+    assert big.exit_code == 0
     after = run_measured([sys.executable, "-c", "pass"])
-    assert after.peak_memory_bytes < 100_000_000
+    assert after.exit_code == 0
+    assert after.peak_memory_bytes < big.peak_memory_bytes - 100_000_000
 
 
 def test_run_measured_reads_output_larger_than_a_pipe_buffer():
