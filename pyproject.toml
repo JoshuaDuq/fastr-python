@@ -60,6 +60,9 @@ filterwarnings = ["error"]
 testpaths = ["tests"]
 xfail_strict = true
 
+[tool.uv]
+default-groups = ["dev", "benchmark"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"
